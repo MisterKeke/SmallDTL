@@ -8,7 +8,8 @@ A local Windows productivity application built with C++20, Qt 6/QML, WinAPI, and
 - Clipboard saving from Screenshots, Ctrl+V, tray, or a configured hotkey. Text paste remains functional in editors/dialogs.
 - Destination priority: session folder, active profile folder, general default. Unavailable destinations produce errors without redirection.
 - Validated filename templates, Unicode paths, and a no-replace PNG commit. Original Windows screenshots remain untouched.
-- Managed gallery, lazy cached thumbnails, metadata, preview, open/copy/rename, remove membership, and separately confirmed deletion. Removing folders/membership keeps files.
+- SQLite-backed screenshot records and tags, with gallery filtering, checkboxes, Ctrl/Shift multi-selection, Select All, and transactional mixed-state bulk tagging.
+- Managed gallery, lazy cached thumbnails, metadata, preview, open/copy/rename, remove membership, and separately confirmed deletion. Removing tags or gallery membership keeps files.
 - Profile CRUD, independent duplication, descriptions/icons, destinations, activation shortcuts, and self-contained import/export.
 - Profile-specific and application-wide hotkeys with recording, editing, disabling, actual registration status, and conflicts.
 - Ordered executable/arguments, folder, file, HTTP/HTTPS URL, screenshot, profile-switch, and asynchronous-wait actions, with editing, cancellation, and failure reporting.
@@ -28,13 +29,15 @@ Settings use schema 1 with backward-compatible preferences; profiles use schema 
 
 Legacy shared `actions.json` is migrated independently into each legacy profile. Original actions and profile backups are retained. Invalid/newer configurations are preserved. Import accepts self-contained schema 2 exports, regenerates IDs, disables shortcuts, and clears activation shortcuts for review.
 
-Data uses Qt's application-data directory, not the executable folder: `settings.json`, `profiles/<id>.json`, `profiles/global.json`, `screenshot-index.json`, and `cache/thumbnails/`.
+Data uses Qt's application-data directory, not the executable folder: settings and profiles remain in `settings.json` and `profiles/*.json`; screenshot records and tags use `screenshots.db`; thumbnails use `cache/thumbnails/`. The legacy `screenshot-index.json` is imported transactionally on first launch and retained unchanged as a migration source. Import failures are reported and retried on the next launch.
+
+The screenshot database uses versioned SQLite migrations, foreign-key enforcement, stable screenshot IDs, and unique tag names and screenshot-tag pairs. Renames update paths without changing IDs or tags. Removing gallery membership removes the database record and its assignments while leaving the image on disk.
 
 Filename templates support `{timestamp}`, `{date}`, and `{time}`; default `Screenshot_{timestamp}`. PNG extensions and collision suffixes are automatic. Limits: 64 megapixels/256 MiB per image, two pending writes, 512 MiB queued source images, and 256 MiB Qt decoding allocation. Metadata is asynchronous and thumbnails load on demand.
 
 ## Build and run
 
-Prerequisites: Windows 10/11, C++20, CMake 3.24+, and Qt 6.8+ with Core, Gui, Quick, Quick Controls 2, Widgets, Concurrent, Network, and Test. Use the compiler compatible with the Qt kit. Test is only required with `BUILD_TESTING` enabled.
+Prerequisites: Windows 10/11, C++20, CMake 3.24+, and Qt 6.8+ with Core, Gui, Quick, Quick Controls 2, Widgets, Concurrent, Network, Sql, and Test. The QSQLITE driver must be available. Use the compiler compatible with the Qt kit. Test is only required with `BUILD_TESTING` enabled.
 
 Example from a Qt/compiler-enabled PowerShell:
 
@@ -61,7 +64,7 @@ For Release, configure another directory with `-DCMAKE_BUILD_TYPE=Release`. Mult
   -CMakePath "C:/Qt/Tools/CMake_64/bin/cmake.exe"
 ```
 
-This builds/tests Release, deploys Qt/MinGW, smoke-tests without development search paths, and creates a directory/ZIP under `out/`. Existing output directories are preserved; choose a fresh `-OutputDirectory` when rerunning. Manifest and smoke-result JSON record outcomes. `--smoke-test` uses temporary data and exits automatically; ordinary runs use persistent user data.
+This builds/tests Release, deploys Qt/MinGW and `sqldrivers/qsqlite.dll`, smoke-tests database initialization without development search paths, and creates a directory/ZIP under `out/`. Existing output directories are preserved; choose a fresh `-OutputDirectory` when rerunning. Manifest and smoke-result JSON record outcomes. `--smoke-test` uses temporary data and exits automatically; ordinary runs use persistent user data.
 
 Exit an older running instance through **tray → Exit** before launching an updated build. Closing its window may only hide it; a second instance normally activates the existing window.
 

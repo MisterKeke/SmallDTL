@@ -5,6 +5,7 @@
 #include "../src/hotkeys/HotkeyUtils.h"
 #include "../src/profiles/ProfileManager.h"
 #include "../src/screenshots/ScreenshotManager.h"
+#include "../src/screenshots/ScreenshotDatabase.h"
 #include "../src/screenshots/ScreenshotNaming.h"
 #include "../src/settings/SettingsManager.h"
 
@@ -16,6 +17,7 @@
 #include <QFile>
 #include <QFontDatabase>
 #include <QJsonDocument>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QStandardPaths>
 #include <QTemporaryDir>
@@ -41,6 +43,7 @@
 #include <QtTest>
 #include <functional>
 #include <memory>
+#include <algorithm>
 
 static std::unique_ptr<QTemporaryDir> g_testData;
 
@@ -181,6 +184,151 @@ private slots:
         const QString second = QDir(directory.path()).filePath(QStringLiteral("Screenshot_2026-10-14_13-45-02_2.png"));
         QCOMPARE(QFileInfo(ScreenshotNaming::uniqueFilePath(directory.path(), timestamp, {second})).fileName(),
                  QStringLiteral("Screenshot_2026-10-14_13-45-02_3.png"));
+    }
+
+    void screenshotIndexMigrationIsPreservedAndRestartSafe()
+    {
+        const QString imagePath = QDir(AppDataPaths::root()).filePath(QStringLiteral("legacy-image.png"));
+        const QString missingPath = QDir(AppDataPaths::root()).filePath(QStringLiteral("legacy-missing.png"));
+        QImage image(31, 17, QImage::Format_ARGB32);
+        image.fill(Qt::cyan);
+        QVERIFY(image.save(imagePath));
+        QFile imageBeforeFile(imagePath);
+        QVERIFY(imageBeforeFile.open(QIODevice::ReadOnly));
+        const QByteArray imageBytes = imageBeforeFile.readAll();
+        const QJsonObject indexObject{{QStringLiteral("schemaVersion"), 1},
+                                      {QStringLiteral("paths"), QJsonArray{imagePath, missingPath}}};
+        QCOMPARE(indexObject.value(QStringLiteral("paths")).toArray().size(), 2);
+        const QByteArray indexBytes = QJsonDocument(indexObject).toJson(QJsonDocument::Indented);
+        const QString indexPath = QDir(AppDataPaths::root()).filePath(QStringLiteral("screenshot-index.json"));
+        QFile indexFile(indexPath);
+        QVERIFY(indexFile.open(QIODevice::WriteOnly));
+        QCOMPARE(indexFile.write(indexBytes), indexBytes.size());
+        indexFile.close();
+        const QString databasePath = QDir(AppDataPaths::root()).filePath(QStringLiteral("screenshots.db"));
+        QStringList ids;
+        {
+            ScreenshotDatabase database(databasePath);
+            QVERIFY2(database.initialize(indexPath), qPrintable(database.lastError()));
+            const auto records = database.screenshots();
+            QStringList importedPaths;
+            for (const auto &record : records)
+                importedPaths.append(record.path);
+            QVERIFY2(records.size() == 2, qPrintable(QStringLiteral("Imported %1; expected %2 and %3")
+                                                          .arg(importedPaths.join(QStringLiteral(" | ")), imagePath, missingPath)));
+            for (const auto &record : records) {
+                ids.append(record.id);
+                QCOMPARE(record.source, QStringLiteral("legacy-index"));
+                if (record.path == imagePath) {
+                    QCOMPARE(record.width, 31);
+                    QCOMPARE(record.height, 17);
+                    QCOMPARE(record.sizeBytes, QFileInfo(imagePath).size());
+                } else {
+                    QCOMPARE(record.path, missingPath);
+                    QVERIFY(!QFileInfo::exists(record.path));
+                }
+            }
+        }
+        QFile preserved(indexPath);
+        QVERIFY(preserved.open(QIODevice::ReadOnly));
+        QCOMPARE(preserved.readAll(), indexBytes);
+        {
+            ScreenshotDatabase database(databasePath);
+            QVERIFY2(database.initialize(indexPath), qPrintable(database.lastError()));
+            const auto records = database.screenshots();
+            QCOMPARE(records.size(), 2);
+            QStringList restartedIds;
+            for (const auto &record : records)
+                restartedIds.append(record.id);
+            std::sort(ids.begin(), ids.end());
+            std::sort(restartedIds.begin(), restartedIds.end());
+            QCOMPARE(restartedIds, ids);
+        }
+        QVERIFY(QFileInfo::exists(imagePath));
+        QFile imageAfterFile(imagePath);
+        QVERIFY(imageAfterFile.open(QIODevice::ReadOnly));
+        QCOMPARE(imageAfterFile.readAll(), imageBytes);
+    }
+
+    void screenshotDatabaseTagsAndBulkTransactions()
+    {
+        const QString firstPath = QDir(AppDataPaths::root()).filePath(QStringLiteral("first.png"));
+        const QString secondPath = QDir(AppDataPaths::root()).filePath(QStringLiteral("second.png"));
+        QImage image(20, 12, QImage::Format_ARGB32);
+        image.fill(Qt::yellow);
+        QVERIFY(image.save(firstPath));
+        QVERIFY(image.save(secondPath));
+        ScreenshotDatabase database(QDir(AppDataPaths::root()).filePath(QStringLiteral("screenshots.db")));
+        QVERIFY2(database.initialize(), qPrintable(database.lastError()));
+        QString firstId, secondId;
+        QVERIFY2(database.addScreenshot(firstPath, image.size(), QFileInfo(firstPath).size(), QStringLiteral("clipboard"), &firstId), qPrintable(database.lastError()));
+        QVERIFY2(database.addScreenshot(secondPath, image.size(), QFileInfo(secondPath).size(), QStringLiteral("clipboard"), &secondId), qPrintable(database.lastError()));
+        QVERIFY(!firstId.isEmpty());
+        QVERIFY(!secondId.isEmpty());
+        const QString topicId = database.createTag(QStringLiteral("Research"));
+        QVERIFY2(!topicId.isEmpty(), qPrintable(database.lastError()));
+        QVERIFY(database.createTag(QStringLiteral("research")).isEmpty());
+        QVERIFY(database.setTagForScreenshots({firstId}, topicId, true));
+        QCOMPARE(database.tagAssignmentState(topicId, {firstId, secondId}), 2);
+        QVERIFY2(database.setTagForScreenshots({firstId, secondId, firstId}, topicId, true), qPrintable(database.lastError()));
+        QCOMPARE(database.tagAssignmentState(topicId, {firstId, secondId}), 1);
+
+        const QString rollbackTag = database.createTag(QStringLiteral("Rollback"));
+        QVERIFY(!rollbackTag.isEmpty());
+        QVERIFY(!database.setTagForScreenshots({firstId, QStringLiteral("missing-screenshot-id")}, rollbackTag, true));
+        QCOMPARE(database.tagAssignmentState(rollbackTag, {firstId}), 0);
+        QVERIFY(database.renameTag(topicId, QStringLiteral("Project")));
+        auto records = database.screenshots();
+        QCOMPARE(records.size(), 2);
+        for (const auto &record : records)
+            QCOMPARE(record.tags, QStringList{QStringLiteral("Project")});
+        QVERIFY(database.setTagForScreenshots({firstId, secondId}, topicId, false));
+        QCOMPARE(database.tagAssignmentState(topicId, {firstId, secondId}), 0);
+        QVERIFY(database.setTagForScreenshots({firstId, secondId}, topicId, true));
+        QCOMPARE(database.tagAssignmentState(topicId, {firstId, secondId}), 1);
+
+        QString originalTimestamp;
+        for (const auto &record : database.screenshots())
+            if (record.id == firstId)
+                originalTimestamp = record.timestamp;
+        const QString renamedPath = QDir(AppDataPaths::root()).filePath(QStringLiteral("renamed.png"));
+        QVERIFY(QFile::rename(firstPath, renamedPath));
+        QVERIFY2(database.updateScreenshotPath(firstId, renamedPath), qPrintable(database.lastError()));
+        QCOMPARE(database.screenshotIdForPath(renamedPath), firstId);
+        bool preservedRename = false;
+        for (const auto &record : database.screenshots()) {
+            if (record.id == firstId) {
+                preservedRename = true;
+                QCOMPARE(record.timestamp, originalTimestamp);
+                QCOMPARE(record.tags, QStringList{QStringLiteral("Project")});
+            }
+        }
+        QVERIFY(preservedRename);
+        QVERIFY(database.deleteTag(topicId));
+        QVERIFY(QFileInfo::exists(renamedPath));
+        QVERIFY(QFileInfo::exists(secondPath));
+        records = database.screenshots();
+        QCOMPARE(records.size(), 2);
+        for (const auto &record : records)
+            QVERIFY(record.tags.isEmpty());
+        QVERIFY2(database.removeScreenshot(secondId), qPrintable(database.lastError()));
+        QVERIFY(QFileInfo::exists(secondPath));
+    }
+
+    void invalidScreenshotIndexIsPreservedAndReported()
+    {
+        const QString indexPath = QDir(AppDataPaths::root()).filePath(QStringLiteral("screenshot-index.json"));
+        const QByteArray invalid = QByteArrayLiteral("{\"schemaVersion\":1,\"paths\":[");
+        QFile index(indexPath);
+        QVERIFY(index.open(QIODevice::WriteOnly));
+        QCOMPARE(index.write(invalid), invalid.size());
+        index.close();
+        ScreenshotDatabase database(QDir(AppDataPaths::root()).filePath(QStringLiteral("screenshots.db")));
+        QVERIFY(!database.initialize(indexPath));
+        QVERIFY(!database.lastError().isEmpty());
+        QFile preserved(indexPath);
+        QVERIFY(preserved.open(QIODevice::ReadOnly));
+        QCOMPARE(preserved.readAll(), invalid);
     }
 
     void screenshotDestinationResolution()
@@ -341,14 +489,14 @@ private slots:
 
     void actionRunnerScreenshotCompletion_data()
     {
-        QTest::addColumn<bool>("failIndexWrite");
+        QTest::addColumn<bool>("failDatabaseWrite");
         QTest::newRow("save-before-next-action") << false;
-        QTest::newRow("save-failure-stops-sequence") << true;
+        QTest::newRow("database-failure-stops-sequence") << true;
     }
 
     void actionRunnerScreenshotCompletion()
     {
-        QFETCH(bool, failIndexWrite);
+        QFETCH(bool, failDatabaseWrite);
         QClipboard *clipboard = QGuiApplication::clipboard();
         auto previous = std::make_unique<QMimeData>();
         if (const QMimeData *contents = clipboard->mimeData()) {
@@ -371,8 +519,8 @@ private slots:
         QVERIFY(!actions.addStep(sequence, QStringLiteral("saveScreenshot")).isEmpty());
         const QString switchStep = actions.addStep(sequence, QStringLiteral("switchProfile"));
         QVERIFY(actions.updateStep(sequence, switchStep, {{QStringLiteral("targetProfileId"), targetProfile}}));
-        if (failIndexWrite)
-            QVERIFY(QDir().mkpath(QDir(AppDataPaths::root()).filePath(QStringLiteral("screenshot-index.json"))));
+        if (failDatabaseWrite)
+            screenshots.m_databaseReady = false;
         QSignalSpy saved(&screenshots, &ScreenshotManager::saveFinished);
         QSignalSpy completed(&runner, &ActionSequenceRunner::completed);
         QSignalSpy failed(&runner, &ActionSequenceRunner::failed);
@@ -385,7 +533,7 @@ private slots:
         QCOMPARE(saved.count(), 1);
         QVERIFY2(QFileInfo::exists(saved.first().at(0).toString()),qPrintable(saved.first().at(2).toString()));
         QCOMPARE(clipboard->image(), image);
-        if (failIndexWrite) {
+        if (failDatabaseWrite) {
             QCOMPARE(failed.count(), 1);
             QCOMPARE(completed.count(), 0);
             QCOMPARE(profiles.activeProfileId(), originalProfile);
@@ -647,7 +795,10 @@ private slots:
         SettingsManager settings;ProfileManager profiles(&settings);HotkeyManager manager(&profiles);QWindow owner;manager.setOwnerWindow(&owner);
         const QString original=profiles.activeProfileId();const QString second=profiles.createProfile(QStringLiteral("Other"));
         HotkeyAssignment global;global.id=QStringLiteral("global-action");global.key=Qt::Key_F20;global.modifiers=Qt::ControlModifier|Qt::AltModifier|Qt::ShiftModifier;
-        QVERIFY(profiles.addHotkey(QStringLiteral("global"),global));QVERIFY(manager.isRegistered(global.id));const int globalNativeId=manager.nativeIdFor(global.id);
+        QVERIFY(profiles.addHotkey(QStringLiteral("global"),global));
+        if (!manager.isRegistered(global.id))
+            QSKIP("Windows denied native hotkey registration in this execution environment.");
+        const int globalNativeId=manager.nativeIdFor(global.id);
         QVERIFY(profiles.setActivationShortcut(second,Qt::Key_F21,Qt::ControlModifier|Qt::AltModifier|Qt::ShiftModifier));const QString activation=QStringLiteral("activation:")+second;QVERIFY(manager.isRegistered(activation));const int activationNativeId=manager.nativeIdFor(activation);
         HotkeyAssignment active=global;active.id=QStringLiteral("profile-action");active.key=Qt::Key_F22;QVERIFY(profiles.addHotkey(original,active));QVERIFY(manager.isRegistered(active.id));
         QVERIFY(profiles.setActiveProfile(second));QVERIFY(!manager.isRegistered(active.id));QCOMPARE(manager.nativeIdFor(global.id),globalNativeId);QCOMPARE(manager.nativeIdFor(activation),activationNativeId);
@@ -808,6 +959,7 @@ private slots:
     void fullShellPagesAndPreferences()
     {
         ApplicationController controller;QQmlApplicationEngine engine;engine.addImageProvider(QStringLiteral("thumbnail"),new ThumbnailProvider);
+        QVERIFY(!controller.screenshots()->createTag(QStringLiteral("QML tag check")).isEmpty());
         for(const auto &entry:QList<QPair<QString,QObject *>>{{QStringLiteral("app"),&controller},{QStringLiteral("settings"),controller.settings()},{QStringLiteral("profiles"),controller.profiles()},{QStringLiteral("screenshots"),controller.screenshots()},{QStringLiteral("hotkeys"),controller.hotkeys()},{QStringLiteral("actions"),controller.actions()},{QStringLiteral("actionRunner"),controller.actionRunner()}})engine.rootContext()->setContextProperty(entry.first,entry.second);
         QSignalSpy warnings(&engine,&QQmlEngine::warnings);engine.loadFromModule(QStringLiteral("ScreenshotHotkeyManagerTest"),QStringLiteral("Main"));QVERIFY(!engine.rootObjects().isEmpty());
         auto *window=qobject_cast<QQuickWindow *>(engine.rootObjects().first());QVERIFY(window);window->show();QVERIFY(QTest::qWaitForWindowExposed(window));

@@ -22,6 +22,7 @@
 #include <QDesktopServices>
 #include <QUrl>
 #include <QDebug>
+#include <QTimer>
 #include <QByteArray>
 #include <QFutureWatcher>
 #include <QtConcurrent/QtConcurrentRun>
@@ -57,6 +58,9 @@ QVariant ScreenshotGalleryModel::data(const QModelIndex &index, int role) const
     case SizeBytesRole: return item.sizeBytes;
     case MissingRole: return item.missing;
     case ThumbnailUrlRole: return QUrl(QStringLiteral("image://thumbnail/")+QString::fromLatin1(item.path.toUtf8().toBase64(QByteArray::Base64UrlEncoding|QByteArray::OmitTrailingEquals))+QLatin1Char('/')+QString::number(item.modified.toMSecsSinceEpoch())+QLatin1Char('-')+QString::number(item.sizeBytes));
+    case IdRole: return item.id;
+    case TagsRole: return item.tags;
+    case SourceRole: return item.source;
     default: return {};
     }
 }
@@ -65,7 +69,8 @@ QHash<int, QByteArray> ScreenshotGalleryModel::roleNames() const
 {
     return {{FileNameRole, "fileName"}, {PathRole, "path"}, {ImageUrlRole, "imageUrl"},
             {ModifiedRole, "modified"}, {WidthRole, "pixelWidth"}, {HeightRole, "pixelHeight"},
-            {SizeBytesRole, "sizeBytes"}, {MissingRole, "missing"}, {ThumbnailUrlRole,"thumbnailUrl"}};
+            {SizeBytesRole, "sizeBytes"}, {MissingRole, "missing"}, {ThumbnailUrlRole,"thumbnailUrl"},
+            {IdRole,"screenshotId"}, {TagsRole,"tags"}, {SourceRole,"source"}};
 }
 
 void ScreenshotGalleryModel::setDirectory(const QString &directory)
@@ -78,7 +83,20 @@ void ScreenshotGalleryModel::setDirectory(const QString &directory)
 
 void ScreenshotGalleryModel::setManagedPaths(const QStringList &paths)
 {
-    m_managedPaths = paths;
+    QVector<ScreenshotRecord> records;
+    records.reserve(paths.size());
+    for (const QString &path : paths) {
+        ScreenshotRecord record;
+        record.id = path;
+        record.path = path;
+        records.append(record);
+    }
+    setRecords(records);
+}
+
+void ScreenshotGalleryModel::setRecords(const QVector<ScreenshotRecord> &records)
+{
+    m_records = records;
     refresh();
 }
 
@@ -89,20 +107,28 @@ void ScreenshotGalleryModel::refresh()
     const quint64 generation=m_generation;
     if(!m_loading){m_loading=true;emit loadingChanged();}
     const QString directory=QDir(m_directory).absolutePath();
-    const QStringList paths=m_managedPaths;
+    const QVector<ScreenshotRecord> records=m_records;
     auto *watcher=new QFutureWatcher<QVector<Item>>(this);
     connect(watcher,&QFutureWatcher<QVector<Item>>::finished,this,[this,watcher,generation]{
         const auto items=watcher->result();watcher->deleteLater();
         if(generation!=m_generation){m_loading=false;refresh();return;}
         beginResetModel();m_items=items;endResetModel();m_loading=false;emit loadingChanged();emit countChanged();
     });
-    watcher->setFuture(QtConcurrent::run([directory,paths]{
+    watcher->setFuture(QtConcurrent::run([directory,records]{
         QVector<Item> fresh;
-        for(const QString &path:paths) {
+        for(const ScreenshotRecord &record:records) {
+            const QString &path=record.path;
             const QFileInfo file(path);if(file.absolutePath().compare(directory,Qt::CaseInsensitive)!=0)continue;
-            if(!file.exists() || !file.isFile()){fresh.append({file.absoluteFilePath(),file.fileName(),{},0,{},true});continue;}
+            if(!file.exists() || !file.isFile()){
+                Item item;item.id=record.id;item.path=file.absoluteFilePath();item.fileName=file.fileName();
+                item.modified=QDateTime::fromString(record.timestamp,Qt::ISODateWithMs);item.sizeBytes=record.sizeBytes;
+                item.dimensions=QSize(record.width,record.height);item.missing=true;item.tags=record.tags;item.source=record.source;
+                fresh.append(item);continue;
+            }
             QImageReader reader(file.absoluteFilePath());
-            fresh.append({file.absoluteFilePath(),file.fileName(),file.lastModified(),file.size(),reader.size(),false});
+            Item item;item.id=record.id;item.path=file.absoluteFilePath();item.fileName=file.fileName();
+            item.modified=file.lastModified();item.sizeBytes=file.size();item.dimensions=reader.size();item.tags=record.tags;item.source=record.source;
+            fresh.append(item);
         }
         std::stable_sort(fresh.begin(),fresh.end(),[](const Item &a,const Item &b){return a.modified>b.modified;});return fresh;
     }));
@@ -115,30 +141,45 @@ QString ScreenshotGalleryModel::pathAt(int row) const
     return m_items.at(row).path;
 }
 
+QString ScreenshotGalleryModel::idAt(int row) const
+{
+    if (row < 0 || row >= m_items.size())
+        return {};
+    return m_items.at(row).id;
+}
+
 ScreenshotManager::ScreenshotManager(ProfileManager *profiles, SettingsManager *settings, QObject *parent)
     : QObject(parent), m_profiles(profiles), m_settings(settings),
-      m_clipboard(QGuiApplication::clipboard()), m_gallery(this)
+      m_clipboard(QGuiApplication::clipboard()), m_database({}, nullptr), m_gallery(this)
 {
-    loadCollectionIndex();
-    m_gallery.setManagedPaths(m_collectionPaths);
+    const QString legacyIndex = QDir(AppDataPaths::root()).filePath(QStringLiteral("screenshot-index.json"));
+    m_databaseReady = m_database.initialize(legacyIndex);
+    if (!m_databaseReady) {
+        m_lastSaveError = m_database.lastError();
+        qWarning().noquote() << m_lastSaveError;
+        QTimer::singleShot(0, this, [this] {
+            emit messageChanged(QStringLiteral("Screenshot database unavailable: %1").arg(m_database.lastError()), true);
+        });
+    }
     connect(m_clipboard, &QClipboard::dataChanged, this, &ScreenshotManager::updateClipboardState);
     connect(m_profiles, &ProfileManager::activeProfileChanged, this, [this] {
-        m_gallery.setDirectory(resolvedDestination());
+        m_gallery.setDirectory(resolvedDestination());refreshGallery();
         emit destinationChanged();
     });
     connect(m_profiles, &ProfileManager::profileDataChanged, this, [this](const QString &id) {
         if (id == m_profiles->activeProfileId() && m_destinationOverride.isEmpty()) {
-            m_gallery.setDirectory(resolvedDestination());
+            m_gallery.setDirectory(resolvedDestination());refreshGallery();
             emit destinationChanged();
         }
     });
     connect(m_settings, &SettingsManager::generalScreenshotDirectoryChanged, this, [this] {
         if (m_destinationOverride.isEmpty() && m_profiles->activeScreenshotDirectory().isEmpty()) {
-            m_gallery.setDirectory(resolvedDestination());
+            m_gallery.setDirectory(resolvedDestination());refreshGallery();
             emit destinationChanged();
         }
     });
     m_gallery.setDirectory(resolvedDestination());
+    refreshGallery();
     updateClipboardState();
 }
 
@@ -146,6 +187,14 @@ QString ScreenshotManager::destination() const { return resolvedDestination(); }
 bool ScreenshotManager::destinationOverridden() const { return !m_destinationOverride.isEmpty(); }
 bool ScreenshotManager::clipboardHasImage() const { return m_clipboardHasImage; }
 ScreenshotGalleryModel *ScreenshotManager::gallery() { return &m_gallery; }
+
+QVariantList ScreenshotManager::tags() const
+{
+    QVariantList result;
+    for (const ScreenshotTag &tag : m_database.tags())
+        result.append(QVariantMap{{QStringLiteral("tagId"), tag.id}, {QStringLiteral("name"), tag.name}});
+    return result;
+}
 
 QString ScreenshotManager::profileDestination(const QString &profileId) const
 {
@@ -162,6 +211,7 @@ void ScreenshotManager::setDestinationOverride(const QString &directory)
     m_destinationOverride = normalized;
     m_settings->addKnownScreenshotDirectory(normalized);
     m_gallery.setDirectory(resolvedDestination());
+    refreshGallery();
     emit destinationChanged();
 }
 
@@ -176,6 +226,7 @@ void ScreenshotManager::clearDestinationOverride()
         return;
     m_destinationOverride.clear();
     m_gallery.setDirectory(resolvedDestination());
+    refreshGallery();
     emit destinationChanged();
 }
 
@@ -236,8 +287,8 @@ void ScreenshotManager::completeSave(const QString &path,const SaveResult &resul
             return;
         }
         if (!addToCollection(path)) {
-            const QString message = QStringLiteral("Screenshot was saved, but the gallery index could not be updated: %1")
-                                        .arg(path);
+            const QString message = QStringLiteral("Screenshot was saved, but could not be added to the gallery: %1")
+                                        .arg(m_lastSaveError);
             emit messageChanged(message, true);
             emit saveFinished(path, false, message);
             return;
@@ -301,8 +352,8 @@ void ScreenshotManager::copyPath(const QString &path) const
 QString ScreenshotManager::renameScreenshot(const QString &path, const QString &newName)
 {
     const QString oldPath = QFileInfo(path).absoluteFilePath();
-    const int index = m_collectionPaths.indexOf(oldPath);
-    if (index < 0 || !QFileInfo::exists(oldPath)) {
+    const QString screenshotId = m_database.screenshotIdForPath(oldPath);
+    if (screenshotId.isEmpty() || !QFileInfo::exists(oldPath)) {
         emit messageChanged(QStringLiteral("That screenshot is no longer available."), true);
         return {};
     }
@@ -332,14 +383,12 @@ QString ScreenshotManager::renameScreenshot(const QString &path, const QString &
         return {};
     }
 
-    m_collectionPaths[index] = newPath;
-    if (!saveCollectionIndex()) {
-        m_collectionPaths[index] = oldPath;
+    if (!m_database.updateScreenshotPath(screenshotId, newPath)) {
         QFile::rename(newPath, oldPath);
-        emit messageChanged(QStringLiteral("Could not update the screenshot gallery index."), true);
+        emit messageChanged(QStringLiteral("Could not update the screenshot database: %1").arg(m_database.lastError()), true);
         return {};
     }
-    m_gallery.setManagedPaths(m_collectionPaths);
+    refreshGallery();
     emit messageChanged(QStringLiteral("Screenshot renamed."), false);
     return newPath;
 }
@@ -347,16 +396,14 @@ QString ScreenshotManager::renameScreenshot(const QString &path, const QString &
 bool ScreenshotManager::removeFromCollection(const QString &path)
 {
     const QString normalized = QFileInfo(path).absoluteFilePath();
-    const int index = m_collectionPaths.indexOf(normalized);
-    if (index < 0)
+    const QString screenshotId = m_database.screenshotIdForPath(normalized);
+    if (screenshotId.isEmpty())
         return false;
-    const QString previous = m_collectionPaths.takeAt(index);
-    if (!saveCollectionIndex()) {
-        m_collectionPaths.insert(index, previous);
-        emit messageChanged(QStringLiteral("Could not update the screenshot gallery index."), true);
+    if (!m_database.removeScreenshot(screenshotId)) {
+        emit messageChanged(QStringLiteral("Could not remove screenshot from the gallery: %1").arg(m_database.lastError()), true);
         return false;
     }
-    m_gallery.setManagedPaths(m_collectionPaths);
+    refreshGallery();
     emit messageChanged(QStringLiteral("Removed from the gallery. The screenshot file was kept."), false);
     return true;
 }
@@ -364,26 +411,88 @@ bool ScreenshotManager::removeFromCollection(const QString &path)
 bool ScreenshotManager::deleteScreenshotFile(const QString &path)
 {
     const QString normalized = QFileInfo(path).absoluteFilePath();
-    const int index = m_collectionPaths.indexOf(normalized);
-    if (index < 0 || !QFileInfo::exists(normalized)) {
+    const QString screenshotId = m_database.screenshotIdForPath(normalized);
+    if (screenshotId.isEmpty() || !QFileInfo::exists(normalized)) {
         emit messageChanged(QStringLiteral("That screenshot file is no longer available."), true);
         return false;
     }
-    const QString previous = m_collectionPaths.takeAt(index);
-    if (!saveCollectionIndex()) {
-        m_collectionPaths.insert(index, previous);
-        emit messageChanged(QStringLiteral("Could not update the screenshot gallery index."), true);
+    ScreenshotRecord removed;
+    if (!m_database.removeScreenshot(screenshotId, &removed)) {
+        emit messageChanged(QStringLiteral("Could not remove screenshot from the database: %1").arg(m_database.lastError()), true);
         return false;
     }
     if (!QFile::remove(normalized)) {
-        m_collectionPaths.insert(index, previous);
-        saveCollectionIndex();
-        emit messageChanged(QStringLiteral("Could not delete the screenshot file."), true);
+        if (!m_database.restoreScreenshot(removed))
+            emit messageChanged(QStringLiteral("Could not delete the screenshot file or restore its gallery record: %1").arg(m_database.lastError()), true);
+        else
+            emit messageChanged(QStringLiteral("Could not delete the screenshot file."), true);
         return false;
     }
-    m_gallery.setManagedPaths(m_collectionPaths);
+    refreshGallery();
     emit messageChanged(QStringLiteral("Screenshot file deleted."), false);
     return true;
+}
+
+QString ScreenshotManager::createTag(const QString &name)
+{
+    const QString id = m_database.createTag(name);
+    if (id.isEmpty()) {
+        emit messageChanged(QStringLiteral("Could not create tag: %1").arg(m_database.lastError()), true);
+        return {};
+    }
+    emit tagsChanged();
+    refreshGallery();
+    return id;
+}
+
+bool ScreenshotManager::renameTag(const QString &tagId, const QString &name)
+{
+    if (!m_database.renameTag(tagId, name)) {
+        emit messageChanged(QStringLiteral("Could not rename tag: %1").arg(m_database.lastError()), true);
+        return false;
+    }
+    emit tagsChanged();
+    refreshGallery();
+    return true;
+}
+
+bool ScreenshotManager::deleteTag(const QString &tagId)
+{
+    if (!m_database.deleteTag(tagId)) {
+        emit messageChanged(QStringLiteral("Could not delete tag: %1").arg(m_database.lastError()), true);
+        return false;
+    }
+    if (m_galleryTagFilter == tagId) {
+        m_galleryTagFilter.clear();
+        emit galleryTagFilterChanged();
+    }
+    emit tagsChanged();
+    refreshGallery();
+    return true;
+}
+
+int ScreenshotManager::tagAssignmentState(const QString &tagId, const QStringList &screenshotIds) const
+{
+    return m_database.tagAssignmentState(tagId, screenshotIds);
+}
+
+bool ScreenshotManager::setTagForScreenshots(const QStringList &screenshotIds, const QString &tagId, bool assigned)
+{
+    if (!m_database.setTagForScreenshots(screenshotIds, tagId, assigned)) {
+        emit messageChanged(QStringLiteral("Could not update screenshot tags: %1").arg(m_database.lastError()), true);
+        return false;
+    }
+    refreshGallery();
+    return true;
+}
+
+void ScreenshotManager::setGalleryTagFilter(const QString &tagId)
+{
+    if (m_galleryTagFilter == tagId)
+        return;
+    m_galleryTagFilter = tagId;
+    emit galleryTagFilterChanged();
+    refreshGallery();
 }
 
 void ScreenshotManager::updateClipboardState()
@@ -408,74 +517,30 @@ QString ScreenshotManager::nextFilePath(const QString &directory) const
     return ScreenshotNaming::uniqueFilePath(directory, QDateTime::currentDateTime(), m_pendingPaths,m_settings->filenamePattern());
 }
 
-void ScreenshotManager::loadCollectionIndex()
-{
-    const QString path = QDir(AppDataPaths::root())
-                             .filePath(QStringLiteral("screenshot-index.json"));
-    QFile file(path);
-    if (!file.exists())
-        return;
-    if (!file.open(QIODevice::ReadOnly)) {
-        m_collectionIndexValid = false;
-        qWarning().noquote() << "Cannot read screenshot collection index; preserving it.";
-        return;
-    }
-    QJsonParseError error;
-    const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &error);
-    if (error.error != QJsonParseError::NoError || !document.isObject() ||
-        document.object().value(QStringLiteral("schemaVersion")).toInt() != 1 ||
-        !document.object().value(QStringLiteral("paths")).isArray()) {
-        m_collectionIndexValid = false;
-        qWarning().noquote() << "Screenshot collection index is invalid; preserving it.";
-        return;
-    }
-    const QJsonArray paths = document.object().value(QStringLiteral("paths")).toArray();
-    for (const QJsonValue &value : paths) {
-        const QString itemPath = value.toString();
-        if (!itemPath.isEmpty() && !m_collectionPaths.contains(itemPath))
-            m_collectionPaths.append(itemPath);
-    }
-}
-
-bool ScreenshotManager::saveCollectionIndex()
-{
-    const QString path = QDir(AppDataPaths::root())
-                             .filePath(QStringLiteral("screenshot-index.json"));
-    if (!m_collectionIndexValid && QFileInfo::exists(path)) {
-        const QString backupPath = path + QStringLiteral(".invalid-") +
-                                   QDateTime::currentDateTimeUtc().toString(QStringLiteral("yyyyMMdd-HHmmss"));
-        if (!QFile::rename(path, backupPath))
-            return false;
-        m_collectionIndexValid = true;
-    }
-    QJsonArray paths;
-    for (const QString &itemPath : m_collectionPaths)
-        paths.append(itemPath);
-    const QJsonObject root{{QStringLiteral("schemaVersion"), 1}, {QStringLiteral("paths"), paths}};
-    QSaveFile file(path);
-    if (!file.open(QIODevice::WriteOnly))
-        return false;
-    file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
-    if (!file.commit())
-        return false;
-    m_collectionIndexValid = true;
-    return true;
-}
-
 bool ScreenshotManager::addToCollection(const QString &path)
 {
-    const QString normalized = QFileInfo(path).absoluteFilePath();
-    for (const QString &existing : std::as_const(m_collectionPaths)) {
-        if (existing.compare(normalized, Qt::CaseInsensitive) == 0)
-            return true;
-    }
-    m_collectionPaths.append(normalized);
-    if (!saveCollectionIndex()) {
-        m_collectionPaths.removeLast();
+    if (!m_databaseReady) {
+        m_lastSaveError = m_database.lastError().isEmpty()
+                              ? QStringLiteral("Screenshot database is unavailable.")
+                              : m_database.lastError();
         return false;
     }
-    m_gallery.setManagedPaths(m_collectionPaths);
+    const QFileInfo file(path);
+    QImageReader reader(path);
+    if (!m_database.addScreenshot(file.absoluteFilePath(), reader.size(), file.size(), QStringLiteral("clipboard"))) {
+        m_lastSaveError = m_database.lastError();
+        return false;
+    }
+    refreshGallery();
     return true;
+}
+
+void ScreenshotManager::refreshGallery()
+{
+    if (!m_databaseReady)
+        return;
+    m_gallery.setDirectory(resolvedDestination());
+    m_gallery.setRecords(m_database.screenshots(resolvedDestination(), m_galleryTagFilter));
 }
 
 ScreenshotManager::SaveResult ScreenshotManager::writeImage(const QImage &image, const QString &path)

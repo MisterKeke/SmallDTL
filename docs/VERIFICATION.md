@@ -46,3 +46,11 @@ The earlier dropdown correction missed the separate scope selector on Hotkeys. T
 The dropdown regression now checks every selected label in the Actions scope, step-type, and Hotkeys scope controls, plus every popup option, at minimum and default window widths. Offscreen and actual Windows runs each reported **4 passes, 0 failures**, with no QML warnings. The native Hotkeys screenshots were inspected with `Application-wide` selected and the popup open.
 
 Latest corrected portable package: `out/SmallDTL-menu-fix.zip`, containing `SmallDTL.exe`. Targeted evidence: `build-release/scope-labels-results.txt` and `build-release/native-scope-labels-results.txt`.
+
+## SQLite screenshot records and tags — 2026-10-15
+
+Screenshot membership now uses a versioned SQLite database. The legacy index is retained unchanged and imported restart-safely; tags, associations, stable IDs, tag filtering, multi-selection, and transactional mixed-state bulk tagging are covered by new tests. Settings and profile JSON storage remain unchanged.
+
+The Release build passed. The test executable reported **38 passes, 0 failures, 1 skip** after the native hotkey registration check detected that the current restricted execution environment denied Windows registration. New migration, restart, metadata, persistence, uniqueness, rename identity, foreign-key cascade, mixed-state, rollback, and file-preservation checks passed. The portable package includes `sqldrivers/qsqlite.dll`; its isolated smoke test verifies database initialization with development search paths removed.
+
+Latest package: `out/SmallDTL-portable-20261015-162200.zip`. The archive contains `SmallDTL-portable-20261015-162200/sqldrivers/qsqlite.dll`; the build manifest and smoke result record successful tests, database startup, and **0 QML warnings**. The same suite was run directly after packaging and reported **38 passed, 1 skipped**.

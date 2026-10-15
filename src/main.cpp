@@ -60,6 +60,8 @@ int main(int argc, char *argv[])
     QQuickStyle::setStyle(QStringLiteral("Material"));
     QImageReader::setAllocationLimit(256);
     ApplicationController controller;
+    if (smokeTest && !controller.screenshots()->databaseReady())
+        return 4;
     QObject::connect(&server, &QLocalServer::newConnection, &controller, [&server, &controller] {
         while (QLocalSocket *socket = server.nextPendingConnection()) {
             QObject::connect(socket, &QLocalSocket::readyRead, &controller, [socket, &controller] {

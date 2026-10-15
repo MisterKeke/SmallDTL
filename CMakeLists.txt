@@ -10,7 +10,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Quick QuickControls2 Widgets Concurrent Network)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Quick QuickControls2 Widgets Concurrent Network Sql)
 qt_standard_project_setup(REQUIRES 6.8)
 include(CTest)
 
@@ -33,6 +33,8 @@ qt_add_executable(ScreenshotHotkeyManager WIN32
     src/profiles/ProfileManager.cpp
     src/screenshots/ScreenshotManager.h
     src/screenshots/ScreenshotManager.cpp
+    src/screenshots/ScreenshotDatabase.h
+    src/screenshots/ScreenshotDatabase.cpp
     src/hotkeys/HotkeyManager.h
     src/hotkeys/HotkeyManager.cpp
 )
@@ -67,6 +69,7 @@ target_link_libraries(ScreenshotHotkeyManager PRIVATE
     Qt6::Widgets
     Qt6::Concurrent
     Qt6::Network
+    Qt6::Sql
 )
 
 target_compile_definitions(ScreenshotHotkeyManager PRIVATE
@@ -98,9 +101,11 @@ if(BUILD_TESTING)
         src/profiles/ProfileManager.cpp
         src/screenshots/ScreenshotManager.h
         src/screenshots/ScreenshotManager.cpp
+        src/screenshots/ScreenshotDatabase.h
+        src/screenshots/ScreenshotDatabase.cpp
     )
     target_link_libraries(ScreenshotHotkeyManagerTests PRIVATE
-        Qt6::Core Qt6::Gui Qt6::Quick Qt6::QuickControls2 Qt6::Widgets Qt6::Concurrent Qt6::Test
+        Qt6::Core Qt6::Gui Qt6::Quick Qt6::QuickControls2 Qt6::Widgets Qt6::Concurrent Qt6::Sql Qt6::Test
     )
     qt_add_qml_module(ScreenshotHotkeyManagerTests
         URI ScreenshotHotkeyManagerTest
