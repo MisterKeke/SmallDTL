@@ -13,6 +13,7 @@ struct ActionStep {
     int qrPixelsPerModule = 8;
     int qrMarginModules = 4;
     QString targetProfileId;
+    QString layoutId;
     int delayMs = 1000;
 };
 struct ActionSequence {

@@ -8,7 +8,9 @@ Item {
     property int newModifiers: 0
     property int profileOptionsEpoch: 0
     property int sequenceOptionsEpoch: 0
+    property int layoutOptionsEpoch: 0
     property string newSequenceId: ""
+    property string newLayoutId: ""
 
     function refreshSequences() {
         sequenceOptionsEpoch += 1
@@ -32,6 +34,7 @@ Item {
         target: actions
         function onSequencesChanged() { root.refreshSequences() }
     }
+    Connections { target: windowArrangements; function onLayoutsChanged() { root.layoutOptionsEpoch += 1 } }
 
     Component.onCompleted: refreshSequences()
 
@@ -94,6 +97,7 @@ Item {
                         required property string actionType
                         required property string targetProfileId
                         required property string sequenceId
+                        required property string layoutId
                         required property bool assignmentEnabled
                         required property bool registered
                         required property string status
@@ -102,7 +106,7 @@ Item {
                         property bool editingShortcut: false
 
                         Layout.fillWidth: true
-                        implicitHeight: editingShortcut || actionType === "switchProfile" || actionType === "sequence" ? 144 : 100
+                        implicitHeight: editingShortcut || actionType === "switchProfile" || actionType === "sequence" || actionType === "applyWindowLayout" ? 144 : 100
                         radius: 12
                         color: settings.palette["#191a20"]
                         border.color: registered ? settings.palette["#315542"] : settings.palette["#2d2e37"]
@@ -120,18 +124,20 @@ Item {
                                     id: actionTypePicker
                                     objectName: "hotkeyActionTypePicker"
                                     Layout.preferredWidth: 170
-                                    model: ["Save clipboard screenshot", "Switch profile", "Run action sequence"]
-                                    currentIndex: actionType === "sequence" ? 2 : actionType === "switchProfile" ? 1 : 0
+                                    model: ["Save clipboard screenshot", "Switch profile", "Run action sequence", "Apply window layout"]
+                                    currentIndex: actionType === "sequence" ? 2 : actionType === "switchProfile" ? 1 : actionType === "applyWindowLayout" ? 3 : 0
                                     onActivated: {
-                                        const nextType = currentIndex === 0 ? "saveScreenshot" : currentIndex === 1 ? "switchProfile" : "sequence"
+                                        const nextType = ["saveScreenshot", "switchProfile", "sequence", "applyWindowLayout"][currentIndex]
                                         const profileList = profiles.profileOptions()
                                         const sequenceList = actions.sequenceOptions()
+                                        const layoutList = windowArrangements.layoutOptions()
                                         const nextProfile = nextType === "switchProfile" && targetProfileId.length === 0 && profileList.length > 0
                                                             ? profileList[0].id : targetProfileId
                                         const nextSequence = nextType === "sequence" && sequenceId.length === 0 && sequenceList.length > 0
                                                              ? sequenceList[0].id : sequenceId
-                                        if (!app.updateHotkey(assignmentId, key, modifiers, nextType, nextProfile, nextSequence, assignmentEnabled))
-                                            currentIndex = actionType === "sequence" ? 2 : actionType === "switchProfile" ? 1 : 0
+                                        const nextLayout = nextType === "applyWindowLayout" && layoutId.length === 0 && layoutList.length > 0 ? layoutList[0].id : layoutId
+                                        if (!app.updateHotkey(assignmentId, key, modifiers, nextType, nextProfile, nextSequence, assignmentEnabled, nextLayout))
+                                            currentIndex = actionType === "sequence" ? 2 : actionType === "switchProfile" ? 1 : actionType === "applyWindowLayout" ? 3 : 0
                                     }
                                 }
                                 Item { Layout.fillWidth: true }
@@ -141,16 +147,16 @@ Item {
                             }
                             RowLayout {
                         Layout.fillWidth: true
-                                visible: editingShortcut || actionType === "switchProfile" || actionType === "sequence"
+                                visible: editingShortcut || actionType === "switchProfile" || actionType === "sequence" || actionType === "applyWindowLayout"
                                 HotkeyRecorder {
                                     visible: editingShortcut
                                     key: rowKey
                                     modifiers: rowModifiers
                                     onRecorded: function(newKeyValue, newModifiersValue) {
                                         shortcutCard.editingShortcut = false
-                                        app.updateHotkey(assignmentId, newKeyValue, newModifiersValue, actionType, targetProfileId, sequenceId, assignmentEnabled)
+                                        app.updateHotkey(assignmentId, newKeyValue, newModifiersValue, actionType, targetProfileId, sequenceId, assignmentEnabled, layoutId)
                                     }
-                                    onCleared: app.updateHotkey(assignmentId, 0, 0, actionType, targetProfileId, sequenceId, assignmentEnabled)
+                                    onCleared: app.updateHotkey(assignmentId, 0, 0, actionType, targetProfileId, sequenceId, assignmentEnabled, layoutId)
                                 }
                                 Label { visible: actionType === "switchProfile"; text: "Switch target"; color: settings.palette["#999aa4"]; font.pixelSize: 10 }
                                 ComboBox {
@@ -160,7 +166,7 @@ Item {
                                     textRole: "name"
                                     valueRole: "id"
                                     currentValue: targetProfileId
-                                    onActivated: if (!app.updateHotkey(assignmentId, key, modifiers, actionType, currentValue, sequenceId, assignmentEnabled)) currentValue = Qt.binding(function() { return targetProfileId })
+                                    onActivated: if (!app.updateHotkey(assignmentId, key, modifiers, actionType, currentValue, sequenceId, assignmentEnabled, layoutId)) currentValue = Qt.binding(function() { return targetProfileId })
                                 }
                                 Label { visible: actionType === "sequence"; text: "Sequence"; color: settings.palette["#999aa4"]; font.pixelSize: 10 }
                                 ComboBox {
@@ -170,7 +176,14 @@ Item {
                                     textRole: "name"
                                     valueRole: "id"
                                     currentValue: sequenceId
-                                    onActivated: if (!app.updateHotkey(assignmentId, key, modifiers, actionType, targetProfileId, currentValue, assignmentEnabled)) currentValue = Qt.binding(function() { return sequenceId })
+                                    onActivated: if (!app.updateHotkey(assignmentId, key, modifiers, actionType, targetProfileId, currentValue, assignmentEnabled, layoutId)) currentValue = Qt.binding(function() { return sequenceId })
+                                }
+                                Label { visible: actionType === "applyWindowLayout"; text: "Layout"; color: settings.palette["#999aa4"]; font.pixelSize: 10 }
+                                ComboBox {
+                                    visible: actionType === "applyWindowLayout"; Layout.preferredWidth: 240
+                                    model: { root.layoutOptionsEpoch; return windowArrangements.layoutOptions() }
+                                    textRole: "name"; valueRole: "id"; currentValue: layoutId
+                                    onActivated: if (!app.updateHotkey(assignmentId,key,modifiers,actionType,targetProfileId,sequenceId,assignmentEnabled,currentValue)) currentValue = Qt.binding(function(){return layoutId})
                                 }
                                 Item { Layout.fillWidth: true }
                             }
@@ -212,7 +225,7 @@ Item {
                         onRecorded: function(keyValue, modifierValue) { root.newKey = keyValue; root.newModifiers = modifierValue }
                         onCleared: { root.newKey = 0; root.newModifiers = 0 }
                     }
-                    ComboBox { id: newActionType; Layout.preferredWidth: 205; model: ["Save clipboard screenshot", "Switch profile", "Run action sequence"] }
+                    ComboBox { id: newActionType; Layout.preferredWidth: 205; model: ["Save clipboard screenshot", "Switch profile", "Run action sequence", "Apply window layout"] }
 
 
                     Item { Layout.fillWidth: true }
@@ -220,12 +233,14 @@ Item {
                         text: "Add shortcut"
                         enabled: root.newKey !== 0 && (newActionType.currentIndex === 0 ||
                                  (newActionType.currentIndex === 1 && newTargetProfile.currentValue !== "") ||
-                                 (newActionType.currentIndex === 2 && newSequence.count > 0 && root.newSequenceId.length > 0))
+                                 (newActionType.currentIndex === 2 && newSequence.count > 0 && root.newSequenceId.length > 0) ||
+                                 (newActionType.currentIndex === 3 && newLayout.count > 0 && root.newLayoutId.length > 0))
                         onClicked: {
                             if (app.addHotkey(root.newKey, root.newModifiers,
-                                              newActionType.currentIndex === 0 ? "saveScreenshot" : newActionType.currentIndex === 1 ? "switchProfile" : "sequence",
+                                              ["saveScreenshot", "switchProfile", "sequence", "applyWindowLayout"][newActionType.currentIndex],
                                               newActionType.currentIndex === 1 ? newTargetProfile.currentValue : "",
-                                              newActionType.currentIndex === 2 ? root.newSequenceId : "")) {
+                                              newActionType.currentIndex === 2 ? root.newSequenceId : "",
+                                              newActionType.currentIndex === 3 ? root.newLayoutId : "")) {
                                 root.newKey = 0
                                 root.newModifiers = 0
                             }
@@ -243,6 +258,15 @@ Item {
                         textRole: "name"
                         valueRole: "id"
                         Component.onCompleted: if (count > 0 && currentIndex < 0) currentIndex = 0
+                    }
+                    ComboBox {
+                        id: newLayout
+                        visible: newActionType.currentIndex === 3
+                        Layout.preferredWidth: 240
+                        model: { root.layoutOptionsEpoch; return windowArrangements.layoutOptions() }
+                        textRole: "name"; valueRole: "id"; currentValue: root.newLayoutId
+                        onActivated: root.newLayoutId = currentValue
+                        Component.onCompleted: { const opts = windowArrangements.layoutOptions(); if (root.newLayoutId === "" && opts.length > 0) root.newLayoutId = opts[0].id }
                     }
                     ComboBox {
                         id: newSequence

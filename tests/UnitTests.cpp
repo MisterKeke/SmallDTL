@@ -12,6 +12,9 @@
 #include "../src/screenshots/ScreenshotEditorImage.h"
 #include "../src/screenshots/ScreenshotNaming.h"
 #include "../src/settings/SettingsManager.h"
+#include "../src/windows/WindowArrangementGeometry.h"
+#include "../src/windows/WindowArrangementMatching.h"
+#include "../src/windows/WindowArrangementManager.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -105,6 +108,74 @@ private slots:
         QCOMPARE(profile->hotkeys.first().sequenceId, sequence);
         QCOMPARE(profile->sequences.size(),1);
     }
+
+    void windowArrangementGeometryUsesMonitorWorkAreas()
+    {
+        const QRect workArea(-1920, 80, 1920, 1000);
+        QCOMPARE(WindowArrangementGeometry::denormalize(WindowArrangementGeometry::placement(QStringLiteral("leftHalf")), workArea), QRect(-1920,80,960,1000));
+        QCOMPARE(WindowArrangementGeometry::denormalize(WindowArrangementGeometry::placement(QStringLiteral("bottomRight")), workArea), QRect(-960,580,960,500));
+        QCOMPARE(WindowArrangementGeometry::denormalize(WindowArrangementGeometry::placement(QStringLiteral("center")), workArea), QRect(-1536,230,1152,700));
+        const QRect original(-1440, 180, 900, 720);
+        const QRect restored=WindowArrangementGeometry::denormalize(WindowArrangementGeometry::normalize(original,workArea),workArea);
+        QCOMPARE(restored,original);
+        const QRect changedDpiArea(1920,0,2560,1440);
+        const QRect moved=WindowArrangementGeometry::denormalize(WindowArrangementGeometry::normalize(original,workArea),changedDpiArea);
+        QVERIFY(moved.x()>=changedDpiArea.x());
+        QVERIFY(moved.y()>=changedDpiArea.y());
+        QVERIFY(changedDpiArea.contains(moved));
+    }
+
+    void windowArrangementMatchingReportsAmbiguityAndFiltersTitles()
+    {
+        const QStringList executables{QStringLiteral("C:/Apps/Editor.exe"),QStringLiteral("c:\\apps\\EDITOR.EXE"),QStringLiteral("C:/Apps/Other.exe")};
+        const QStringList titles{QStringLiteral("Document A - Editor"),QStringLiteral("Settings - Editor"),QStringLiteral("Document B - Other")};
+        QCOMPARE(WindowArrangementMatching::matchingRows(QStringLiteral("c:\\apps\\editor.exe"),{},executables,titles),QVector<int>({0,1}));
+        QCOMPARE(WindowArrangementMatching::matchingRows(QStringLiteral("C:/Apps/Editor.exe"),QStringLiteral("Settings"),executables,titles),QVector<int>({1}));
+        QVERIFY(WindowArrangementMatching::matchingRows(QStringLiteral("missing.exe"),{},executables,titles).isEmpty());
+    }
+
+    void windowArrangementLayoutStorageSurvivesRestart()
+    {
+        SettingsManager settings;ProfileManager profiles(&settings);
+        WindowLayout layout;layout.id=QStringLiteral("test-layout");layout.name=QStringLiteral("Coding");layout.profileId=profiles.activeProfileId();
+        layout.rules.append({QStringLiteral("C:/Apps/Editor.exe"),QStringLiteral("Project"),QStringLiteral("\\\\.\\DISPLAY2"),{-1.0,0.0,0.5,1.0},false});
+        WindowLayout parsed;QVERIFY(WindowArrangementManager::parseLayout(WindowArrangementManager::serializeLayout(layout),&parsed));
+        QCOMPARE(parsed.id,layout.id);QCOMPARE(parsed.profileId,layout.profileId);QCOMPARE(parsed.rules.first().titleRule,QStringLiteral("Project"));
+        QDir().mkpath(AppDataPaths::root());QFile file(QDir(AppDataPaths::root()).filePath(QStringLiteral("window-layouts.json")));QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(QJsonDocument(QJsonObject{{QStringLiteral("schemaVersion"),1},{QStringLiteral("layouts"),QJsonArray{WindowArrangementManager::serializeLayout(layout)}}}).toJson());file.close();
+        {WindowArrangementManager manager(&profiles);QCOMPARE(manager.layouts().size(),1);QCOMPARE(manager.layoutInfo(layout.id).value(QStringLiteral("count")).toInt(),1);QTRY_VERIFY_WITH_TIMEOUT(!manager.busy(),5000);}
+        {WindowArrangementManager restarted(&profiles);QCOMPARE(restarted.layoutOptions().size(),1);QCOMPARE(restarted.layoutInfo(layout.id).value(QStringLiteral("name")).toString(),layout.name);QTRY_VERIFY_WITH_TIMEOUT(!restarted.busy(),5000);}
+    }
+
+    void windowLayoutHotkeyAndSequenceReferencesPersist()
+    {
+        SettingsManager settings;ProfileManager profiles(&settings);const QString profileId=profiles.activeProfileId();
+        const QString layoutId=QStringLiteral("layout-reference");
+        HotkeyAssignment binding;binding.id=QStringLiteral("layout-hotkey");binding.key=Qt::Key_F8;binding.modifiers=Qt::ControlModifier;binding.actionType=QStringLiteral("applyWindowLayout");binding.layoutId=layoutId;
+        QVERIFY(profiles.addHotkey(profileId,binding));
+        ActionManager actions(&profiles);const QString sequence=actions.createSequence(QStringLiteral("Arrange on request"));
+        const QString step=actions.addStep(sequence,QStringLiteral("applyWindowLayout"));QVERIFY(!step.isEmpty());
+        QVERIFY(actions.updateStep(sequence,step,{{QStringLiteral("layoutId"),layoutId}}));QVERIFY(actions.validationError(sequence).isEmpty());
+        bool valid=false;const Profile roundTrip=ProfileManager::parseProfile(ProfileManager::serializeProfile(*profiles.profileById(profileId)),&valid);QVERIFY(valid);
+        QCOMPARE(roundTrip.hotkeys.first().layoutId,layoutId);
+        QCOMPARE(actions.steps(sequence).first().toMap().value(QStringLiteral("layoutId")).toString(),layoutId);
+    }
+
+#ifdef Q_OS_WIN
+    void windowArrangementNativeMonitorEnumeration()
+    {
+        SettingsManager settings;ProfileManager profiles(&settings);WindowArrangementManager manager(&profiles);
+        QVERIFY(!manager.monitors().isEmpty());
+        bool primaryFound=false;
+        for(const QVariant &monitorValue:manager.monitors()){
+            const QVariantMap monitor=monitorValue.toMap();
+            QVERIFY(monitor.value(QStringLiteral("width")).toInt()>0);
+            QVERIFY(monitor.value(QStringLiteral("height")).toInt()>0);
+            primaryFound=primaryFound||monitor.value(QStringLiteral("primary")).toBool();
+        }
+        QVERIFY(primaryFound);QTRY_VERIFY_WITH_TIMEOUT(!manager.busy(),5000);
+    }
+#endif
 
     void profileCrudAndActivation()
     {
@@ -1196,6 +1267,7 @@ private slots:
         engine.rootContext()->setContextProperty(QStringLiteral("actions"), &actions);
         engine.rootContext()->setContextProperty(QStringLiteral("profiles"), controller.profiles());
         engine.rootContext()->setContextProperty(QStringLiteral("actionRunner"), controller.actionRunner());
+        engine.rootContext()->setContextProperty(QStringLiteral("windowArrangements"), controller.windowArrangements());
         QSignalSpy warnings(&engine, &QQmlEngine::warnings);
         QQuickWindow window;
         QQmlComponent component(&engine, QUrl::fromLocalFile(
@@ -2104,7 +2176,8 @@ private slots:
                  {QStringLiteral("clipboardHistory"), controller.clipboardHistory()},
                  {QStringLiteral("fileShelf"), controller.fileShelf()},
                  {QStringLiteral("hotkeys"), controller.hotkeys()}, {QStringLiteral("actions"), controller.actions()},
-                 {QStringLiteral("actionRunner"), controller.actionRunner()}})
+                 {QStringLiteral("actionRunner"), controller.actionRunner()},
+                 {QStringLiteral("windowArrangements"), controller.windowArrangements()}})
             engine.rootContext()->setContextProperty(entry.first, entry.second);
         QSignalSpy warnings(&engine, &QQmlEngine::warnings);
         engine.loadFromModule(QStringLiteral("ScreenshotHotkeyManagerTest"), QStringLiteral("Main"));
@@ -2170,16 +2243,21 @@ private slots:
     {
         ApplicationController controller;QQmlApplicationEngine engine;engine.addImageProvider(QStringLiteral("thumbnail"),new ThumbnailProvider);engine.addImageProvider(QStringLiteral("qrpreview"),new QrImageProvider(controller.qrCode()));
         QVERIFY(!controller.screenshots()->createTag(QStringLiteral("QML tag check")).isEmpty());
-        for(const auto &entry:QList<QPair<QString,QObject *>>{{QStringLiteral("app"),&controller},{QStringLiteral("settings"),controller.settings()},{QStringLiteral("profiles"),controller.profiles()},{QStringLiteral("screenshots"),controller.screenshots()},{QStringLiteral("clipboardHistory"),controller.clipboardHistory()},{QStringLiteral("fileShelf"),controller.fileShelf()},{QStringLiteral("qrCode"),controller.qrCode()},{QStringLiteral("hotkeys"),controller.hotkeys()},{QStringLiteral("actions"),controller.actions()},{QStringLiteral("actionRunner"),controller.actionRunner()}})engine.rootContext()->setContextProperty(entry.first,entry.second);
+        for(const auto &entry:QList<QPair<QString,QObject *>>{{QStringLiteral("app"),&controller},{QStringLiteral("settings"),controller.settings()},{QStringLiteral("profiles"),controller.profiles()},{QStringLiteral("screenshots"),controller.screenshots()},{QStringLiteral("clipboardHistory"),controller.clipboardHistory()},{QStringLiteral("fileShelf"),controller.fileShelf()},{QStringLiteral("qrCode"),controller.qrCode()},{QStringLiteral("hotkeys"),controller.hotkeys()},{QStringLiteral("actions"),controller.actions()},{QStringLiteral("actionRunner"),controller.actionRunner()},{QStringLiteral("windowArrangements"),controller.windowArrangements()}})engine.rootContext()->setContextProperty(entry.first,entry.second);
         QSignalSpy warnings(&engine,&QQmlEngine::warnings);engine.loadFromModule(QStringLiteral("ScreenshotHotkeyManagerTest"),QStringLiteral("Main"));QVERIFY(!engine.rootObjects().isEmpty());
         auto *window=qobject_cast<QQuickWindow *>(engine.rootObjects().first());QVERIFY(window);window->show();QVERIFY(QTest::qWaitForWindowExposed(window));
-        for(const QString &page:{QStringLiteral("Dashboard"),QStringLiteral("Screenshots"),QStringLiteral("Clipboard History"),QStringLiteral("File Shelf"),QStringLiteral("QR Codes"),QStringLiteral("Hotkeys"),QStringLiteral("Profiles"),QStringLiteral("Actions"),QStringLiteral("Settings")}){
+        for(const QString &page:{QStringLiteral("Dashboard"),QStringLiteral("Screenshots"),QStringLiteral("Clipboard History"),QStringLiteral("File Shelf"),QStringLiteral("QR Codes"),QStringLiteral("Window Arrangements"),QStringLiteral("Hotkeys"),QStringLiteral("Profiles"),QStringLiteral("Actions"),QStringLiteral("Settings")}){
             controller.setCurrentPage(page);
             QTest::qWait(80);
             if (page == QStringLiteral("QR Codes")) {
                 QVERIFY(findItem(window->contentItem(), QStringLiteral("generateQrButton")));
                 QVERIFY(findItem(window->contentItem(), QStringLiteral("qrResultsList")));
                 QVERIFY(window->grabWindow().save(QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("qr-code-page.png"))));
+            }
+            if(page==QStringLiteral("Window Arrangements")){
+                QVERIFY(findItem(window->contentItem(),QStringLiteral("windowArrangementWindowList")));
+                QVERIFY(findItem(window->contentItem(),QStringLiteral("windowArrangementPreview")));
+                QVERIFY(window->grabWindow().save(QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("window-arrangements-page.png"))));
             }
         }
         window->hide();
@@ -2251,7 +2329,7 @@ private slots:
         QVERIFY(controller.addHotkey(Qt::Key_F19,Qt::ControlModifier,QStringLiteral("saveScreenshot"),QString(),QString()));
         controller.setCurrentPage(QStringLiteral("Hotkeys"));
         QQmlApplicationEngine engine;engine.addImageProvider(QStringLiteral("thumbnail"),new ThumbnailProvider);engine.addImageProvider(QStringLiteral("qrpreview"),new QrImageProvider(controller.qrCode()));
-        for(const auto &entry:QList<QPair<QString,QObject *>>{{QStringLiteral("app"),&controller},{QStringLiteral("settings"),controller.settings()},{QStringLiteral("profiles"),controller.profiles()},{QStringLiteral("screenshots"),controller.screenshots()},{QStringLiteral("clipboardHistory"),controller.clipboardHistory()},{QStringLiteral("fileShelf"),controller.fileShelf()},{QStringLiteral("qrCode"),controller.qrCode()},{QStringLiteral("hotkeys"),controller.hotkeys()},{QStringLiteral("actions"),controller.actions()},{QStringLiteral("actionRunner"),controller.actionRunner()}})engine.rootContext()->setContextProperty(entry.first,entry.second);
+        for(const auto &entry:QList<QPair<QString,QObject *>>{{QStringLiteral("app"),&controller},{QStringLiteral("settings"),controller.settings()},{QStringLiteral("profiles"),controller.profiles()},{QStringLiteral("screenshots"),controller.screenshots()},{QStringLiteral("clipboardHistory"),controller.clipboardHistory()},{QStringLiteral("fileShelf"),controller.fileShelf()},{QStringLiteral("qrCode"),controller.qrCode()},{QStringLiteral("hotkeys"),controller.hotkeys()},{QStringLiteral("actions"),controller.actions()},{QStringLiteral("actionRunner"),controller.actionRunner()},{QStringLiteral("windowArrangements"),controller.windowArrangements()}})engine.rootContext()->setContextProperty(entry.first,entry.second);
         QSignalSpy warnings(&engine,&QQmlEngine::warnings);engine.loadFromModule(QStringLiteral("ScreenshotHotkeyManagerTest"),QStringLiteral("Main"));QVERIFY(!engine.rootObjects().isEmpty());
         auto *window=qobject_cast<QQuickWindow *>(engine.rootObjects().first());QVERIFY(window);window->show();QVERIFY(QTest::qWaitForWindowExposed(window));QTest::qWait(80);
         auto *picker=findItem(window->contentItem(),QStringLiteral("hotkeyActionTypePicker"));QVERIFY(picker);

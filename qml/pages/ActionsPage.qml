@@ -8,6 +8,7 @@ Item {
     property string selectedSequenceId: ""
     property int sequenceEpoch: 0
     property int profileEpoch: 0
+    property int layoutEpoch: 0
 
     ListModel {
         id: selectedStepModel
@@ -47,6 +48,7 @@ Item {
                 stepQrMarginModules: step.qrMarginModules,
                 stepQrErrorCorrection: step.qrErrorCorrection,
                 stepTargetProfileId: step.targetProfileId,
+                stepLayoutId: step.layoutId,
                 stepDelayMs: step.delayMs
             }
             // Keep existing delegates alive while parameters are edited.
@@ -74,6 +76,7 @@ Item {
         if (type === "generateQr") return "Generate QR and copy image"
         if (type === "decodeQrImage") return "Decode QR image"
         if (type === "switchProfile") return "Switch profile"
+        if (type === "applyWindowLayout") return "Apply window layout"
         if (type === "wait") return "Wait"
         return "Action"
     }
@@ -91,6 +94,7 @@ Item {
         target: profiles
         function onProfilesChanged() { root.profileEpoch += 1 }
     }
+    Connections { target: windowArrangements; function onLayoutsChanged() { root.layoutEpoch += 1 } }
 
     onSelectedSequenceIdChanged: reloadSteps()
     Component.onCompleted: {
@@ -299,7 +303,7 @@ Item {
                             implicitContentWidthPolicy: ComboBox.WidestText
                             Layout.minimumWidth: implicitWidth
                             Layout.fillWidth: true
-                            model: ["Launch application", "Open folder", "Open file", "Open URL", "Save clipboard screenshot", "Generate QR and copy image", "Decode QR image", "Switch profile", "Wait"]
+                            model: ["Launch application", "Open folder", "Open file", "Open URL", "Save clipboard screenshot", "Generate QR and copy image", "Decode QR image", "Switch profile", "Wait", "Apply window layout"]
                         }
                         Button {
                             objectName: "addStepButton"
@@ -308,7 +312,7 @@ Item {
                             onClicked: {
                                 if (!root.hasSelectedSequence())
                                     return
-                                const types = ["launchApplication", "openFolder", "openFile", "openUrl", "saveScreenshot", "generateQr", "decodeQrImage", "switchProfile", "wait"]
+                                const types = ["launchApplication", "openFolder", "openFile", "openUrl", "saveScreenshot", "generateQr", "decodeQrImage", "switchProfile", "wait", "applyWindowLayout"]
                                 const stepId = actions.addStep(root.selectedSequenceId, types[stepTypePicker.currentIndex])
                                 if (stepId.length > 0)
                                     app.dismissMessage()
@@ -342,6 +346,7 @@ Item {
                                     required property int stepQrMarginModules
                                     required property string stepQrErrorCorrection
                                     required property string stepTargetProfileId
+                                    required property string stepLayoutId
                                     required property int stepDelayMs
                                     Layout.fillWidth: true
                                     implicitHeight: stepContent.implicitHeight + 20
@@ -442,6 +447,18 @@ Item {
                                                 placeholderText: "https://example.com"
                                                 onEditingFinished: { actions.updateStep(root.selectedSequenceId, stepId, { "url": text }); text = Qt.binding(function() { return stepUrl }) }
                                             }
+                                        }
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            visible: stepType === "applyWindowLayout"
+                                            Label { text: "Saved layout"; color: settings.palette["#999aa4"]; font.pixelSize: 9; Layout.preferredWidth: 65 }
+                                            ComboBox {
+                                                Layout.preferredWidth: 300
+                                                model: { root.layoutEpoch; return windowArrangements.layoutOptions() }
+                                                textRole: "name"; valueRole: "id"; currentValue: stepLayoutId
+                                                onActivated: { actions.updateStep(root.selectedSequenceId, stepId, { "layoutId": currentValue }); currentValue = Qt.binding(function() { return stepLayoutId }) }
+                                            }
+                                            Label { text: "Only this explicit step applies the layout."; color: settings.palette["#898a95"]; font.pixelSize: 9 }
                                         }
                                         RowLayout {
                                             Layout.fillWidth: true

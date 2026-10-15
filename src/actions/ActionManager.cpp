@@ -26,6 +26,7 @@ const QString kSwitchProfile = QStringLiteral("switchProfile");
 const QString kWait = QStringLiteral("wait");
 const QString kGenerateQr = QStringLiteral("generateQr");
 const QString kDecodeQrImage = QStringLiteral("decodeQrImage");
+const QString kApplyWindowLayout = QStringLiteral("applyWindowLayout");
 constexpr int kMaximumSequences = 100;
 constexpr int kMaximumSteps = 100;
 constexpr int kMaximumWaitMs = 600000;
@@ -34,7 +35,7 @@ bool isKnownStepType(const QString &type)
 {
     return type == kLaunchApplication || type == kOpenFolder || type == kOpenFile ||
            type == kOpenUrl || type == kSaveScreenshot || type == kSwitchProfile || type == kWait ||
-           type == kGenerateQr || type == kDecodeQrImage;
+           type == kGenerateQr || type == kDecodeQrImage || type == kApplyWindowLayout;
 }
 }
 
@@ -166,6 +167,8 @@ QString ActionManager::validateSequence(const QString &sequenceId, QString *erro
             } else if (step.type == kSwitchProfile &&
                        (!m_profiles || step.targetProfileId==QStringLiteral("global") || !m_profiles->profileById(step.targetProfileId)))
                 reason = prefix + QStringLiteral("choose an available profile.");
+            else if(step.type==kApplyWindowLayout && !JsonValidation::safeId(step.layoutId))
+                reason = prefix + QStringLiteral("choose a saved window layout.");
             else if (step.type == kWait && (step.delayMs < 0 || step.delayMs > kMaximumWaitMs))
                 reason = prefix + QStringLiteral("wait must be between 0 and 600000 milliseconds.");
             else if (!isKnownStepType(step.type))
@@ -278,6 +281,8 @@ bool ActionManager::updateStep(const QString &sequenceId, const QString &stepId,
         step.qrMarginModules = changes.value(QStringLiteral("qrMarginModules")).toInt();
     if (changes.contains(QStringLiteral("targetProfileId")))
         step.targetProfileId = changes.value(QStringLiteral("targetProfileId")).toString();
+    if (changes.contains(QStringLiteral("layoutId")))
+        step.layoutId = changes.value(QStringLiteral("layoutId")).toString();
     if (changes.contains(QStringLiteral("delayMs")))
         step.delayMs = changes.value(QStringLiteral("delayMs")).toInt();
     return commitChange(row, updated);
@@ -419,6 +424,7 @@ QVariantMap ActionManager::stepToVariant(const ActionStep &step) const
             {QStringLiteral("qrPixelsPerModule"), step.qrPixelsPerModule},
             {QStringLiteral("qrMarginModules"), step.qrMarginModules},
             {QStringLiteral("targetProfileId"), step.targetProfileId},
+            {QStringLiteral("layoutId"), step.layoutId},
             {QStringLiteral("delayMs"), step.delayMs}};
 }
 
@@ -434,6 +440,7 @@ QJsonObject ActionManager::serializeSequence(const ActionSequence &sequence)
                                  {QStringLiteral("qrPixelsPerModule"), step.qrPixelsPerModule},
                                  {QStringLiteral("qrMarginModules"), step.qrMarginModules},
                                  {QStringLiteral("targetProfileId"), step.targetProfileId},
+                                 {QStringLiteral("layoutId"), step.layoutId},
                                  {QStringLiteral("delayMs"), step.delayMs}});
     }
     return {{QStringLiteral("id"), sequence.id}, {QStringLiteral("name"), sequence.name},
@@ -462,6 +469,7 @@ bool ActionManager::parseSequence(const QJsonObject &object, ActionSequence *seq
         if (item.contains(QStringLiteral("qrErrorCorrection")) && !JsonValidation::string(item, QStringLiteral("qrErrorCorrection"))) return false;
         if (item.contains(QStringLiteral("qrPixelsPerModule")) && !JsonValidation::integer(item, QStringLiteral("qrPixelsPerModule"), 1, 20)) return false;
         if (item.contains(QStringLiteral("qrMarginModules")) && !JsonValidation::integer(item, QStringLiteral("qrMarginModules"), 0, 20)) return false;
+        if (item.contains(QStringLiteral("layoutId")) && !JsonValidation::string(item, QStringLiteral("layoutId"))) return false;
         ActionStep step;
         step.id = item.value(QStringLiteral("id")).toString();
         step.type = item.value(QStringLiteral("type")).toString();
@@ -474,6 +482,7 @@ bool ActionManager::parseSequence(const QJsonObject &object, ActionSequence *seq
         step.qrPixelsPerModule = item.value(QStringLiteral("qrPixelsPerModule")).toInt(8);
         step.qrMarginModules = item.value(QStringLiteral("qrMarginModules")).toInt(4);
         step.targetProfileId = item.value(QStringLiteral("targetProfileId")).toString();
+        step.layoutId = item.value(QStringLiteral("layoutId")).toString();
         step.delayMs = item.value(QStringLiteral("delayMs")).toInt(1000);
         if (!JsonValidation::safeId(step.id) || stepIds.contains(step.id) || !isKnownStepType(step.type))
             return false;

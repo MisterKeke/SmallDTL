@@ -4,6 +4,7 @@
 #include "../profiles/ProfileManager.h"
 #include "../screenshots/ScreenshotManager.h"
 #include "../qrcode/QrCodeManager.h"
+#include "../windows/WindowArrangementManager.h"
 
 #include <QDesktopServices>
 #include <QDir>
@@ -23,6 +24,7 @@ QString actionLabel(const QString &type)
     if (type == QStringLiteral("generateQr")) return QStringLiteral("Generate QR and copy image");
     if (type == QStringLiteral("decodeQrImage")) return QStringLiteral("Decode QR image");
     if (type == QStringLiteral("switchProfile")) return QStringLiteral("Switch profile");
+    if (type == QStringLiteral("applyWindowLayout")) return QStringLiteral("Apply window layout");
     if (type == QStringLiteral("wait")) return QStringLiteral("Wait");
     return QStringLiteral("Action");
 }
@@ -30,8 +32,10 @@ QString actionLabel(const QString &type)
 
 ActionSequenceRunner::ActionSequenceRunner(ActionManager *actions, ProfileManager *profiles,
                                            ScreenshotManager *screenshots, QrCodeManager *qrCode,
+                                           WindowArrangementManager *windowArrangements,
                                            QObject *parent)
     : QObject(parent), m_actions(actions), m_profiles(profiles), m_screenshots(screenshots), m_qrCode(qrCode),
+      m_windowArrangements(windowArrangements),
       m_waitTimer(new QTimer(this))
 {
     m_waitTimer->setSingleShot(true);
@@ -214,6 +218,16 @@ bool ActionSequenceRunner::execute(const QVariantMap &step, QString *error)
         if (!m_profiles->setActiveProfile(profileId)) {
             *error = QStringLiteral("The target profile is no longer available.");
             return false;
+        }
+        return true;
+    }
+    if(type==QStringLiteral("applyWindowLayout")){
+        const QString layoutId=step.value(QStringLiteral("layoutId")).toString();
+        if(!m_windowArrangements||!m_windowArrangements->containsLayout(layoutId)){
+            *error=QStringLiteral("The saved window layout is no longer available.");return false;
+        }
+        if(!m_windowArrangements->previewLayout(layoutId)||!m_windowArrangements->applyLayout(layoutId)){
+            *error=m_windowArrangements->status().isEmpty()?QStringLiteral("Could not apply the window layout."):m_windowArrangements->status();return false;
         }
         return true;
     }

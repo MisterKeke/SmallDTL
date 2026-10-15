@@ -31,7 +31,8 @@ ApplicationController::ApplicationController(QObject *parent)
       m_screenshots(&m_profiles, &m_settings, this),
       m_qrCode(&m_screenshots, this),
       m_clipboardHistory(&m_screenshots, &m_settings, this), m_fileShelf(&m_screenshots, this), m_actions(&m_profiles, this),
-      m_actionRunner(&m_actions, &m_profiles, &m_screenshots, &m_qrCode, this), m_hotkeys(&m_profiles, &m_settings, this)
+      m_windowArrangements(&m_profiles,this),
+      m_actionRunner(&m_actions, &m_profiles, &m_screenshots, &m_qrCode, &m_windowArrangements, this), m_hotkeys(&m_profiles, &m_settings, this)
 {
     createTrayIcon();
     connect(&m_settings,&SettingsManager::errorOccurred,this,[this](const QString &message){setStatus(message,true,true);});
@@ -53,6 +54,7 @@ ApplicationController::ApplicationController(QObject *parent)
     connect(&m_profiles, &ProfileManager::errorOccurred, this, [this](const QString &message) {
         setStatus(message, true, true);
     });
+    connect(&m_windowArrangements,&WindowArrangementManager::errorOccurred,this,[this](const QString &message){setStatus(message,true,true);});
     connect(&m_profiles, &ProfileManager::profilesChanged, this, &ApplicationController::rebuildTrayMenu);
     connect(&m_profiles, &ProfileManager::activeProfileChanged, this, [this] {
         const int failures=m_hotkeys.failureCount();
@@ -70,7 +72,7 @@ ApplicationController::ApplicationController(QObject *parent)
     });
     connect(&m_hotkeys, &HotkeyManager::actionTriggered, this,
             [this](const QString &actionType, const QString &targetProfileId,
-                   const QString &sequenceId) {
+                   const QString &sequenceId,const QString &layoutId) {
         if (actionType == QStringLiteral("saveScreenshot")) {
             saveClipboardScreenshot();
         } else if (actionType == QStringLiteral("switchProfile")) {
@@ -78,6 +80,9 @@ ApplicationController::ApplicationController(QObject *parent)
                 setStatus(QStringLiteral("The hotkey target profile is unavailable."), true, true);
         } else if (actionType == QStringLiteral("sequence")) {
             runActionSequence(sequenceId);
+        } else if(actionType==QStringLiteral("applyWindowLayout")){
+            if(!m_windowArrangements.previewLayout(layoutId)){setStatus(QStringLiteral("The saved window layout is unavailable."),true,true);return;}
+            if(!m_windowArrangements.applyLayout(layoutId))setStatus(m_windowArrangements.status(),true,true);
         }
     });
     connect(&m_hotkeys, &HotkeyManager::hotkeyTriggered, this, [this](const QString &description) {
@@ -121,6 +126,7 @@ QrCodeManager *ApplicationController::qrCode() { return &m_qrCode; }
 HotkeyManager *ApplicationController::hotkeys() { return &m_hotkeys; }
 ActionManager *ApplicationController::actions() { return &m_actions; }
 ActionSequenceRunner *ApplicationController::actionRunner() { return &m_actionRunner; }
+WindowArrangementManager *ApplicationController::windowArrangements(){return &m_windowArrangements;}
 
 QString ApplicationController::currentPage() const { return m_currentPage; }
 QString ApplicationController::statusMessage() const { return m_statusMessage; }
@@ -160,6 +166,7 @@ void ApplicationController::setCurrentPage(const QString &page)
     if (m_currentPage == page)
         return;
     m_currentPage = page;
+    if(page==QStringLiteral("Window Arrangements"))m_windowArrangements.refreshWindows();
     emit currentPageChanged();
 }
 
@@ -410,7 +417,8 @@ bool ApplicationController::setProfileActivationShortcut(const QString &profileI
 }
 
 bool ApplicationController::addHotkey(int key, int modifiers, const QString &actionType,
-                                      const QString &targetProfileId, const QString &sequenceId)
+                                      const QString &targetProfileId, const QString &sequenceId,
+                                      const QString &layoutId)
 {
     if (isReservedPasteShortcut(key, modifiers)) {
         setStatus(QStringLiteral("Ctrl+V is reserved for screenshot paste while the Screenshots page is open."), true);
@@ -420,7 +428,7 @@ bool ApplicationController::addHotkey(int key, int modifiers, const QString &act
         setStatus(QStringLiteral("Use a supported key with Ctrl, Alt, Shift, or Windows."), true);
         return false;
     }
-    if (!validAssignment(actionType, targetProfileId, sequenceId)) {
+    if (!validAssignment(actionType, targetProfileId, sequenceId,layoutId)) {
         setStatus(QStringLiteral("Choose a valid shortcut action, profile, or sequence."), true);
         return false;
     }
@@ -443,6 +451,7 @@ bool ApplicationController::addHotkey(int key, int modifiers, const QString &act
     assignment.actionType = actionType;
     assignment.targetProfileId = targetProfileId;
     assignment.sequenceId = sequenceId;
+    assignment.layoutId = layoutId;
     if (!m_profiles.addHotkey(profile->id, assignment)) {
         setStatus(QStringLiteral("Could not save the shortcut."), true);
         return false;
@@ -453,7 +462,7 @@ bool ApplicationController::addHotkey(int key, int modifiers, const QString &act
 
 bool ApplicationController::updateHotkey(const QString &assignmentId, int key, int modifiers,
                                          const QString &actionType, const QString &targetProfileId,
-                                         const QString &sequenceId, bool enabled)
+                                         const QString &sequenceId, bool enabled,const QString &layoutId)
 {
     const Profile *profile = m_profiles.profileById(m_hotkeys.globalScope()?QStringLiteral("global"):m_profiles.activeProfileId());
     if (!profile)
@@ -475,8 +484,8 @@ bool ApplicationController::updateHotkey(const QString &assignmentId, int key, i
         setStatus(QStringLiteral("Ctrl+V is reserved for screenshot paste while the Screenshots page is open."), true);
         return false;
     }
-    if (!validAssignment(actionType, targetProfileId, sequenceId) &&
-        (enabled || !QStringList{QStringLiteral("saveScreenshot"),QStringLiteral("switchProfile"),QStringLiteral("sequence")}.contains(actionType))) {
+    if (!validAssignment(actionType, targetProfileId, sequenceId,layoutId) &&
+        (enabled || !QStringList{QStringLiteral("saveScreenshot"),QStringLiteral("switchProfile"),QStringLiteral("sequence"),QStringLiteral("applyWindowLayout")}.contains(actionType))) {
         setStatus(QStringLiteral("Choose a valid shortcut action, profile, or sequence."), true);
         return false;
     }
@@ -497,6 +506,7 @@ bool ApplicationController::updateHotkey(const QString &assignmentId, int key, i
     updated.actionType = actionType;
     updated.targetProfileId = targetProfileId;
     updated.sequenceId = sequenceId;
+    updated.layoutId = layoutId;
     updated.enabled = enabled;
     if (!m_profiles.updateHotkey(profile->id, updated)) {
         setStatus(QStringLiteral("Could not update the shortcut."), true);
@@ -515,7 +525,7 @@ bool ApplicationController::setHotkeyEnabled(const QString &assignmentId, bool e
         if (assignment.id == assignmentId)
             return updateHotkey(assignmentId, assignment.key, assignment.modifiers,
                                 assignment.actionType, assignment.targetProfileId,
-                                assignment.sequenceId, enabled);
+                                assignment.sequenceId, enabled,assignment.layoutId);
     }
     return false;
 }
@@ -645,12 +655,13 @@ bool ApplicationController::hasBindingConflict(int key, int modifiers, const QSt
 }
 
 bool ApplicationController::validAssignment(const QString &actionType, const QString &targetProfileId,
-                                            const QString &sequenceId) const
+                                            const QString &sequenceId,const QString &layoutId) const
 {
     if (actionType == QStringLiteral("saveScreenshot"))
         return true;
     if (actionType == QStringLiteral("switchProfile"))
         return targetProfileId!=QStringLiteral("global") && m_profiles.profileById(targetProfileId) != nullptr;
+    if(actionType==QStringLiteral("applyWindowLayout"))return m_windowArrangements.containsLayout(layoutId);
     return actionType == QStringLiteral("sequence") && m_actions.sequenceOwner(sequenceId)==(m_hotkeys.globalScope()?QStringLiteral("global"):m_profiles.activeProfileId());
 }
 

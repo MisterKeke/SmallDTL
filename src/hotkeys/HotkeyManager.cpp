@@ -56,6 +56,7 @@ QVariant HotkeyManager::data(const QModelIndex &index, int role) const
     case ActionTypeRole: return assignment.actionType;
     case TargetProfileIdRole: return assignment.targetProfileId;
     case SequenceIdRole: return assignment.sequenceId;
+    case LayoutIdRole: return assignment.layoutId;
     case EnabledRole: return assignment.enabled;
     case RegisteredRole: return status.registered;
     case StatusRole: return status.text;
@@ -68,6 +69,7 @@ QHash<int, QByteArray> HotkeyManager::roleNames() const
     return {{IdRole, "assignmentId"}, {KeyRole, "key"}, {ModifiersRole, "modifiers"},
             {ShortcutRole, "shortcut"}, {ActionTypeRole, "actionType"},
             {TargetProfileIdRole, "targetProfileId"}, {SequenceIdRole, "sequenceId"},
+            {LayoutIdRole, "layoutId"},
             {EnabledRole, "assignmentEnabled"},
             {RegisteredRole, "registered"}, {StatusRole, "status"}};
 }
@@ -163,7 +165,7 @@ bool HotkeyManager::nativeEventFilter(const QByteArray &eventType, void *message
         emit profileActivationRequested(binding.profileId);
     } else {
         emit hotkeyTriggered(binding.description);
-        emit actionTriggered(binding.actionType, binding.targetProfileId, binding.sequenceId);
+        emit actionTriggered(binding.actionType, binding.targetProfileId, binding.sequenceId,binding.layoutId);
     }
     if (result)
         *result = 0;
@@ -187,7 +189,7 @@ void HotkeyManager::refreshRegistrations()
     for(const auto &profile:scopes)for(const auto &assignment:profile.hotkeys) {
         const QString id=QStringLiteral("binding:")+profile.id+QLatin1Char(':')+assignment.id;
         if(!assignment.enabled || assignment.key==0){statuses.insert(id,{false,assignment.enabled?QStringLiteral("Not assigned"):QStringLiteral("Disabled")});continue;}
-        desired.append(Binding{id,profile.id,HotkeyUtils::formatShortcut(assignment.key,assignment.modifiers),assignment.key,assignment.modifiers,false,assignment.actionType,assignment.targetProfileId,assignment.sequenceId});
+        desired.append(Binding{id,profile.id,HotkeyUtils::formatShortcut(assignment.key,assignment.modifiers),assignment.key,assignment.modifiers,false,assignment.actionType,assignment.targetProfileId,assignment.sequenceId,assignment.layoutId});
     }
     if (m_settings) {
         const int key = m_settings->clipboardHistoryShortcutKey();

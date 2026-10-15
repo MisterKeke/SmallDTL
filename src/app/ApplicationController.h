@@ -12,6 +12,7 @@
 #include "../screenshots/ScreenshotManager.h"
 #include "../qrcode/QrCodeManager.h"
 #include "../settings/SettingsManager.h"
+#include "../windows/WindowArrangementManager.h"
 
 class QMenu;
 class QSystemTrayIcon;
@@ -45,6 +46,7 @@ public:
     HotkeyManager *hotkeys();
     ActionManager *actions();
     ActionSequenceRunner *actionRunner();
+    WindowArrangementManager *windowArrangements();
 
     QString currentPage() const;
     QString statusMessage() const;
@@ -81,10 +83,11 @@ public:
     Q_INVOKABLE void openScreenshotDestination();
     Q_INVOKABLE bool setProfileActivationShortcut(const QString &profileId, int key, int modifiers);
     Q_INVOKABLE bool addHotkey(int key, int modifiers, const QString &actionType,
-                               const QString &targetProfileId, const QString &sequenceId);
+                               const QString &targetProfileId, const QString &sequenceId,
+                               const QString &layoutId = QString());
     Q_INVOKABLE bool updateHotkey(const QString &assignmentId, int key, int modifiers,
                                   const QString &actionType, const QString &targetProfileId,
-                                  const QString &sequenceId, bool enabled);
+                                  const QString &sequenceId, bool enabled, const QString &layoutId = QString());
     Q_INVOKABLE bool setHotkeyEnabled(const QString &assignmentId, bool enabled);
     Q_INVOKABLE bool removeHotkey(const QString &assignmentId);
     Q_INVOKABLE QString formatShortcut(int key, int modifiers) const;
@@ -118,7 +121,7 @@ private:
     void setStatus(const QString &message, bool isError = false, bool notifyTray = false);
     bool hasBindingConflict(int key, int modifiers, const QString &exceptId = {}) const;
     bool validAssignment(const QString &actionType, const QString &targetProfileId,
-                         const QString &sequenceId) const;
+                         const QString &sequenceId, const QString &layoutId = QString()) const;
     void createTrayIcon();
 
     SettingsManager m_settings;
@@ -128,6 +131,7 @@ private:
     ClipboardHistoryManager m_clipboardHistory;
     FileShelfManager m_fileShelf;
     ActionManager m_actions;
+    WindowArrangementManager m_windowArrangements;
     ActionSequenceRunner m_actionRunner;
     HotkeyManager m_hotkeys;
     QPointer<QWindow> m_window;

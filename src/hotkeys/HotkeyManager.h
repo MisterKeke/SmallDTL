@@ -28,6 +28,7 @@ public:
         ActionTypeRole,
         TargetProfileIdRole,
         SequenceIdRole,
+        LayoutIdRole,
         EnabledRole,
         RegisteredRole,
         StatusRole
@@ -63,7 +64,7 @@ signals:
     void registrationStatusesChanged();
     void profileActivationRequested(const QString &profileId);
     void actionTriggered(const QString &actionType, const QString &targetProfileId,
-                         const QString &sequenceId);
+                         const QString &sequenceId, const QString &layoutId);
     void clipboardHistoryTriggered();
     void fileShelfTriggered();
     void hotkeyTriggered(const QString &description);
@@ -80,6 +81,7 @@ private:
         QString actionType;
         QString targetProfileId;
         QString sequenceId;
+        QString layoutId;
     };
     struct Status {
         bool registered = false;

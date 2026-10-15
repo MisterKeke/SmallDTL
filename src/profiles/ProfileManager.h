@@ -15,6 +15,7 @@ struct HotkeyAssignment
     QString actionType = QStringLiteral("saveScreenshot");
     QString targetProfileId;
     QString sequenceId;
+    QString layoutId;
     bool enabled = true;
 };
 

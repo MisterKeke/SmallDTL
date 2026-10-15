@@ -4,9 +4,9 @@ The displayed application name and executable are SmallDTL and `SmallDTL.exe`. T
 
 ## Atomic ownership
 
-Profile schema 2 stores sequences and assignments together. Candidate edits are validated and atomically committed before models publish them, avoiding half-saved cross-file references. Reserved `global` scope is excluded from user profile activation/deletion.
+Profile schema 3 stores sequences, hotkey assignments, and stable references to saved window-layout shortcuts together. Candidate edits are validated and atomically committed before models publish them, avoiding half-saved cross-file references. Reserved `global` scope is excluded from user profile activation/deletion.
 
-Profile fields: `schemaVersion`, `id`, `name`, `description`, `icon`, `screenshotDirectory`, `activationKey`, `activationModifiers`, `isDefault`, `hotkeys`, `sequences`. Existing structured hotkey/sequence/step fields are retained. Duplication/import regenerate IDs and remap sequence references and self-targeting switches. Import never executes actions.
+Profile fields: `schemaVersion`, `id`, `name`, `description`, `icon`, `screenshotDirectory`, `activationKey`, `activationModifiers`, `isDefault`, `hotkeys`, `sequences`. Hotkey assignments may include `layoutId`; action steps may include `layoutId` for the `applyWindowLayout` step. Existing structured hotkey/sequence/step fields are retained. Duplication/import regenerate IDs and remap sequence references and self-targeting switches. A copied/imported profile does not inherit layout shortcuts that point to layouts owned by another profile. Import never executes actions.
 
 Schema 1 profiles/shared actions migrate on startup. Each profile receives independent copies. Timestamped `.pre-sequences-*` profile backups and original actions are retained. Invalid sequence references become disabled, cleared bindings for repair. Disabled unassigned sequence bindings are valid placeholders; they cannot register or execute before receiving a valid target. Unsupported newer schemas are preserved.
 
@@ -21,6 +21,14 @@ Startup uses a quoted executable path in the current user's Run key, without ele
 Thread-owned Windows registrations use `MOD_NOREPEAT`. Reconciliation retains unchanged global/activation bindings and removes only obsolete ones. Recording releases registrations temporarily and ends on focus/visibility/lifetime changes. Selection, saved definitions, and actual registration status remain distinct.
 
 The runner snapshots steps and uses queued callbacks and a wait timer. Generation tokens discard cancelled callbacks. Save results match exact request paths; unrelated writes cannot advance a sequence. Launching uses explicit executable paths/parsed arguments, not shell interpretation.
+
+## Window arrangements
+
+Window definitions are stored atomically in `window-layouts.json`; they reference a profile ID but do not modify screenshot/settings storage. A layout matches open top-level windows by case-insensitive normalized executable path. An optional title-contains string narrows the match. The preview identifies missing and ambiguous rules; applying a saved layout requires explicit resolution of each ambiguous rule. No missing application is launched.
+
+Win32 enumeration runs on a worker. Placement requests use asynchronous `SetWindowPos` flags so unresponsive external windows do not hold up the UI. Monitor `rcWork` rectangles exclude taskbars, retain negative virtual-screen coordinates, and are normalized in the saved layout so changed resolutions recalculate placement. The executable manifest opts into Per-Monitor-V2 DPI awareness so native window and monitor coordinates use the same physical pixel space. If a saved display device is disconnected, the primary monitor work area is used and reported. “Restore previous arrangement” holds the last native rectangles in memory for the current run; it is not a cross-restart history.
+
+Window layout actions run only when a user applies a layout, presses a configured shortcut, or starts an action sequence containing the step. Profile activation never applies layouts automatically. Inaccessible processes may not appear in the eligible list. Windows protected by higher integrity levels, special shell/virtual windows, or windows without a queryable executable identity cannot be matched.
 
 ## Screenshots
 

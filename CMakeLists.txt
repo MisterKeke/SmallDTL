@@ -78,6 +78,9 @@ qt_add_executable(ScreenshotHotkeyManager WIN32
     src/screenshots/ScreenshotEditorImage.cpp
     src/qrcode/QrCodeManager.h
     src/qrcode/QrCodeManager.cpp
+    src/windows/WindowArrangementGeometry.h
+    src/windows/WindowArrangementManager.h
+    src/windows/WindowArrangementManager.cpp
     src/hotkeys/HotkeyManager.h
     src/hotkeys/HotkeyManager.cpp
 )
@@ -85,6 +88,7 @@ qt_add_executable(ScreenshotHotkeyManager WIN32
 set_target_properties(ScreenshotHotkeyManager PROPERTIES OUTPUT_NAME SmallDTL)
 if(WIN32)
     enable_language(RC)
+    configure_file(src/app/SmallDTL.manifest "${CMAKE_CURRENT_BINARY_DIR}/SmallDTL.manifest" COPYONLY)
     configure_file(src/app/SmallDTL.rc.in "${CMAKE_CURRENT_BINARY_DIR}/SmallDTL.rc" @ONLY)
     target_sources(ScreenshotHotkeyManager PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/SmallDTL.rc")
 endif()
@@ -106,6 +110,7 @@ qt_add_qml_module(ScreenshotHotkeyManager
         qml/pages/ClipboardHistoryPage.qml
         qml/pages/FileShelfPage.qml
         qml/pages/QrCodePage.qml
+        qml/pages/WindowArrangementsPage.qml
 )
 
 target_link_libraries(ScreenshotHotkeyManager PRIVATE
@@ -161,6 +166,9 @@ if(BUILD_TESTING)
         src/screenshots/ScreenshotEditorImage.cpp
         src/qrcode/QrCodeManager.h
         src/qrcode/QrCodeManager.cpp
+        src/windows/WindowArrangementGeometry.h
+        src/windows/WindowArrangementManager.h
+        src/windows/WindowArrangementManager.cpp
     )
     target_link_libraries(ScreenshotHotkeyManagerTests PRIVATE
         Qt6::Core Qt6::Gui Qt6::Quick Qt6::QuickControls2 Qt6::Widgets Qt6::Concurrent Qt6::Sql Qt6::Test ZXing::ZXing
@@ -183,6 +191,7 @@ if(BUILD_TESTING)
             qml/pages/ClipboardHistoryPage.qml
             qml/pages/FileShelfPage.qml
             qml/pages/QrCodePage.qml
+            qml/pages/WindowArrangementsPage.qml
     )
     target_compile_definitions(ScreenshotHotkeyManagerTests PRIVATE
         QT_NO_CAST_FROM_ASCII

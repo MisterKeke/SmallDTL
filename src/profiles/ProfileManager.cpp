@@ -16,11 +16,13 @@ void cloneIdentifiers(Profile &profile, const QString &originalId) {
     QHash<QString,QString> ids;
     for (auto &sequence : profile.sequences) {
         const QString original=sequence.id; sequence.id=newId(); ids.insert(original,sequence.id);
-        for (auto &step : sequence.steps) { step.id=newId(); if (step.targetProfileId==originalId) step.targetProfileId=profile.id; }
+        for (auto &step : sequence.steps) { step.id=newId(); if (step.targetProfileId==originalId) step.targetProfileId=profile.id;
+            if(step.type==QStringLiteral("applyWindowLayout")){step.layoutId.clear();step.enabled=false;}}
     }
     for (auto &assignment : profile.hotkeys) {
         assignment.id=newId();
         if (assignment.actionType==QStringLiteral("sequence")) assignment.sequenceId=ids.value(assignment.sequenceId,assignment.sequenceId);
+        if (assignment.actionType==QStringLiteral("applyWindowLayout")) { assignment.layoutId.clear(); assignment.enabled=false; }
         if (assignment.targetProfileId==originalId) assignment.targetProfileId=profile.id;
     }
 }
@@ -143,7 +145,7 @@ void ProfileManager::loadProfiles() {
             schema=doc.object().value(QStringLiteral("schemaVersion")).toInt();
             if(error.error==QJsonParseError::NoError && doc.isObject())p=parseProfile(doc.object(),&valid);
         }
-        if(!valid || info.completeBaseName()!=p.id) {if(info.completeBaseName()==QStringLiteral("global")){m_globalInvalid=true;m_globalFutureSchema=schema>2 || !file.isOpen();}m_startupMessages.append(QStringLiteral("Invalid profile %1 was skipped and preserved.").arg(info.fileName()));continue;}
+        if(!valid || info.completeBaseName()!=p.id) {if(info.completeBaseName()==QStringLiteral("global")){m_globalInvalid=true;m_globalFutureSchema=schema>3 || !file.isOpen();}m_startupMessages.append(QStringLiteral("Invalid profile %1 was skipped and preserved.").arg(info.fileName()));continue;}
         bool duplicateSequence=false;for(const auto &sequence:p.sequences)if(sequenceIds.contains(sequence.id))duplicateSequence=true;
         if(duplicateSequence){if(p.id==QStringLiteral("global"))m_globalInvalid=true;m_startupMessages.append(QStringLiteral("Duplicate sequence identifiers in %1; the profile was skipped and preserved.").arg(info.fileName()));continue;}
         for(const auto &sequence:p.sequences)sequenceIds.insert(sequence.id);
@@ -174,7 +176,7 @@ void ProfileManager::notifyProfileChanged(const QString &id) {
 }
 Profile ProfileManager::parseProfile(const QJsonObject &o,bool *valid) {
     Profile p;*valid=false;const int schema=o.value(QStringLiteral("schemaVersion")).toInt();
-    if(!JsonValidation::integer(o,QStringLiteral("schemaVersion"),1,2) || (schema!=1 && schema!=2) || !o.value(QStringLiteral("hotkeys")).isArray())return p;
+    if(!JsonValidation::integer(o,QStringLiteral("schemaVersion"),1,3) || (schema<1 || schema>3) || !o.value(QStringLiteral("hotkeys")).isArray())return p;
     for(const QString &key:{QStringLiteral("id"),QStringLiteral("name"),QStringLiteral("description"),QStringLiteral("icon"),QStringLiteral("screenshotDirectory")})if(!JsonValidation::string(o,key))return p;
     if(!JsonValidation::boolean(o,QStringLiteral("isDefault")) || !JsonValidation::integer(o,QStringLiteral("activationKey"),0,0x01ffffff) || !JsonValidation::integer(o,QStringLiteral("activationModifiers"),0,0x1fffffff))return p;
     p.id=o.value(QStringLiteral("id")).toString();p.name=o.value(QStringLiteral("name")).toString().trimmed();p.description=o.value(QStringLiteral("description")).toString();p.icon=o.value(QStringLiteral("icon")).toString(QStringLiteral("◉"));p.screenshotDirectory=o.value(QStringLiteral("screenshotDirectory")).toString();
@@ -187,11 +189,12 @@ Profile ProfileManager::parseProfile(const QJsonObject &o,bool *valid) {
         if(!v.isObject())return p;const auto a=v.toObject();
         for(const QString &key:{QStringLiteral("id"),QStringLiteral("actionType"),QStringLiteral("targetProfileId"),QStringLiteral("sequenceId")})if(!JsonValidation::string(a,key))return p;
         if(!JsonValidation::boolean(a,QStringLiteral("enabled")) || !JsonValidation::integer(a,QStringLiteral("key"),0,0x01ffffff) || !JsonValidation::integer(a,QStringLiteral("modifiers"),0,0x1fffffff))return p;
-        HotkeyAssignment item;item.id=a.value(QStringLiteral("id")).toString();item.key=a.value(QStringLiteral("key")).toInt();item.modifiers=a.value(QStringLiteral("modifiers")).toInt();item.actionType=a.value(QStringLiteral("actionType")).toString(QStringLiteral("saveScreenshot"));item.targetProfileId=a.value(QStringLiteral("targetProfileId")).toString();item.sequenceId=a.value(QStringLiteral("sequenceId")).toString();item.enabled=a.value(QStringLiteral("enabled")).toBool(true);
-        if(!JsonValidation::safeId(item.id) || ids.contains(item.id) || !QStringList{QStringLiteral("saveScreenshot"),QStringLiteral("switchProfile"),QStringLiteral("sequence")}.contains(item.actionType) || (item.modifiers & ~mask)!=0 || (item.key!=0 && item.modifiers==0))return p;
+        if(schema>=3&&!JsonValidation::string(a,QStringLiteral("layoutId")))return p;
+        HotkeyAssignment item;item.id=a.value(QStringLiteral("id")).toString();item.key=a.value(QStringLiteral("key")).toInt();item.modifiers=a.value(QStringLiteral("modifiers")).toInt();item.actionType=a.value(QStringLiteral("actionType")).toString(QStringLiteral("saveScreenshot"));item.targetProfileId=a.value(QStringLiteral("targetProfileId")).toString();item.sequenceId=a.value(QStringLiteral("sequenceId")).toString();item.layoutId=a.value(QStringLiteral("layoutId")).toString();item.enabled=a.value(QStringLiteral("enabled")).toBool(true);
+        if(!JsonValidation::safeId(item.id) || ids.contains(item.id) || !QStringList{QStringLiteral("saveScreenshot"),QStringLiteral("switchProfile"),QStringLiteral("sequence"),QStringLiteral("applyWindowLayout")}.contains(item.actionType) || (item.layoutId.size()&&!JsonValidation::safeId(item.layoutId)) || (item.modifiers & ~mask)!=0 || (item.key!=0 && item.modifiers==0))return p;
         ids.insert(item.id);p.hotkeys.append(item);
     }
-    if(schema==2) {
+    if(schema>=2) {
         if(!o.value(QStringLiteral("sequences")).isArray())return p;
         const auto sequences=o.value(QStringLiteral("sequences")).toArray();if(sequences.size()>100)return p;QSet<QString> sequenceIds;
         for(const auto &v:sequences){ActionSequence sequence;if(!v.isObject() || !ActionManager::parseSequence(v.toObject(),&sequence) || sequenceIds.contains(sequence.id))return p;sequenceIds.insert(sequence.id);p.sequences.append(sequence);}
@@ -201,9 +204,9 @@ Profile ProfileManager::parseProfile(const QJsonObject &o,bool *valid) {
 }
 QJsonObject ProfileManager::serializeProfile(const Profile &p) {
     QJsonArray assignments,sequences;
-    for(const auto &a:p.hotkeys)assignments.append(QJsonObject{{QStringLiteral("id"),a.id},{QStringLiteral("key"),a.key},{QStringLiteral("modifiers"),a.modifiers},{QStringLiteral("actionType"),a.actionType},{QStringLiteral("targetProfileId"),a.targetProfileId},{QStringLiteral("sequenceId"),a.sequenceId},{QStringLiteral("enabled"),a.enabled}});
+    for(const auto &a:p.hotkeys)assignments.append(QJsonObject{{QStringLiteral("id"),a.id},{QStringLiteral("key"),a.key},{QStringLiteral("modifiers"),a.modifiers},{QStringLiteral("actionType"),a.actionType},{QStringLiteral("targetProfileId"),a.targetProfileId},{QStringLiteral("sequenceId"),a.sequenceId},{QStringLiteral("layoutId"),a.layoutId},{QStringLiteral("enabled"),a.enabled}});
     for(const auto &s:p.sequences)sequences.append(ActionManager::serializeSequence(s));
-    return {{QStringLiteral("schemaVersion"),2},{QStringLiteral("id"),p.id},{QStringLiteral("name"),p.name},{QStringLiteral("description"),p.description},{QStringLiteral("icon"),p.icon},{QStringLiteral("screenshotDirectory"),p.screenshotDirectory},{QStringLiteral("activationKey"),p.activationKey},{QStringLiteral("activationModifiers"),p.activationModifiers},{QStringLiteral("isDefault"),p.isDefault},{QStringLiteral("hotkeys"),assignments},{QStringLiteral("sequences"),sequences}};
+    return {{QStringLiteral("schemaVersion"),3},{QStringLiteral("id"),p.id},{QStringLiteral("name"),p.name},{QStringLiteral("description"),p.description},{QStringLiteral("icon"),p.icon},{QStringLiteral("screenshotDirectory"),p.screenshotDirectory},{QStringLiteral("activationKey"),p.activationKey},{QStringLiteral("activationModifiers"),p.activationModifiers},{QStringLiteral("isDefault"),p.isDefault},{QStringLiteral("hotkeys"),assignments},{QStringLiteral("sequences"),sequences}};
 }
 bool ProfileManager::exportProfile(const QString &id,const QString &path) {
     const auto *p=profileById(id);if(!p)return false;QString error;
@@ -212,11 +215,12 @@ bool ProfileManager::exportProfile(const QString &id,const QString &path) {
 QString ProfileManager::importProfile(const QString &path) {
     QFile file(path);if(!file.open(QIODevice::ReadOnly) || file.size()>4*1024*1024){emit errorOccurred(QStringLiteral("Cannot read the profile import."));return {};}
     QJsonParseError error;const auto doc=QJsonDocument::fromJson(file.readAll(),&error);bool valid=false;Profile p=parseProfile(doc.object(),&valid);
-    if(error.error!=QJsonParseError::NoError || !valid || p.legacyActions){emit errorOccurred(QStringLiteral("Choose a valid schema 2 export containing its action sequences."));return {};}
+    if(error.error!=QJsonParseError::NoError || !valid || p.legacyActions){emit errorOccurred(QStringLiteral("Choose a valid profile export containing its action sequences."));return {};}
     QSet<QString> ids;for(const auto &s:p.sequences)ids.insert(s.id);
     for(const auto &a:p.hotkeys)if(a.actionType==QStringLiteral("sequence") && !ids.contains(a.sequenceId) && (a.enabled || !a.sequenceId.isEmpty())){emit errorOccurred(QStringLiteral("Imported shortcuts reference a missing sequence."));return {};}
     const QString original=p.id;p.id=newId();p.isDefault=false;p.activationKey=0;p.activationModifiers=0;cloneIdentifiers(p,original);
     for(auto &a:p.hotkeys)a.enabled=false;
+    for(auto &a:p.hotkeys)if(a.actionType==QStringLiteral("applyWindowLayout"))a.layoutId.clear();
     for(auto &s:p.sequences)for(auto &step:s.steps)if(step.type==QStringLiteral("switchProfile") && step.targetProfileId!=p.id && !profileById(step.targetProfileId))step.enabled=false;
     if(!saveProfile(p))return {};
     beginInsertRows({},m_profiles.size(),m_profiles.size());m_profiles.append(p);endInsertRows();notifyProfileChanged(p.id);return p.id;

@@ -4,7 +4,7 @@ A local Windows productivity application built with C++20, Qt 6/QML, WinAPI, and
 
 ## Features
 
-- Nine pages: Dashboard, Screenshots, QR Codes, Clipboard History, File Shelf, Hotkeys, Profiles, Actions, Settings; dark/light/system appearance and a configurable accent.
+- Ten pages: Dashboard, Screenshots, QR Codes, Clipboard History, File Shelf, Window Arrangements, Hotkeys, Profiles, Actions, Settings; dark/light/system appearance and a configurable accent.
 - Clipboard saving from Screenshots, Ctrl+V, tray, or a configured hotkey. Text paste remains functional in editors/dialogs.
 - Optional automatic saving of images copied from other apps, with a tray pause/resume action, duplicate-content filtering, and an optional automatic tag. Manual saves remain available; app-owned clipboard copies are ignored.
 - Clipboard history for copied text, images, and file references, with a searchable page and configurable global popup shortcut. Entries can be restored to the clipboard, pinned, deleted, or explicitly saved to the screenshot gallery with an optional tag.
@@ -17,7 +17,8 @@ A local Windows productivity application built with C++20, Qt 6/QML, WinAPI, and
 - Local QR generation and decoding from text, URLs, clipboard images, gallery screenshots, files, or drag-and-drop. Generated codes can be copied, exported, or explicitly saved to the screenshot gallery with an optional tag. Decoded content is shown for review; SmallDTL never opens URLs or runs decoded content.
 - Profile CRUD, independent duplication, descriptions/icons, destinations, activation shortcuts, and self-contained import/export.
 - Profile-specific and application-wide hotkeys with recording, editing, disabling, actual registration status, and conflicts.
-- Ordered executable/arguments, folder, file, HTTP/HTTPS URL, screenshot, profile-switch, and asynchronous-wait actions, with editing, cancellation, and failure reporting.
+- Manually triggered window placement for open applications, named profile layouts with executable/title matching, ambiguity preview, monitor placement, and restore previous arrangement.
+- Ordered executable/arguments, folder, file, HTTP/HTTPS URL, screenshot, profile-switch, window-layout, and asynchronous-wait actions, with editing, cancellation, and failure reporting.
 - Windows startup, start minimized, minimize/close to tray, and optional success notifications. Exit cancels sequences, completes/indexes pending PNG writes, and unregisters hotkeys.
 
 ## Profiles and actions
@@ -26,13 +27,17 @@ Only explicit user interaction, a configured hotkey, or a sequence started by th
 
 Each profile owns its sequences and assignments. Duplication creates fresh IDs and independent copies. The same shortcut can be reused across different profiles. Global actions and all profile activation shortcuts remain registered across switches. Use the Actions/Hotkeys scope picker to edit application-wide definitions.
 
+Window Arrangements operates only on eligible windows that are already open. Users can place selected windows in halves, quadrants, center, maximize, or move them to a selected monitor; saving/applying a layout is always manual, shortcut-triggered, or a user-started sequence step. The app does not launch missing matches or change profiles automatically. Preview reports missing and ambiguous matches before saved layouts are applied, with explicit selection for ambiguous windows. Previous native positions are kept in memory for the current run.
+
 Remove shortcut assignments before deleting their sequence. Running sequences use a snapshot; editing cannot rewrite an in-progress run. Stop cancels later actions and waits. Already launched processes, opened URLs, and dispatched PNG writes cannot be recalled.
 
 ## Persistence and limits
 
-Settings use schema 1 with backward-compatible preferences; profiles use schema 2 with embedded sequences. Stable IDs determine filenames. `profiles/global.json` owns application-wide definitions. Atomic-save failures report errors and preserve the previous state.
+Window layouts live in `window-layouts.json` beside application state. Each layout records an owning profile, executable identity, optional title-contains rule, monitor device, and normalized placement; the file is separate from settings and screenshot records.
 
-Legacy shared `actions.json` is migrated independently into each legacy profile. Original actions and profile backups are retained. Invalid/newer configurations are preserved. Import accepts self-contained schema 2 exports, regenerates IDs, disables shortcuts, and clears activation shortcuts for review.
+Settings use schema 1 with backward-compatible preferences; profiles use schema 3 with embedded sequences and layout shortcut references. Stable IDs determine filenames. `profiles/global.json` owns application-wide definitions. Atomic-save failures report errors and preserve the previous state.
+
+Legacy shared `actions.json` is migrated independently into each legacy profile. Original actions and profile backups are retained. Invalid/newer configurations are preserved. Import accepts current self-contained profile exports, regenerates IDs, disables shortcuts, and clears activation shortcuts for review. Window layouts are stored separately in `window-layouts.json`, associated with a profile, and refer to executable paths plus normalized monitor work-area placement. Profile copies do not silently bind to another profile's layouts.
 
 Data uses Qt's application-data directory, not the executable folder: settings and profiles remain in `settings.json` and `profiles/*.json`; screenshot records, tags, and clipboard-history metadata use `screenshots.db`; history-owned image payloads use `clipboard-history/`; thumbnails use `cache/thumbnails/`. Automatic clipboard saving is off by default and can be enabled in Settings. Pause or resume it from the tray without opening the window. A selected tag is applied to each automatic save. Repeated image notifications are fingerprinted on a worker and deduplicated for the current run; manual saves are never deduplicated. Accepted automatic saves keep the destination and profile active at event time. Unavailable destinations and a full save queue are reported, and saves are not redirected. The legacy `screenshot-index.json` is imported transactionally on first launch and retained unchanged as a migration source. Import failures are reported and retried on the next launch.
 
@@ -92,6 +97,7 @@ Manual Windows checklist (not implied by unit/offscreen success):
 - Save images from real Windows screenshot tools; verify original files and clipboard data stay unchanged. Try text/empty clipboard and unavailable destinations.
 - Edit a screenshot at several zoom levels and monitor DPI settings; verify crop bounds and drawing line widths in the saved copy. Exercise undo/redo, reset, tag inheritance, save failure, and discard confirmation.
 - Use physical shortcuts while other apps are focused, switch profiles, and test a binding registered by another program.
+- Arrange windows on mixed-DPI and multi-monitor desktops, including a monitor left of the primary screen; verify work-area placement around the taskbar, saved-layout preview/resolution, disconnected-monitor fallback, and Restore previous arrangement.
 - Copy text, images, and file references from other apps; open the history popup with its shortcut; restore, pin, search, pause, and save an image to the gallery. Rename or remove a referenced file and verify the missing-reference message and ownership boundaries.
 - Add file/folder references through dialogs and Windows drag-and-drop; verify Unicode paths, duplicate detection, persistence, and missing items. Drag selected references into Explorer or another compatible application, and exercise Copy/Move conflicts, partial failures, and shelf clearing while confirming source files are preserved except for explicit successful Move operations.
 - Minimize/close/reopen via the real tray, inspect its profile menu, and exit; verify hotkey release and hidden operation.

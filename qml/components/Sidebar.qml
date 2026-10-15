@@ -54,7 +54,8 @@ Rectangle {
                 { name: "QR Codes", glyph: "▦" },
                 { name: "Hotkeys", glyph: "⌘" },
                 { name: "Profiles", glyph: "◉" },
-                { name: "Actions", glyph: "ϟ" }
+                { name: "Actions", glyph: "ϟ" },
+                { name: "Window Arrangements", glyph: "▱" }
             ]
             delegate: Rectangle {
                 required property var modelData

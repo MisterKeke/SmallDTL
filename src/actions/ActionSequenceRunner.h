@@ -8,6 +8,7 @@ class ActionManager;
 class ProfileManager;
 class ScreenshotManager;
 class QrCodeManager;
+class WindowArrangementManager;
 class QTimer;
 
 class ActionSequenceRunner final : public QObject
@@ -19,6 +20,7 @@ class ActionSequenceRunner final : public QObject
 public:
     explicit ActionSequenceRunner(ActionManager *actions, ProfileManager *profiles,
                                   ScreenshotManager *screenshots, QrCodeManager *qrCode = nullptr,
+                                  WindowArrangementManager *windowArrangements = nullptr,
                                   QObject *parent = nullptr);
     bool running() const;
     QString status() const;
@@ -42,6 +44,7 @@ private:
     ProfileManager *m_profiles = nullptr;
     ScreenshotManager *m_screenshots = nullptr;
     QrCodeManager *m_qrCode = nullptr;
+    WindowArrangementManager *m_windowArrangements = nullptr;
     QTimer *m_waitTimer = nullptr;
     QVariantList m_steps;
     QString m_sequenceName;

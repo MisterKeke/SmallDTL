@@ -89,6 +89,7 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("hotkeys"), controller.hotkeys());
     engine.rootContext()->setContextProperty(QStringLiteral("actions"), controller.actions());
     engine.rootContext()->setContextProperty(QStringLiteral("actionRunner"), controller.actionRunner());
+    engine.rootContext()->setContextProperty(QStringLiteral("windowArrangements"), controller.windowArrangements());
 
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed,
                      &application, [] { QCoreApplication::exit(EXIT_FAILURE); }, Qt::QueuedConnection);
@@ -100,7 +101,7 @@ int main(int argc, char *argv[])
     controller.initializeWindow(window);
     controller.showAtStartup();
     if(smokeTest)QTimer::singleShot(1000,&application,[&]{
-        for(const QString &page:{QStringLiteral("Dashboard"),QStringLiteral("Screenshots"),QStringLiteral("Clipboard History"),QStringLiteral("File Shelf"),QStringLiteral("QR Codes"),QStringLiteral("Hotkeys"),QStringLiteral("Profiles"),QStringLiteral("Actions"),QStringLiteral("Settings")})controller.setCurrentPage(page);
+        for(const QString &page:{QStringLiteral("Dashboard"),QStringLiteral("Screenshots"),QStringLiteral("Clipboard History"),QStringLiteral("File Shelf"),QStringLiteral("QR Codes"),QStringLiteral("Window Arrangements"),QStringLiteral("Hotkeys"),QStringLiteral("Profiles"),QStringLiteral("Actions"),QStringLiteral("Settings")})controller.setCurrentPage(page);
         auto metrics=std::make_shared<QJsonObject>(QJsonObject{{QStringLiteral("qmlWarnings"),smokeWarnings},{QStringLiteral("loaded"),!engine.rootObjects().isEmpty()},
             {QStringLiteral("applicationDisplayName"),QGuiApplication::applicationDisplayName()},
             {QStringLiteral("windowTitle"),window ? window->title() : QString()}});
