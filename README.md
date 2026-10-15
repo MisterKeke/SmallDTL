@@ -10,6 +10,7 @@ A local Windows productivity application built with C++20, Qt 6/QML, WinAPI, and
 - Validated filename templates, Unicode paths, and a no-replace PNG commit. Original Windows screenshots remain untouched.
 - SQLite-backed screenshot records and tags, with gallery filtering, checkboxes, Ctrl/Shift multi-selection, Select All, and transactional mixed-state bulk tagging.
 - Managed gallery, lazy cached thumbnails, metadata, preview, open/copy/rename, remove membership, and separately confirmed deletion. Removing tags or gallery membership keeps files.
+- Screenshot editor with source-pixel cropping, optional aspect-ratio locking, freehand drawing, color and stroke controls, undo/redo, reset, zoom, and pan. Save as copy is the default, and can inherit the source screenshot's tags.
 - Profile CRUD, independent duplication, descriptions/icons, destinations, activation shortcuts, and self-contained import/export.
 - Profile-specific and application-wide hotkeys with recording, editing, disabling, actual registration status, and conflicts.
 - Ordered executable/arguments, folder, file, HTTP/HTTPS URL, screenshot, profile-switch, and asynchronous-wait actions, with editing, cancellation, and failure reporting.
@@ -33,7 +34,7 @@ Data uses Qt's application-data directory, not the executable folder: settings a
 
 The screenshot database uses versioned SQLite migrations, foreign-key enforcement, stable screenshot IDs, and unique tag names and screenshot-tag pairs. Renames update paths without changing IDs or tags. Removing gallery membership removes the database record and its assignments while leaving the image on disk.
 
-Filename templates support `{timestamp}`, `{date}`, and `{time}`; default `Screenshot_{timestamp}`. PNG extensions and collision suffixes are automatic. Limits: 64 megapixels/256 MiB per image, two pending writes, 512 MiB queued source images, and 256 MiB Qt decoding allocation. Metadata is asynchronous and thumbnails load on demand.
+Filename templates support `{timestamp}`, `{date}`, and `{time}`; default `Screenshot_{timestamp}`. PNG extensions and collision suffixes are automatic. Limits: 64 megapixels/256 MiB per image, two pending writes, 512 MiB queued image data, and 256 MiB Qt decoding allocation. Editor previews and overlay textures are bounded; full-resolution crop/draw export runs on a worker. Metadata is asynchronous and thumbnails load on demand.
 
 ## Build and run
 
@@ -77,6 +78,7 @@ See [the completion audit](docs/PROMPT_AUDIT.md), [configuration decisions](docs
 Manual Windows checklist (not implied by unit/offscreen success):
 
 - Save images from real Windows screenshot tools; verify original files and clipboard data stay unchanged. Try text/empty clipboard and unavailable destinations.
+- Edit a screenshot at several zoom levels and monitor DPI settings; verify crop bounds and drawing line widths in the saved copy. Exercise undo/redo, reset, tag inheritance, save failure, and discard confirmation.
 - Use physical shortcuts while other apps are focused, switch profiles, and test a binding registered by another program.
 - Minimize/close/reopen via the real tray, inspect its profile menu, and exit; verify hotkey release and hidden operation.
 - Enable/disable startup in the real Windows account and sign out/in. Check the installed executable path.

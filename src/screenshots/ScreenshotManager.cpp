@@ -1,4 +1,5 @@
 #include "ScreenshotManager.h"
+#include "ScreenshotEditorImage.h"
 #include "ScreenshotNaming.h"
 #include "../app/AppDataPaths.h"
 
@@ -24,9 +25,11 @@
 #include <QDebug>
 #include <QTimer>
 #include <QByteArray>
+#include <QtMath>
 #include <QFutureWatcher>
 #include <QtConcurrent/QtConcurrentRun>
 #include <algorithm>
+#include <cmath>
 #include <utility>
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -61,6 +64,7 @@ QVariant ScreenshotGalleryModel::data(const QModelIndex &index, int role) const
     case IdRole: return item.id;
     case TagsRole: return item.tags;
     case SourceRole: return item.source;
+    case SourceScreenshotIdRole: return item.sourceScreenshotId;
     default: return {};
     }
 }
@@ -70,7 +74,8 @@ QHash<int, QByteArray> ScreenshotGalleryModel::roleNames() const
     return {{FileNameRole, "fileName"}, {PathRole, "path"}, {ImageUrlRole, "imageUrl"},
             {ModifiedRole, "modified"}, {WidthRole, "pixelWidth"}, {HeightRole, "pixelHeight"},
             {SizeBytesRole, "sizeBytes"}, {MissingRole, "missing"}, {ThumbnailUrlRole,"thumbnailUrl"},
-            {IdRole,"screenshotId"}, {TagsRole,"tags"}, {SourceRole,"source"}};
+            {IdRole,"screenshotId"}, {TagsRole,"tags"}, {SourceRole,"source"},
+            {SourceScreenshotIdRole,"sourceScreenshotId"}};
 }
 
 void ScreenshotGalleryModel::setDirectory(const QString &directory)
@@ -122,12 +127,12 @@ void ScreenshotGalleryModel::refresh()
             if(!file.exists() || !file.isFile()){
                 Item item;item.id=record.id;item.path=file.absoluteFilePath();item.fileName=file.fileName();
                 item.modified=QDateTime::fromString(record.timestamp,Qt::ISODateWithMs);item.sizeBytes=record.sizeBytes;
-                item.dimensions=QSize(record.width,record.height);item.missing=true;item.tags=record.tags;item.source=record.source;
+                item.dimensions=QSize(record.width,record.height);item.missing=true;item.tags=record.tags;item.source=record.source;item.sourceScreenshotId=record.sourceScreenshotId;
                 fresh.append(item);continue;
             }
             QImageReader reader(file.absoluteFilePath());
             Item item;item.id=record.id;item.path=file.absoluteFilePath();item.fileName=file.fileName();
-            item.modified=file.lastModified();item.sizeBytes=file.size();item.dimensions=reader.size();item.tags=record.tags;item.source=record.source;
+            item.modified=file.lastModified();item.sizeBytes=file.size();item.dimensions=reader.size();item.tags=record.tags;item.source=record.source;item.sourceScreenshotId=record.sourceScreenshotId;
             fresh.append(item);
         }
         std::stable_sort(fresh.begin(),fresh.end(),[](const Item &a,const Item &b){return a.modified>b.modified;});return fresh;
@@ -280,20 +285,26 @@ void ScreenshotManager::completeSave(const QString &path,const SaveResult &resul
         if(!m_pendingPaths.contains(path))return;
         m_jobs.remove(path);
         m_pendingPaths.remove(path);m_pendingBytes.remove(path);
+        const EditedSave editedSave = m_editedSaves.take(path);
+        const bool isEdited = !editedSave.sourceScreenshotId.isEmpty();
         if (!result.success) {
             const QString message = QStringLiteral("Could not save screenshot: %1").arg(result.error);
             emit messageChanged(message, true);
             emit saveFinished(path, false, message);
             return;
         }
-        if (!addToCollection(path)) {
+        if (!addToCollection(path, editedSave.sourceScreenshotId, editedSave.inheritTags)) {
+            if (isEdited)
+                QFile::remove(path);
             const QString message = QStringLiteral("Screenshot was saved, but could not be added to the gallery: %1")
                                         .arg(m_lastSaveError);
             emit messageChanged(message, true);
             emit saveFinished(path, false, message);
             return;
         }
-        const QString message = QStringLiteral("Screenshot saved to %1").arg(QFileInfo(path).fileName());
+        const QString message = QStringLiteral("%1 saved to %2")
+                                    .arg(isEdited ? QStringLiteral("Edited copy") : QStringLiteral("Screenshot"),
+                                         QFileInfo(path).fileName());
         emit messageChanged(message, false);
         emit saveFinished(path, true, message);
 }
@@ -495,6 +506,98 @@ void ScreenshotManager::setGalleryTagFilter(const QString &tagId)
     refreshGallery();
 }
 
+QPointF ScreenshotManager::editorPointToImage(qreal x, qreal y, qreal displayWidth, qreal displayHeight,
+                                               int imageWidth, int imageHeight) const
+{
+    return ScreenshotEditorImage::displayToImagePoint(QPointF(x, y), QSizeF(displayWidth, displayHeight),
+                                                       QSize(imageWidth, imageHeight));
+}
+
+QVariantMap ScreenshotManager::editorCropFromDrag(qreal startX, qreal startY, qreal endX, qreal endY,
+                                                   int imageWidth, int imageHeight, qreal aspectRatio) const
+{
+    const QRectF crop = ScreenshotEditorImage::cropFromDrag(QPointF(startX, startY), QPointF(endX, endY),
+                                                            QSize(imageWidth, imageHeight), aspectRatio);
+    return {{QStringLiteral("x"), crop.x()}, {QStringLiteral("y"), crop.y()},
+            {QStringLiteral("width"), crop.width()}, {QStringLiteral("height"), crop.height()}};
+}
+
+QString ScreenshotManager::saveEditedScreenshot(const QString &sourceScreenshotId, const QVariantMap &cropMap,
+                                                 const QVariantList &strokes, bool inheritTags)
+{
+    m_lastSaveError.clear();
+    auto fail = [this](const QString &message) {
+        m_lastSaveError = message;
+        emit messageChanged(message, true);
+        return QString();
+    };
+    if (!m_databaseReady)
+        return fail(m_database.lastError().isEmpty() ? QStringLiteral("Screenshot database is unavailable.") : m_database.lastError());
+    const ScreenshotRecord source = m_database.screenshotById(sourceScreenshotId);
+    if (source.id.isEmpty() || !QFileInfo(source.path).isFile())
+        return fail(QStringLiteral("The source screenshot is no longer available."));
+    if (source.width <= 0 || source.height <= 0 ||
+        qint64(source.width) * source.height > 64LL * 1024 * 1024 ||
+        qint64(source.width) * source.height * 4 > 256LL * 1024 * 1024)
+        return fail(QStringLiteral("The source image exceeds the 64 megapixel / 256 MiB editing limit."));
+
+    QRect crop(0, 0, source.width, source.height);
+    if (cropMap.contains(QStringLiteral("width")) || cropMap.contains(QStringLiteral("height"))) {
+        const qreal x = cropMap.value(QStringLiteral("x")).toDouble();
+        const qreal y = cropMap.value(QStringLiteral("y")).toDouble();
+        const qreal width = cropMap.value(QStringLiteral("width")).toDouble();
+        const qreal height = cropMap.value(QStringLiteral("height")).toDouble();
+        const qreal right = x + width;
+        const qreal bottom = y + height;
+        if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(width) || !std::isfinite(height) ||
+            !std::isfinite(right) || !std::isfinite(bottom))
+            return fail(QStringLiteral("The crop area is invalid."));
+        if (width <= 0.0 || height <= 0.0)
+            return fail(QStringLiteral("The crop area is empty."));
+        if (x < 0.0 || y < 0.0 || right > source.width || bottom > source.height)
+            return fail(QStringLiteral("The crop area is outside the source image."));
+        crop = QRect(qFloor(x), qFloor(y), qCeil(right) - qFloor(x), qCeil(bottom) - qFloor(y))
+                   .intersected(QRect(0, 0, source.width, source.height));
+    }
+    if (crop.width() <= 0 || crop.height() <= 0)
+        return fail(QStringLiteral("The crop area is empty."));
+    const qint64 outputBytes = qint64(crop.width()) * crop.height() * 4;
+    const qint64 sourceWorkingBytes = qint64(source.width) * source.height * 4;
+    const qint64 processingBytes = sourceWorkingBytes + outputBytes;
+    qint64 queuedBytes = 0;
+    for (qint64 bytes : std::as_const(m_pendingBytes))
+        queuedBytes += bytes;
+    if (outputBytes > 256LL * 1024 * 1024 || processingBytes > 512LL * 1024 * 1024 ||
+        queuedBytes + processingBytes > 512LL * 1024 * 1024 ||
+        m_pendingPaths.size() >= 2)
+        return fail(QStringLiteral("The edited image exceeds the 64 megapixel / 256 MiB limit, or two saves are already pending."));
+
+    const QString directoryPath = resolvedDestination();
+    if (!QDir(directoryPath).exists() || !QFileInfo(directoryPath).isDir())
+        return fail(QStringLiteral("Screenshot destination is unavailable: %1").arg(directoryPath));
+    const QString targetPath = nextFilePath(directoryPath);
+    m_pendingPaths.insert(targetPath);
+    m_pendingBytes.insert(targetPath, processingBytes);
+    m_editedSaves.insert(targetPath, {sourceScreenshotId, inheritTags});
+
+    auto *watcher = new QFutureWatcher<SaveResult>(this);
+    connect(watcher, &QFutureWatcher<SaveResult>::finished, this, [this, watcher, targetPath] {
+        const SaveResult result = watcher->result();
+        watcher->deleteLater();
+        completeSave(targetPath, result);
+    });
+    const QFuture<SaveResult> future = QtConcurrent::run([sourcePath = source.path, targetPath, crop, strokes] {
+        QImage output;
+        QString error;
+        if (!ScreenshotEditorImage::render(sourcePath, crop, strokes, &output, &error))
+            return SaveResult{false, error};
+        return writeImage(output, targetPath);
+    });
+    m_jobs.insert(targetPath, future);
+    watcher->setFuture(future);
+    return targetPath;
+}
+
 void ScreenshotManager::updateClipboardState()
 {
     const bool hasImage = m_clipboard && m_clipboard->mimeData() && m_clipboard->mimeData()->hasImage();
@@ -517,7 +620,7 @@ QString ScreenshotManager::nextFilePath(const QString &directory) const
     return ScreenshotNaming::uniqueFilePath(directory, QDateTime::currentDateTime(), m_pendingPaths,m_settings->filenamePattern());
 }
 
-bool ScreenshotManager::addToCollection(const QString &path)
+bool ScreenshotManager::addToCollection(const QString &path, const QString &sourceScreenshotId, bool inheritTags)
 {
     if (!m_databaseReady) {
         m_lastSaveError = m_database.lastError().isEmpty()
@@ -527,7 +630,9 @@ bool ScreenshotManager::addToCollection(const QString &path)
     }
     const QFileInfo file(path);
     QImageReader reader(path);
-    if (!m_database.addScreenshot(file.absoluteFilePath(), reader.size(), file.size(), QStringLiteral("clipboard"))) {
+    const QString source = sourceScreenshotId.isEmpty() ? QStringLiteral("clipboard") : QStringLiteral("edited-copy");
+    if (!m_database.addScreenshot(file.absoluteFilePath(), reader.size(), file.size(), source, nullptr,
+                                  sourceScreenshotId, inheritTags)) {
         m_lastSaveError = m_database.lastError();
         return false;
     }

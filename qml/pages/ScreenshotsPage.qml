@@ -7,6 +7,9 @@ Item {
     id: root
     property string selectedPath: ""
     property url selectedImage: ""
+    property string selectedScreenshotId: ""
+    property int selectedPixelWidth: 0
+    property int selectedPixelHeight: 0
     property var selectedIds: []
     property int lastClickedIndex: -1
     function isSelected(id) { return selectedIds.indexOf(id) >= 0 }
@@ -51,10 +54,17 @@ Item {
             if (item instanceof TextInput || item instanceof TextEdit) return true
         return false
     }
-    function preview(path, image) {
+    function preview(path, image, screenshotId, pixelWidth, pixelHeight) {
         root.selectedPath = path
         root.selectedImage = image
+        root.selectedScreenshotId = screenshotId
+        root.selectedPixelWidth = pixelWidth
+        root.selectedPixelHeight = pixelHeight
         previewDialog.open()
+    }
+    function edit(path, image, screenshotId, pixelWidth, pixelHeight) {
+        if (editorLoader.item)
+            editorLoader.item.openScreenshot(path, image, screenshotId, pixelWidth, pixelHeight)
     }
 
     Shortcut {
@@ -161,8 +171,8 @@ Item {
                 model: screenshots.gallery
                 activeFocusOnTab: true
                 keyNavigationEnabled: true
-                Keys.onReturnPressed: if (currentItem && !currentItem.missing) root.preview(currentItem.path, currentItem.imageUrl)
-                Keys.onSpacePressed: if (currentItem && !currentItem.missing) root.preview(currentItem.path, currentItem.imageUrl)
+                Keys.onReturnPressed: if (currentItem && !currentItem.missing) root.preview(currentItem.path, currentItem.imageUrl, currentItem.screenshotId, currentItem.pixelWidth, currentItem.pixelHeight)
+                Keys.onSpacePressed: if (currentItem && !currentItem.missing) root.preview(currentItem.path, currentItem.imageUrl, currentItem.screenshotId, currentItem.pixelWidth, currentItem.pixelHeight)
                 delegate: Rectangle {
                     required property int index
                     required property string screenshotId
@@ -214,9 +224,20 @@ Item {
                                 onClicked: function(mouse) { galleryGrid.currentIndex = index; root.selectFromClick(screenshotId, index, mouse.modifiers); galleryGrid.forceActiveFocus() }
                                 onDoubleClicked: {
                                     if (!missing) {
-                                        root.preview(path, imageUrl)
+                                        root.preview(path, imageUrl, screenshotId, pixelWidth, pixelHeight)
                                     }
                                 }
+                            }
+                            ToolButton {
+                                objectName: "screenshotCardEdit"
+                                anchors.right: parent.right
+                                anchors.top: parent.top
+                                z: 2
+                                text: "Edit"
+                                enabled: !missing
+                                font.pixelSize: 9
+                                onClicked: root.edit(path, imageUrl, screenshotId, pixelWidth, pixelHeight)
+                                background: Rectangle { radius: 5; color: "#aa191a20" }
                             }
                             CheckBox {
                                 anchors.left: parent.left
@@ -229,11 +250,11 @@ Item {
                         }
                         Label { text: fileName; color: settings.palette["#eeedf0"]; font.pixelSize: 10; font.weight: Font.Medium; elide: Text.ElideMiddle; Layout.fillWidth: true }
                         Label { text: modified + "  ·  " + pixelWidth + " × " + pixelHeight + "  ·  " + (sizeBytes < 1048576 ? Math.round(sizeBytes / 1024) + " KB" : (sizeBytes / 1048576).toFixed(1) + " MB"); color: settings.palette["#898a95"]; font.pixelSize: 9; elide: Text.ElideRight; Layout.fillWidth: true }
-                        Label { text: tags.join("  ·  "); visible: tags.length > 0; color: settings.palette["#e9a7b4"]; font.pixelSize: 9; elide: Text.ElideRight; Layout.fillWidth: true }
+                        Label { text: tags.join("  ·  "); visible: tags.length > 0; color: settings.palette["#e7a0b1"]; font.pixelSize: 9; elide: Text.ElideRight; Layout.fillWidth: true }
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: 3
-                            ToolButton { text: "Preview"; enabled: !missing; onClicked: root.preview(path, imageUrl); font.pixelSize: 9; Layout.fillWidth: true }
+                            ToolButton { text: "Preview"; enabled: !missing; onClicked: root.preview(path, imageUrl, screenshotId, pixelWidth, pixelHeight); font.pixelSize: 9; Layout.fillWidth: true }
                             ToolButton { text: "Open"; enabled: !missing; onClicked: screenshots.openImage(path); font.pixelSize: 9; Layout.fillWidth: true }
                             ToolButton { text: "Folder"; enabled: !missing; onClicked: screenshots.openContainingFolder(path); font.pixelSize: 9; Layout.fillWidth: true }
                             ToolButton { text: "Image"; enabled: !missing; onClicked: screenshots.copyImageToClipboard(path); font.pixelSize: 9; Layout.fillWidth: true }
@@ -287,10 +308,35 @@ Item {
         anchors.centerIn: Overlay.overlay
         standardButtons: Dialog.Close
         background: Rectangle { color: settings.palette["#17181d"]; border.color: settings.palette["#383942"]; radius: 14 }
-        contentItem: Item {
-            Image { id: previewImage; anchors.fill: parent; source: root.selectedImage; sourceSize: Qt.size(1920, 1080); fillMode: Image.PreserveAspectFit; asynchronous: true; cache: false }
-            Label { anchors.centerIn: parent; visible: previewImage.status === Image.Error; text: "Preview unavailable. The image may be missing or exceed the image limit."; wrapMode: Text.WordWrap }
+        contentItem: ColumnLayout {
+            spacing: 8
+            Item {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Image { id: previewImage; anchors.fill: parent; source: root.selectedImage; sourceSize: Qt.size(1920, 1080); fillMode: Image.PreserveAspectFit; asynchronous: true; cache: false; autoTransform: false }
+                Label { anchors.centerIn: parent; visible: previewImage.status === Image.Error; text: "Preview unavailable. The image may be missing or exceed the image limit."; wrapMode: Text.WordWrap }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Item { Layout.fillWidth: true }
+                Button {
+                    text: "Edit screenshot"
+                    enabled: root.selectedScreenshotId.length > 0 && previewImage.status === Image.Ready
+                    onClicked: {
+                        previewDialog.close()
+                        root.edit(root.selectedPath, root.selectedImage, root.selectedScreenshotId,
+                                  root.selectedPixelWidth, root.selectedPixelHeight)
+                    }
+                }
+            }
         }
+    }
+
+    Loader {
+        id: editorLoader
+        source: "../components/ScreenshotEditor.qml"
+        asynchronous: false
+        onLoaded: if (item) item.ownerWindow = root.Window.window
     }
 
     Popup {

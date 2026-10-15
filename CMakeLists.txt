@@ -35,6 +35,8 @@ qt_add_executable(ScreenshotHotkeyManager WIN32
     src/screenshots/ScreenshotManager.cpp
     src/screenshots/ScreenshotDatabase.h
     src/screenshots/ScreenshotDatabase.cpp
+    src/screenshots/ScreenshotEditorImage.h
+    src/screenshots/ScreenshotEditorImage.cpp
     src/hotkeys/HotkeyManager.h
     src/hotkeys/HotkeyManager.cpp
 )
@@ -53,6 +55,7 @@ qt_add_qml_module(ScreenshotHotkeyManager
         qml/Main.qml
         qml/components/Sidebar.qml
         qml/components/HotkeyRecorder.qml
+        qml/components/ScreenshotEditor.qml
         qml/pages/DashboardPage.qml
         qml/pages/ScreenshotsPage.qml
         qml/pages/ProfilesPage.qml
@@ -103,6 +106,8 @@ if(BUILD_TESTING)
         src/screenshots/ScreenshotManager.cpp
         src/screenshots/ScreenshotDatabase.h
         src/screenshots/ScreenshotDatabase.cpp
+        src/screenshots/ScreenshotEditorImage.h
+        src/screenshots/ScreenshotEditorImage.cpp
     )
     target_link_libraries(ScreenshotHotkeyManagerTests PRIVATE
         Qt6::Core Qt6::Gui Qt6::Quick Qt6::QuickControls2 Qt6::Widgets Qt6::Concurrent Qt6::Sql Qt6::Test
@@ -117,6 +122,7 @@ if(BUILD_TESTING)
             qml/components/HotkeyRecorder.qml
             qml/pages/DashboardPage.qml
             qml/pages/ScreenshotsPage.qml
+            qml/components/ScreenshotEditor.qml
             qml/pages/ProfilesPage.qml
             qml/pages/HotkeysPage.qml
             qml/pages/ActionsPage.qml

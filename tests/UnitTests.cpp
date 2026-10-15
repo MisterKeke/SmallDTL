@@ -6,6 +6,7 @@
 #include "../src/profiles/ProfileManager.h"
 #include "../src/screenshots/ScreenshotManager.h"
 #include "../src/screenshots/ScreenshotDatabase.h"
+#include "../src/screenshots/ScreenshotEditorImage.h"
 #include "../src/screenshots/ScreenshotNaming.h"
 #include "../src/settings/SettingsManager.h"
 
@@ -13,6 +14,8 @@
 #include <QClipboard>
 #include <QMimeData>
 #include <QScopeGuard>
+#include <QSqlDatabase>
+#include <QSqlQuery>
 #include <QDir>
 #include <QFile>
 #include <QFontDatabase>
@@ -28,6 +31,8 @@
 #include <QQuickItem>
 #include <QQuickStyle>
 #include <QQuickWindow>
+#include <QPainter>
+#include <QPen>
 #include <QQmlApplicationEngine>
 #include <QTimer>
 #include <QElapsedTimer>
@@ -313,6 +318,311 @@ private slots:
             QVERIFY(record.tags.isEmpty());
         QVERIFY2(database.removeScreenshot(secondId), qPrintable(database.lastError()));
         QVERIFY(QFileInfo::exists(secondPath));
+    }
+
+    void screenshotEditorCoordinatesCropAndDrawingUseSourcePixels()
+    {
+        const QSize sourceSize(100, 50);
+        const QPointF atOneScale = ScreenshotEditorImage::displayToImagePoint(QPointF(99, 48), QSizeF(200, 100), sourceSize);
+        const QPointF atTwoScale = ScreenshotEditorImage::displayToImagePoint(QPointF(198, 96), QSizeF(400, 200), sourceSize);
+        QCOMPARE(atOneScale, QPointF(49.5, 24));
+        QCOMPARE(atTwoScale, atOneScale);
+        const QPointF letterboxed = ScreenshotEditorImage::displayToImagePoint(QPointF(200, 150), QSizeF(400, 300), sourceSize);
+        QCOMPARE(letterboxed, QPointF(50, 25));
+
+        const QRectF locked = ScreenshotEditorImage::cropFromDrag(QPointF(90, 40), QPointF(20, 20), QSize(100, 50), 1.0);
+        QCOMPARE(locked, QRectF(70, 20, 20, 20));
+        const QRectF free = ScreenshotEditorImage::cropFromDrag(QPointF(10, 5), QPointF(30, 15), QSize(100, 50));
+        QCOMPARE(free, QRectF(10, 5, 20, 10));
+
+        const QString sourcePath = QDir(AppDataPaths::root()).filePath(QStringLiteral("editor-source.png"));
+        QImage source(32, 24, QImage::Format_ARGB32);
+        source.fill(Qt::black);
+        source.setDotsPerMeterX(3780);
+        source.setDotsPerMeterY(3780);
+        QVERIFY(source.save(sourcePath));
+        QVariantMap stroke;
+        stroke.insert(QStringLiteral("color"), QStringLiteral("#ffff0000"));
+        stroke.insert(QStringLiteral("width"), 4.0);
+        QVariantList strokePoints;
+        strokePoints.append(QVariantMap{{QStringLiteral("x"), 8.0}, {QStringLiteral("y"), 10.0}});
+        strokePoints.append(QVariantMap{{QStringLiteral("x"), 14.0}, {QStringLiteral("y"), 10.0}});
+        stroke.insert(QStringLiteral("points"), strokePoints);
+        const QVariantList strokes{stroke};
+        QImage output;
+        QString error;
+        QVERIFY2(ScreenshotEditorImage::render(sourcePath, QRect(4, 5, 16, 10), strokes, &output, &error), qPrintable(error));
+        QCOMPARE(output.size(), QSize(16, 10));
+        QCOMPARE(output.dotsPerMeterX(), 3780);
+        QCOMPARE(output.dotsPerMeterY(), 3780);
+        QCOMPARE(output.pixelColor(7, 5), QColor(Qt::red));
+        QCOMPARE(output.pixelColor(1, 1), QColor(Qt::black));
+    }
+
+    void screenshotEditedCopyPersistsSourceAndInheritedTags()
+    {
+        const QString originalPath = QDir(AppDataPaths::root()).filePath(QStringLiteral("editor-original.png"));
+        const QString editedPath = QDir(AppDataPaths::root()).filePath(QStringLiteral("editor-copy.png"));
+        QImage image(18, 12, QImage::Format_ARGB32);
+        image.fill(Qt::green);
+        QVERIFY(image.save(originalPath));
+        QVERIFY(image.save(editedPath));
+        const QString databasePath = QDir(AppDataPaths::root()).filePath(QStringLiteral("screenshots.db"));
+        QString originalId;
+        QString editedId;
+        const QString label = QStringLiteral("Keep");
+        {
+            ScreenshotDatabase database(databasePath);
+            QVERIFY2(database.initialize(), qPrintable(database.lastError()));
+            QVERIFY2(database.addScreenshot(originalPath, image.size(), QFileInfo(originalPath).size(), QStringLiteral("clipboard"), &originalId), qPrintable(database.lastError()));
+            const QString tagId = database.createTag(label);
+            QVERIFY(!tagId.isEmpty());
+            QVERIFY(database.setTagForScreenshots({originalId}, tagId, true));
+            QVERIFY2(database.addScreenshot(editedPath, image.size(), QFileInfo(editedPath).size(),
+                                           QStringLiteral("edited-copy"), &editedId, originalId, true),
+                     qPrintable(database.lastError()));
+            const ScreenshotRecord edited = database.screenshotById(editedId);
+            QCOMPARE(edited.sourceScreenshotId, originalId);
+            QCOMPARE(edited.tags, QStringList{label});
+        }
+        {
+            ScreenshotDatabase database(databasePath);
+            QVERIFY2(database.initialize(), qPrintable(database.lastError()));
+            const ScreenshotRecord edited = database.screenshotById(editedId);
+            QCOMPARE(edited.sourceScreenshotId, originalId);
+            QCOMPARE(edited.tags, QStringList{label});
+            const QString renamedPath = QDir(AppDataPaths::root()).filePath(QStringLiteral("editor-copy-renamed.png"));
+            QVERIFY(QFile::rename(editedPath, renamedPath));
+            QVERIFY2(database.updateScreenshotPath(editedId, renamedPath), qPrintable(database.lastError()));
+            const ScreenshotRecord renamed = database.screenshotById(editedId);
+            QCOMPARE(renamed.id, editedId);
+            QCOMPARE(renamed.sourceScreenshotId, originalId);
+            QCOMPARE(renamed.tags, QStringList{label});
+        }
+    }
+
+    void screenshotEditorSourceLinkMigrationUpgradesVersionTwo()
+    {
+        const QString databasePath = QDir(AppDataPaths::root()).filePath(QStringLiteral("version-two.db"));
+        const QString connectionName = QStringLiteral("ScreenshotEditorMigrationFixture");
+        {
+            QSqlDatabase legacy = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connectionName);
+            legacy.setDatabaseName(databasePath);
+            QVERIFY(legacy.open());
+            {
+                QSqlQuery query(legacy);
+                QVERIFY(query.exec(QStringLiteral("CREATE TABLE screenshots (id TEXT PRIMARY KEY NOT NULL, path TEXT NOT NULL COLLATE NOCASE UNIQUE, captured_at TEXT NOT NULL DEFAULT '', width INTEGER NOT NULL DEFAULT 0, height INTEGER NOT NULL DEFAULT 0, size_bytes INTEGER NOT NULL DEFAULT 0, source TEXT NOT NULL DEFAULT '')")));
+                QVERIFY(query.exec(QStringLiteral("CREATE TABLE tags (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL COLLATE NOCASE UNIQUE)")));
+                QVERIFY(query.exec(QStringLiteral("CREATE TABLE screenshot_tags (screenshot_id TEXT NOT NULL REFERENCES screenshots(id) ON DELETE CASCADE, tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE, PRIMARY KEY(screenshot_id, tag_id))")));
+                QVERIFY(query.exec(QStringLiteral("CREATE TABLE migration_state (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)")));
+                QVERIFY(query.exec(QStringLiteral("INSERT INTO screenshots(id,path,captured_at,width,height,size_bytes,source) VALUES('existing-v2','old.png','2026-01-01T00:00:00Z',40,30,120,'legacy-index')")));
+                QVERIFY(query.exec(QStringLiteral("PRAGMA user_version=2")));
+            }
+            legacy.close();
+        }
+        QSqlDatabase::removeDatabase(connectionName);
+
+        ScreenshotDatabase database(databasePath);
+        QVERIFY2(database.initialize(), qPrintable(database.lastError()));
+        const ScreenshotRecord migrated = database.screenshotById(QStringLiteral("existing-v2"));
+        QCOMPARE(migrated.id, QStringLiteral("existing-v2"));
+        QCOMPARE(migrated.width, 40);
+        QCOMPARE(migrated.height, 30);
+        QCOMPARE(migrated.sourceScreenshotId, QString());
+        QString childId;
+        QVERIFY2(database.addScreenshot(QDir(AppDataPaths::root()).filePath(QStringLiteral("new-copy.png")), QSize(8, 6), 20,
+                                        QStringLiteral("edited-copy"), &childId, migrated.id, false),
+                 qPrintable(database.lastError()));
+        QVERIFY2(database.removeScreenshot(migrated.id), qPrintable(database.lastError()));
+        QVERIFY(database.screenshotById(childId).sourceScreenshotId.isEmpty());
+    }
+
+    void screenshotEditorFailedDecodeLeavesNoCopy()
+    {
+        SettingsManager settings;
+        ProfileManager profiles(&settings);
+        ScreenshotManager screenshots(&profiles, &settings);
+        QTemporaryDir destination(g_testData->filePath(QStringLiteral("editor-save-destination-XXXXXX")));
+        QVERIFY(destination.isValid());
+        screenshots.setDestinationOverride(destination.path());
+
+        const QString corruptPath = QDir(AppDataPaths::root()).filePath(QStringLiteral("editor-corrupt.png"));
+        QFile corrupt(corruptPath);
+        QVERIFY(corrupt.open(QIODevice::WriteOnly));
+        QCOMPARE(corrupt.write("not an image"), qint64(12));
+        corrupt.close();
+        QString sourceId;
+        QVERIFY2(screenshots.m_database.addScreenshot(corruptPath, QSize(12, 12), QFileInfo(corruptPath).size(),
+                                                       QStringLiteral("clipboard"), &sourceId),
+                 qPrintable(screenshots.databaseError()));
+        QSignalSpy finished(&screenshots, &ScreenshotManager::saveFinished);
+        const QString target = screenshots.saveEditedScreenshot(sourceId, {}, {}, true);
+        QVERIFY(!target.isEmpty());
+        QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 1, 5000);
+        QCOMPARE(finished.first().at(1).toBool(), false);
+        QVERIFY(!QFileInfo::exists(target));
+        QVERIFY(screenshots.m_database.screenshotIdForPath(target).isEmpty());
+    }
+
+    void screenshotEditorSaveCreatesTaggedCopyAndRenameKeepsSource()
+    {
+        SettingsManager settings;
+        ProfileManager profiles(&settings);
+        ScreenshotManager screenshots(&profiles, &settings);
+        QTemporaryDir destination(g_testData->filePath(QStringLiteral("editor-copy-destination-XXXXXX")));
+        QVERIFY(destination.isValid());
+        screenshots.setDestinationOverride(destination.path());
+
+        const QString sourcePath = QDir(AppDataPaths::root()).filePath(QStringLiteral("editor-save-source.png"));
+        QImage original(28, 20, QImage::Format_ARGB32);
+        original.fill(QColor(QStringLiteral("#18293a")));
+        QVERIFY(original.save(sourcePath));
+        QFile originalFile(sourcePath);
+        QVERIFY(originalFile.open(QIODevice::ReadOnly));
+        const QByteArray originalBytes = originalFile.readAll();
+        originalFile.close();
+        QString sourceId;
+        QVERIFY2(screenshots.m_database.addScreenshot(sourcePath, original.size(), QFileInfo(sourcePath).size(),
+                                                       QStringLiteral("clipboard"), &sourceId),
+                 qPrintable(screenshots.databaseError()));
+        const QString tagId = screenshots.createTag(QStringLiteral("Edited source"));
+        QVERIFY(!tagId.isEmpty());
+        QVERIFY(screenshots.setTagForScreenshots({sourceId}, tagId, true));
+
+        QVariantMap stroke;
+        stroke.insert(QStringLiteral("color"), QStringLiteral("#ffffcc33"));
+        stroke.insert(QStringLiteral("width"), 3.0);
+        stroke.insert(QStringLiteral("points"), QVariantList{
+            QVariantMap{{QStringLiteral("x"), 8.0}, {QStringLiteral("y"), 8.0}},
+            QVariantMap{{QStringLiteral("x"), 18.0}, {QStringLiteral("y"), 8.0}}});
+        const QVariantMap crop{{QStringLiteral("x"), 4}, {QStringLiteral("y"), 3},
+                               {QStringLiteral("width"), 12}, {QStringLiteral("height"), 10}};
+        QSignalSpy finished(&screenshots, &ScreenshotManager::saveFinished);
+        const QString copyPath = screenshots.saveEditedScreenshot(sourceId, crop, {stroke}, true);
+        QVERIFY(!copyPath.isEmpty());
+        QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 1, 5000);
+        QVERIFY2(finished.first().at(1).toBool(), qPrintable(finished.first().at(2).toString()));
+        QImage copy(copyPath);
+        QCOMPARE(copy.size(), QSize(12, 10));
+        QCOMPARE(copy.pixelColor(6, 5), QColor(QStringLiteral("#ffffcc33")));
+        QFile verifyOriginal(sourcePath);
+        QVERIFY(verifyOriginal.open(QIODevice::ReadOnly));
+        QCOMPARE(verifyOriginal.readAll(), originalBytes);
+
+        const QString copyId = screenshots.m_database.screenshotIdForPath(copyPath);
+        QVERIFY(!copyId.isEmpty());
+        ScreenshotRecord record = screenshots.m_database.screenshotById(copyId);
+        QCOMPARE(record.source, QStringLiteral("edited-copy"));
+        QCOMPARE(record.sourceScreenshotId, sourceId);
+        QCOMPARE(record.tags, QStringList{QStringLiteral("Edited source")});
+
+        const QString renamedPath = screenshots.renameScreenshot(copyPath, QStringLiteral("Editor copy renamed"));
+        QVERIFY(!renamedPath.isEmpty());
+        record = screenshots.m_database.screenshotById(copyId);
+        QCOMPARE(record.path, QFileInfo(renamedPath).absoluteFilePath());
+        QCOMPARE(record.id, copyId);
+        QCOMPARE(record.sourceScreenshotId, sourceId);
+        QCOMPARE(record.tags, QStringList{QStringLiteral("Edited source")});
+        QVERIFY(QFileInfo::exists(sourcePath));
+    }
+
+    void screenshotEditorUndoRedoRestoresCropAndStrokes()
+    {
+        SettingsManager settings;
+        ProfileManager profiles(&settings);
+        ScreenshotManager screenshots(&profiles, &settings);
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("settings"), &settings);
+        engine.rootContext()->setContextProperty(QStringLiteral("screenshots"), &screenshots);
+        QSignalSpy warnings(&engine, &QQmlEngine::warnings);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(TEST_QML_DIR "/components/ScreenshotEditor.qml")));
+        QTRY_VERIFY(component.status() != QQmlComponent::Loading);
+        std::unique_ptr<QObject> object(component.create());
+        QVERIFY2(object, qPrintable(component.errorString()));
+
+        const QVariantList initialStrokes{QVariantMap{{QStringLiteral("color"), QStringLiteral("#ffff0000")}}};
+        const QVariantMap initialCrop{{QStringLiteral("x"), 2}, {QStringLiteral("y"), 3},
+                                      {QStringLiteral("width"), 10}, {QStringLiteral("height"), 8}};
+        object->setProperty("strokes", initialStrokes);
+        object->setProperty("crop", initialCrop);
+        QVERIFY(QMetaObject::invokeMethod(object.get(), "rememberEdits"));
+        object->setProperty("strokes", initialStrokes + QVariantList{QVariantMap{{QStringLiteral("color"), QStringLiteral("#ff00ff00")}}});
+        object->setProperty("crop", QVariant());
+
+        QVERIFY(QMetaObject::invokeMethod(object.get(), "undo"));
+        QCOMPARE(object->property("strokes").toList().size(), 1);
+        QCOMPARE(object->property("crop").toMap(), initialCrop);
+        QVERIFY(QMetaObject::invokeMethod(object.get(), "redo"));
+        QCOMPARE(object->property("strokes").toList().size(), 2);
+        QVERIFY(object->property("crop").isNull());
+        QCOMPARE(warnings.count(), 0);
+    }
+
+    void screenshotEditorOpensFromGalleryAndRenders()
+    {
+        ApplicationController controller;
+        controller.setCurrentPage(QStringLiteral("Screenshots"));
+        const QString path = QDir(AppDataPaths::root()).filePath(QStringLiteral("editor-visual-source.png"));
+        QImage image(640, 400, QImage::Format_ARGB32);
+        image.fill(QColor(QStringLiteral("#29415a")));
+        QPainter painter(&image);
+        painter.setPen(QPen(QColor(QStringLiteral("#f07888")), 12));
+        painter.drawLine(QPoint(90, 300), QPoint(540, 80));
+        painter.setBrush(QColor(QStringLiteral("#ffc96b")));
+        painter.setPen(Qt::NoPen);
+        painter.drawEllipse(QPoint(300, 190), 52, 52);
+        painter.end();
+        QVERIFY(image.save(path));
+        controller.screenshots()->setDestinationOverride(AppDataPaths::root());
+        QString screenshotId;
+        QVERIFY2(controller.screenshots()->m_database.addScreenshot(path, image.size(), QFileInfo(path).size(),
+                                                                     QStringLiteral("clipboard"), &screenshotId),
+                 qPrintable(controller.screenshots()->databaseError()));
+        controller.screenshots()->refreshGallery();
+
+        QQmlEngine engine;
+        engine.addImageProvider(QStringLiteral("thumbnail"), new ThumbnailProvider);
+        engine.rootContext()->setContextProperty(QStringLiteral("app"), &controller);
+        engine.rootContext()->setContextProperty(QStringLiteral("settings"), controller.settings());
+        engine.rootContext()->setContextProperty(QStringLiteral("screenshots"), controller.screenshots());
+        QSignalSpy warnings(&engine, &QQmlEngine::warnings);
+        QQuickWindow window;
+        window.resize(1200, 850);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(TEST_QML_DIR "/pages/ScreenshotsPage.qml")));
+        QTRY_VERIFY(component.status() != QQmlComponent::Loading);
+        std::unique_ptr<QObject> page(component.create());
+        QVERIFY2(page, qPrintable(component.errorString()));
+        auto *root = qobject_cast<QQuickItem *>(page.get());
+        QVERIFY(root);
+        root->setParentItem(window.contentItem());
+        root->setSize(QSizeF(1200, 850));
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        QTRY_COMPARE(controller.screenshots()->gallery()->rowCount(), 1);
+        auto *editButton = findItem(root, QStringLiteral("screenshotCardEdit"));
+        QVERIFY(editButton);
+        QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier,
+                          editButton->mapToScene(QPointF(editButton->width() / 2, editButton->height() / 2)).toPoint());
+        QObject *editor = page->findChild<QObject *>(QStringLiteral("screenshotEditor"));
+        QVERIFY(editor);
+        QTRY_VERIFY(editor->property("visible").toBool());
+        QVERIFY(page->findChild<QObject *>(QStringLiteral("editorSaveCopy")));
+        QTest::qWait(200);
+        const QString capturePath = QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("editor-visual.png"));
+        QVERIFY(window.grabWindow().save(capturePath));
+        editor->setProperty("crop", QVariantMap{{QStringLiteral("x"), 20}, {QStringLiteral("y"), 15},
+                                                 {QStringLiteral("width"), 300}, {QStringLiteral("height"), 180}});
+        QVERIFY(QMetaObject::invokeMethod(editor, "requestClose"));
+        QObject *discardDialog = editor->findChild<QObject *>(QStringLiteral("editorDiscardDialog"));
+        QVERIFY(discardDialog);
+        QTRY_VERIFY(discardDialog->property("visible").toBool());
+        QVERIFY(QMetaObject::invokeMethod(discardDialog, "reject"));
+        QTRY_VERIFY(!discardDialog->property("visible").toBool());
+        QVERIFY(editor->property("visible").toBool());
+        QVERIFY(QMetaObject::invokeMethod(editor, "resetEdits"));
+        QVERIFY(QMetaObject::invokeMethod(editor, "requestClose"));
+        QTRY_VERIFY(!editor->property("visible").toBool());
+        QCOMPARE(warnings.count(), 0);
     }
 
     void invalidScreenshotIndexIsPreservedAndReported()

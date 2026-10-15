@@ -4,6 +4,7 @@
 #include <QDateTime>
 #include <QImage>
 #include <QObject>
+#include <QPointF>
 #include <QSet>
 #include <QStringList>
 #include <QSize>
@@ -11,6 +12,7 @@
 #include <QSortFilterProxyModel>
 #include <QFuture>
 #include <QVariantList>
+#include <QVariantMap>
 
 #include "../profiles/ProfileManager.h"
 #include "ScreenshotDatabase.h"
@@ -38,7 +40,8 @@ public:
         ThumbnailUrlRole,
         IdRole,
         TagsRole,
-        SourceRole
+        SourceRole,
+        SourceScreenshotIdRole
     };
     Q_ENUM(Role)
 
@@ -71,6 +74,7 @@ private:
         bool missing = false;
         QStringList tags;
         QString source;
+        QString sourceScreenshotId;
     };
 
     QString m_directory;
@@ -126,6 +130,12 @@ public:
     Q_INVOKABLE int tagAssignmentState(const QString &tagId, const QStringList &screenshotIds) const;
     Q_INVOKABLE bool setTagForScreenshots(const QStringList &screenshotIds, const QString &tagId, bool assigned);
     Q_INVOKABLE void setGalleryTagFilter(const QString &tagId);
+    Q_INVOKABLE QPointF editorPointToImage(qreal x, qreal y, qreal displayWidth, qreal displayHeight,
+                                           int imageWidth, int imageHeight) const;
+    Q_INVOKABLE QVariantMap editorCropFromDrag(qreal startX, qreal startY, qreal endX, qreal endY,
+                                               int imageWidth, int imageHeight, qreal aspectRatio) const;
+    Q_INVOKABLE QString saveEditedScreenshot(const QString &sourceScreenshotId, const QVariantMap &crop,
+                                              const QVariantList &strokes, bool inheritTags);
     void finishPendingSaves();
     QString lastSaveError() const { return m_lastSaveError; }
 
@@ -152,7 +162,7 @@ private:
     static SaveResult writeImage(const QImage &image, const QString &path);
     void completeSave(const QString &path, const SaveResult &result);
     void refreshGallery();
-    bool addToCollection(const QString &path);
+    bool addToCollection(const QString &path, const QString &sourceScreenshotId = {}, bool inheritTags = false);
 
     ProfileManager *m_profiles = nullptr;
     SettingsManager *m_settings = nullptr;
@@ -166,5 +176,7 @@ private:
     bool m_clipboardHasImage = false;
     QHash<QString,qint64> m_pendingBytes;
     QHash<QString,QFuture<SaveResult>> m_jobs;
+    struct EditedSave { QString sourceScreenshotId; bool inheritTags = false; };
+    QHash<QString, EditedSave> m_editedSaves;
     QString m_lastSaveError;
 };

@@ -18,6 +18,7 @@ struct ScreenshotRecord
     int height = 0;
     qint64 sizeBytes = 0;
     QString source;
+    QString sourceScreenshotId;
     QStringList tags;
 };
 
@@ -39,10 +40,12 @@ public:
     QString databasePath() const { return m_databasePath; }
 
     QVector<ScreenshotRecord> screenshots(const QString &directory = {}, const QString &tagId = {}) const;
+    ScreenshotRecord screenshotById(const QString &id) const;
     QVector<ScreenshotTag> tags() const;
     QString screenshotIdForPath(const QString &path) const;
     bool addScreenshot(const QString &path, const QSize &dimensions, qint64 sizeBytes,
-                       const QString &source, QString *id = nullptr);
+                       const QString &source, QString *id = nullptr,
+                       const QString &sourceScreenshotId = {}, bool inheritTags = false);
     bool updateScreenshotPath(const QString &id, const QString &path);
     bool updateScreenshotMetadata(const QString &id, const QString &timestamp,
                                   const QSize &dimensions, qint64 sizeBytes);
