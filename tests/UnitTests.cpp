@@ -6,6 +6,7 @@
 #include "../src/fileshelf/FileShelfManager.h"
 #include "../src/hotkeys/HotkeyUtils.h"
 #include "../src/profiles/ProfileManager.h"
+#include "../src/qrcode/QrCodeManager.h"
 #include "../src/screenshots/ScreenshotManager.h"
 #include "../src/screenshots/ScreenshotDatabase.h"
 #include "../src/screenshots/ScreenshotEditorImage.h"
@@ -43,6 +44,7 @@
 #include <QCursor>
 #include <QScreen>
 #include "../src/screenshots/ThumbnailProvider.h"
+#include "../src/qrcode/QrImageProvider.h"
 #ifdef Q_OS_WIN
 #include <windows.h>
 #include <psapi.h>
@@ -255,6 +257,154 @@ private slots:
         QFile imageAfterFile(imagePath);
         QVERIFY(imageAfterFile.open(QIODevice::ReadOnly));
         QCOMPARE(imageAfterFile.readAll(), imageBytes);
+    }
+
+    void qrGenerationUnicodeAndErrorCorrectionRoundTrips()
+    {
+        const QString content = QStringLiteral("https://small.example/qr?city=İstanbul&lang=日本語 🚀");
+        for (const QString &level : {QStringLiteral("L"), QStringLiteral("M"), QStringLiteral("Q"), QStringLiteral("H")}) {
+            QString error;
+            const QImage image = QrCodeManager::generateImage(content, 5, 4, level, &error);
+            QVERIFY2(!image.isNull(), qPrintable(error));
+            QCOMPARE(image.width() % 5, 0);
+            QCOMPARE(image.height() % 5, 0);
+            QCOMPARE(image.pixelColor(0, 0), QColor(Qt::white));
+            const QStringList results = QrCodeManager::decodeImage(image, &error);
+            QVERIFY2(error.isEmpty(), qPrintable(error));
+            QVERIFY(results.contains(content));
+        }
+    }
+
+    void qrDecodeRotatedMultipleAndInvalidImages()
+    {
+        QString error;
+        const QImage first = QrCodeManager::generateImage(QStringLiteral("first QR"), 5, 4, QStringLiteral("M"), &error);
+        QVERIFY2(!first.isNull(), qPrintable(error));
+        const QImage second = QrCodeManager::generateImage(QStringLiteral("second QR"), 5, 4, QStringLiteral("Q"), &error);
+        QVERIFY2(!second.isNull(), qPrintable(error));
+
+        const QImage rotated = first.transformed(QTransform().rotate(90));
+        const QStringList rotatedResults = QrCodeManager::decodeImage(rotated, &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QVERIFY(rotatedResults.contains(QStringLiteral("first QR")));
+
+        QImage combined(first.width() + second.width() + 40,
+                        qMax(first.height(), second.height()), QImage::Format_RGB32);
+        combined.fill(Qt::white);
+        QPainter painter(&combined);
+        painter.drawImage(0, 0, first);
+        painter.drawImage(first.width() + 40, 0, second);
+        painter.end();
+        const QStringList multiple = QrCodeManager::decodeImage(combined, &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QVERIFY(multiple.contains(QStringLiteral("first QR")));
+        QVERIFY(multiple.contains(QStringLiteral("second QR")));
+
+        QImage blank(64, 64, QImage::Format_RGB32);
+        blank.fill(Qt::white);
+        QVERIFY(QrCodeManager::decodeImage(blank, &error).isEmpty());
+        QVERIFY(error.contains(QStringLiteral("No QR code")));
+        QVERIFY(QrCodeManager::generateImage(QString(), 8, 4, QStringLiteral("M"), &error).isNull());
+        QVERIFY(error.contains(QStringLiteral("Enter text")));
+        QVERIFY(QrCodeManager::generateImage(QStringLiteral("ok"), 0, 4, QStringLiteral("M"), &error).isNull());
+        QVERIFY(error.contains(QStringLiteral("module size")));
+    }
+
+    void qrFileDecodeClipboardOwnershipAndGalleryRegistration()
+    {
+        QString error;
+        const QImage generated = QrCodeManager::generateImage(QStringLiteral("https://small.example/local"), 4, 4,
+                                                              QStringLiteral("M"), &error);
+        QVERIFY2(!generated.isNull(), qPrintable(error));
+        const QString path = QDir(AppDataPaths::root()).filePath(QStringLiteral("qr-decode-source.png"));
+        QVERIFY(generated.save(path));
+        const QStringList fileResults = QrCodeManager::decodeFileImage(path, &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QCOMPARE(fileResults, QStringList{QStringLiteral("https://small.example/local")});
+
+        ApplicationController controller;
+        QrCodeManager *qr = controller.qrCode();
+        QSignalSpy external(controller.screenshots()->clipboardService(),
+                            &ClipboardService::externalContentAvailable);
+        QVERIFY(qr->generate(QStringLiteral("clipboard-owned QR"), 3, 4, QStringLiteral("L")));
+        QTRY_VERIFY_WITH_TIMEOUT(!qr->busy(), 5000);
+        QVERIFY(qr->copyGeneratedImage());
+        QTest::qWait(120);
+        QCOMPARE(external.count(), 0);
+        QVERIFY(!QGuiApplication::clipboard()->image().isNull());
+
+        controller.screenshots()->setDestinationOverride(
+            QDir(AppDataPaths::root()).filePath(QStringLiteral("unavailable-qr-gallery")));
+        QVERIFY(qr->saveGeneratedToGallery().isEmpty());
+        QVERIFY(qr->statusIsError());
+        QVERIFY(qr->status().contains(QStringLiteral("destination"), Qt::CaseInsensitive));
+        controller.screenshots()->setDestinationOverride(AppDataPaths::root());
+        QVERIFY(qr->saveGeneratedToGallery(QStringLiteral("missing-qr-tag")).isEmpty());
+        QVERIFY(qr->statusIsError());
+        QVERIFY(qr->status().contains(QStringLiteral("tag"), Qt::CaseInsensitive));
+        const QString tagId = controller.screenshots()->createTag(QStringLiteral("QR export"));
+        QVERIFY(!tagId.isEmpty());
+        controller.screenshots()->setDestinationOverride(AppDataPaths::root());
+        QSignalSpy saves(controller.screenshots(), &ScreenshotManager::saveFinished);
+        const QString saved = qr->saveGeneratedToGallery(tagId);
+        QVERIFY(!saved.isEmpty());
+        QTRY_COMPARE_WITH_TIMEOUT(saves.count(), 1, 5000);
+        QVERIFY(saves.first().at(1).toBool());
+        bool found = false;
+        for (const ScreenshotRecord &record : controller.screenshots()->database()->screenshots()) {
+            if (QFileInfo(record.path).absoluteFilePath() == QFileInfo(saved).absoluteFilePath()) {
+                found = true;
+                QCOMPARE(record.source, QStringLiteral("qr-generated"));
+                QCOMPARE(record.tags, QStringList{QStringLiteral("QR export")});
+            }
+        }
+        QVERIFY(found);
+        QVERIFY(QFileInfo::exists(path));
+    }
+
+    void qrSequenceActionsPersistAndRunSafely()
+    {
+        ApplicationController controller;
+        ActionManager *actions = controller.actions();
+        const QString generateSequence = actions->createSequence(QStringLiteral("Generate QR"));
+        QVERIFY(!generateSequence.isEmpty());
+        const QString generateStep = actions->addStep(generateSequence, QStringLiteral("generateQr"));
+        QVERIFY(!generateStep.isEmpty());
+        QVERIFY(actions->updateStep(generateSequence, generateStep,
+                                   {{QStringLiteral("qrText"), QStringLiteral("sequence Unicode ✓")},
+                                    {QStringLiteral("qrPixelsPerModule"), 4},
+                                    {QStringLiteral("qrMarginModules"), 5},
+                                    {QStringLiteral("qrErrorCorrection"), QStringLiteral("H")}}));
+        const ActionSequence *stored = actions->sequenceById(generateSequence);
+        QVERIFY(stored);
+        const QJsonObject encoded = ActionManager::serializeSequence(*stored);
+        ActionSequence restored;
+        QVERIFY(ActionManager::parseSequence(encoded, &restored));
+        QCOMPARE(restored.steps.first().qrText, QStringLiteral("sequence Unicode ✓"));
+        QCOMPARE(restored.steps.first().qrErrorCorrection, QStringLiteral("H"));
+        QCOMPARE(restored.steps.first().qrPixelsPerModule, 4);
+        QCOMPARE(restored.steps.first().qrMarginModules, 5);
+        QVERIFY(actions->validationError(generateSequence).isEmpty());
+        QVERIFY(controller.actionRunner()->start(generateSequence));
+        QTRY_VERIFY_WITH_TIMEOUT(!controller.actionRunner()->running(), 5000);
+        QVERIFY(!QGuiApplication::clipboard()->image().isNull());
+
+        QString error;
+        const QImage qrImage = QrCodeManager::generateImage(QStringLiteral("decode sequence result"), 4, 4,
+                                                            QStringLiteral("M"), &error);
+        QVERIFY2(!qrImage.isNull(), qPrintable(error));
+        const QString imagePath = QDir(AppDataPaths::root()).filePath(QStringLiteral("qr-sequence-input.png"));
+        QVERIFY(qrImage.save(imagePath));
+        const QString decodeSequence = actions->createSequence(QStringLiteral("Decode QR"));
+        QVERIFY(!decodeSequence.isEmpty());
+        const QString decodeStep = actions->addStep(decodeSequence, QStringLiteral("decodeQrImage"));
+        QVERIFY(!decodeStep.isEmpty());
+        QVERIFY(actions->updateStep(decodeSequence, decodeStep, {{QStringLiteral("path"), imagePath}}));
+        QVERIFY(actions->validationError(decodeSequence).isEmpty());
+        QVERIFY(controller.actionRunner()->start(decodeSequence));
+        QTRY_VERIFY_WITH_TIMEOUT(!controller.actionRunner()->running(), 5000);
+        QVERIFY(controller.actionRunner()->status().contains(QStringLiteral("decode sequence result")));
+        QCOMPARE(controller.qrCode()->results()->resultAt(0), QStringLiteral("decode sequence result"));
     }
 
     void screenshotDatabaseTagsAndBulkTransactions()
@@ -922,9 +1072,11 @@ private slots:
 
         QQmlEngine engine;
         engine.addImageProvider(QStringLiteral("thumbnail"), new ThumbnailProvider);
+        engine.addImageProvider(QStringLiteral("qrpreview"), new QrImageProvider(controller.qrCode()));
         engine.rootContext()->setContextProperty(QStringLiteral("app"), &controller);
         engine.rootContext()->setContextProperty(QStringLiteral("settings"), controller.settings());
         engine.rootContext()->setContextProperty(QStringLiteral("screenshots"), controller.screenshots());
+        engine.rootContext()->setContextProperty(QStringLiteral("qrCode"), controller.qrCode());
         QSignalSpy warnings(&engine, &QQmlEngine::warnings);
         QQuickWindow window;
         window.resize(1200, 850);
@@ -1880,8 +2032,8 @@ private slots:
     void screenshotRenameKeepsNormalPaste()
     {
         ApplicationController controller;controller.setCurrentPage(QStringLiteral("Screenshots"));
-        QQmlEngine engine;engine.addImageProvider(QStringLiteral("thumbnail"),new ThumbnailProvider);
-        for(const auto &entry:QList<QPair<QString,QObject *>>{{QStringLiteral("app"),&controller},{QStringLiteral("settings"),controller.settings()},{QStringLiteral("profiles"),controller.profiles()},{QStringLiteral("screenshots"),controller.screenshots()}})engine.rootContext()->setContextProperty(entry.first,entry.second);
+        QQmlEngine engine;engine.addImageProvider(QStringLiteral("thumbnail"),new ThumbnailProvider);engine.addImageProvider(QStringLiteral("qrpreview"),new QrImageProvider(controller.qrCode()));
+        for(const auto &entry:QList<QPair<QString,QObject *>>{{QStringLiteral("app"),&controller},{QStringLiteral("settings"),controller.settings()},{QStringLiteral("profiles"),controller.profiles()},{QStringLiteral("screenshots"),controller.screenshots()},{QStringLiteral("qrCode"),controller.qrCode()}})engine.rootContext()->setContextProperty(entry.first,entry.second);
         QQuickWindow window;window.resize(1080,680);
         QQmlComponent component(&engine,QUrl::fromLocalFile(QStringLiteral(TEST_QML_DIR "/pages/ScreenshotsPage.qml")));QTRY_VERIFY(component.status()!=QQmlComponent::Loading);
         std::unique_ptr<QObject> page(component.create());QVERIFY2(page,qPrintable(component.errorString()));
@@ -1944,9 +2096,11 @@ private slots:
         controller.setCurrentPage(QStringLiteral("Actions"));
         QQmlApplicationEngine engine;
         engine.addImageProvider(QStringLiteral("thumbnail"), new ThumbnailProvider);
+        engine.addImageProvider(QStringLiteral("qrpreview"), new QrImageProvider(controller.qrCode()));
         for (const auto &entry : QList<QPair<QString, QObject *>>{
                  {QStringLiteral("app"), &controller}, {QStringLiteral("settings"), controller.settings()},
                  {QStringLiteral("profiles"), controller.profiles()}, {QStringLiteral("screenshots"), controller.screenshots()},
+                 {QStringLiteral("qrCode"), controller.qrCode()},
                  {QStringLiteral("clipboardHistory"), controller.clipboardHistory()},
                  {QStringLiteral("fileShelf"), controller.fileShelf()},
                  {QStringLiteral("hotkeys"), controller.hotkeys()}, {QStringLiteral("actions"), controller.actions()},
@@ -2014,12 +2168,20 @@ private slots:
 
     void fullShellPagesAndPreferences()
     {
-        ApplicationController controller;QQmlApplicationEngine engine;engine.addImageProvider(QStringLiteral("thumbnail"),new ThumbnailProvider);
+        ApplicationController controller;QQmlApplicationEngine engine;engine.addImageProvider(QStringLiteral("thumbnail"),new ThumbnailProvider);engine.addImageProvider(QStringLiteral("qrpreview"),new QrImageProvider(controller.qrCode()));
         QVERIFY(!controller.screenshots()->createTag(QStringLiteral("QML tag check")).isEmpty());
-        for(const auto &entry:QList<QPair<QString,QObject *>>{{QStringLiteral("app"),&controller},{QStringLiteral("settings"),controller.settings()},{QStringLiteral("profiles"),controller.profiles()},{QStringLiteral("screenshots"),controller.screenshots()},{QStringLiteral("clipboardHistory"),controller.clipboardHistory()},{QStringLiteral("fileShelf"),controller.fileShelf()},{QStringLiteral("hotkeys"),controller.hotkeys()},{QStringLiteral("actions"),controller.actions()},{QStringLiteral("actionRunner"),controller.actionRunner()}})engine.rootContext()->setContextProperty(entry.first,entry.second);
+        for(const auto &entry:QList<QPair<QString,QObject *>>{{QStringLiteral("app"),&controller},{QStringLiteral("settings"),controller.settings()},{QStringLiteral("profiles"),controller.profiles()},{QStringLiteral("screenshots"),controller.screenshots()},{QStringLiteral("clipboardHistory"),controller.clipboardHistory()},{QStringLiteral("fileShelf"),controller.fileShelf()},{QStringLiteral("qrCode"),controller.qrCode()},{QStringLiteral("hotkeys"),controller.hotkeys()},{QStringLiteral("actions"),controller.actions()},{QStringLiteral("actionRunner"),controller.actionRunner()}})engine.rootContext()->setContextProperty(entry.first,entry.second);
         QSignalSpy warnings(&engine,&QQmlEngine::warnings);engine.loadFromModule(QStringLiteral("ScreenshotHotkeyManagerTest"),QStringLiteral("Main"));QVERIFY(!engine.rootObjects().isEmpty());
         auto *window=qobject_cast<QQuickWindow *>(engine.rootObjects().first());QVERIFY(window);window->show();QVERIFY(QTest::qWaitForWindowExposed(window));
-        for(const QString &page:{QStringLiteral("Dashboard"),QStringLiteral("Screenshots"),QStringLiteral("Clipboard History"),QStringLiteral("File Shelf"),QStringLiteral("Hotkeys"),QStringLiteral("Profiles"),QStringLiteral("Actions"),QStringLiteral("Settings")}){controller.setCurrentPage(page);QTest::qWait(40);}
+        for(const QString &page:{QStringLiteral("Dashboard"),QStringLiteral("Screenshots"),QStringLiteral("Clipboard History"),QStringLiteral("File Shelf"),QStringLiteral("QR Codes"),QStringLiteral("Hotkeys"),QStringLiteral("Profiles"),QStringLiteral("Actions"),QStringLiteral("Settings")}){
+            controller.setCurrentPage(page);
+            QTest::qWait(80);
+            if (page == QStringLiteral("QR Codes")) {
+                QVERIFY(findItem(window->contentItem(), QStringLiteral("generateQrButton")));
+                QVERIFY(findItem(window->contentItem(), QStringLiteral("qrResultsList")));
+                QVERIFY(window->grabWindow().save(QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("qr-code-page.png"))));
+            }
+        }
         window->hide();
         controller.setClipboardHistoryPopupVisible(true);
         QObject *historyPopup = window->findChild<QObject *>(QStringLiteral("clipboardHistoryPopup"));
@@ -2088,8 +2250,8 @@ private slots:
         ApplicationController controller;
         QVERIFY(controller.addHotkey(Qt::Key_F19,Qt::ControlModifier,QStringLiteral("saveScreenshot"),QString(),QString()));
         controller.setCurrentPage(QStringLiteral("Hotkeys"));
-        QQmlApplicationEngine engine;engine.addImageProvider(QStringLiteral("thumbnail"),new ThumbnailProvider);
-        for(const auto &entry:QList<QPair<QString,QObject *>>{{QStringLiteral("app"),&controller},{QStringLiteral("settings"),controller.settings()},{QStringLiteral("profiles"),controller.profiles()},{QStringLiteral("screenshots"),controller.screenshots()},{QStringLiteral("clipboardHistory"),controller.clipboardHistory()},{QStringLiteral("fileShelf"),controller.fileShelf()},{QStringLiteral("hotkeys"),controller.hotkeys()},{QStringLiteral("actions"),controller.actions()},{QStringLiteral("actionRunner"),controller.actionRunner()}})engine.rootContext()->setContextProperty(entry.first,entry.second);
+        QQmlApplicationEngine engine;engine.addImageProvider(QStringLiteral("thumbnail"),new ThumbnailProvider);engine.addImageProvider(QStringLiteral("qrpreview"),new QrImageProvider(controller.qrCode()));
+        for(const auto &entry:QList<QPair<QString,QObject *>>{{QStringLiteral("app"),&controller},{QStringLiteral("settings"),controller.settings()},{QStringLiteral("profiles"),controller.profiles()},{QStringLiteral("screenshots"),controller.screenshots()},{QStringLiteral("clipboardHistory"),controller.clipboardHistory()},{QStringLiteral("fileShelf"),controller.fileShelf()},{QStringLiteral("qrCode"),controller.qrCode()},{QStringLiteral("hotkeys"),controller.hotkeys()},{QStringLiteral("actions"),controller.actions()},{QStringLiteral("actionRunner"),controller.actionRunner()}})engine.rootContext()->setContextProperty(entry.first,entry.second);
         QSignalSpy warnings(&engine,&QQmlEngine::warnings);engine.loadFromModule(QStringLiteral("ScreenshotHotkeyManagerTest"),QStringLiteral("Main"));QVERIFY(!engine.rootObjects().isEmpty());
         auto *window=qobject_cast<QQuickWindow *>(engine.rootObjects().first());QVERIFY(window);window->show();QVERIFY(QTest::qWaitForWindowExposed(window));QTest::qWait(80);
         auto *picker=findItem(window->contentItem(),QStringLiteral("hotkeyActionTypePicker"));QVERIFY(picker);

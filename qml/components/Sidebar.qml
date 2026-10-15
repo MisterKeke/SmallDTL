@@ -51,6 +51,7 @@ Rectangle {
                 { name: "Screenshots", glyph: "▧" },
                 { name: "Clipboard History", glyph: "▤" },
                 { name: "File Shelf", glyph: "▣" },
+                { name: "QR Codes", glyph: "▦" },
                 { name: "Hotkeys", glyph: "⌘" },
                 { name: "Profiles", glyph: "◉" },
                 { name: "Actions", glyph: "ϟ" }

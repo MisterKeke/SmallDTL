@@ -367,6 +367,48 @@ bool ScreenshotManager::saveHistoryImage(const QString &payloadPath, const QStri
     return true;
 }
 
+QString ScreenshotManager::saveGeneratedImage(const QImage &image, const QString &tagId)
+{
+    m_lastSaveError.clear();
+    auto fail = [this](const QString &message) {
+        m_lastSaveError = message;
+        emit messageChanged(message, true);
+        return QString();
+    };
+    if (!m_databaseReady)
+        return fail(m_database.lastError().isEmpty() ? QStringLiteral("Screenshot database is unavailable.")
+                                                     : m_database.lastError());
+    if (image.isNull() || image.width() <= 0 || image.height() <= 0 ||
+        qint64(image.width()) * image.height() > 64LL * 1024 * 1024 ||
+        image.sizeInBytes() <= 0 || image.sizeInBytes() > 256LL * 1024 * 1024)
+        return fail(QStringLiteral("Image exceeds the 64 megapixel / 256 MiB limit."));
+    if (!tagId.isEmpty()) {
+        bool found = false;
+        for (const ScreenshotTag &tag : m_database.tags())
+            found = found || tag.id == tagId;
+        if (!found)
+            return fail(QStringLiteral("The selected screenshot tag is unavailable."));
+    }
+    qint64 queuedBytes = m_fingerprintBytes;
+    for (const qint64 bytes : std::as_const(m_pendingBytes))
+        queuedBytes += bytes;
+    if (m_pendingPaths.size() + m_fingerprintJobs.size() >= 2 ||
+        queuedBytes + image.sizeInBytes() > 512LL * 1024 * 1024)
+        return fail(QStringLiteral("Two screenshot saves are already pending. Try again when a save finishes."));
+    const QString directoryPath = resolvedDestination();
+    if (!QFileInfo(directoryPath).isDir())
+        return fail(QStringLiteral("Screenshot destination is unavailable: %1").arg(directoryPath));
+
+    const QString path = nextFilePath(directoryPath);
+    if (path.isEmpty())
+        return fail(m_lastSaveError.isEmpty() ? QStringLiteral("Could not allocate a screenshot path.") : m_lastSaveError);
+    SaveMetadata metadata;
+    metadata.tagId = tagId;
+    metadata.source = QStringLiteral("qr-generated");
+    queueImageWrite(image, path, metadata);
+    return path;
+}
+
 void ScreenshotManager::queueImageWrite(const QImage &image, const QString &path, const SaveMetadata &metadata)
 {
     m_pendingPaths.insert(path);
@@ -399,7 +441,8 @@ void ScreenshotManager::completeSave(const QString &path,const SaveResult &resul
         }
         if (!addToCollection(path, metadata.sourceScreenshotId, metadata.inheritTags,
                              metadata.captureProfileId, metadata.tagId, metadata.source)) {
-            if (isEdited || metadata.source == QStringLiteral("clipboard-history"))
+            if (isEdited || metadata.source == QStringLiteral("clipboard-history") ||
+                metadata.source == QStringLiteral("qr-generated"))
                 QFile::remove(path);
             if (metadata.automatic)
                 m_inFlightAutomaticFingerprints.remove(metadata.automaticFingerprint);

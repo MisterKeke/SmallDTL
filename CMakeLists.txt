@@ -14,6 +14,39 @@ find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Quick QuickControls2 Widgets C
 qt_standard_project_setup(REQUIRES 6.8)
 include(CTest)
 
+# ZXing-C++ is fetched at a fixed release and linked statically for the
+# portable build. Enable only QR encode/decode support, which keeps unrelated
+# barcode formats and runtime DLL dependencies out of SmallDTL.
+include(FetchContent)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build static libraries for portable SmallDTL" FORCE)
+set(ZXING_READERS ON CACHE BOOL "Enable QR decoding" FORCE)
+set(ZXING_WRITERS OLD CACHE STRING "Enable the QR writer with explicit margin/ECC controls" FORCE)
+set(ZXING_ENABLE_1D OFF CACHE BOOL "Disable unrelated barcode formats" FORCE)
+set(ZXING_ENABLE_AZTEC OFF CACHE BOOL "Disable unrelated barcode formats" FORCE)
+set(ZXING_ENABLE_DATAMATRIX OFF CACHE BOOL "Disable unrelated barcode formats" FORCE)
+set(ZXING_ENABLE_MAXICODE OFF CACHE BOOL "Disable unrelated barcode formats" FORCE)
+set(ZXING_ENABLE_PDF417 OFF CACHE BOOL "Disable unrelated barcode formats" FORCE)
+set(ZXING_ENABLE_QRCODE ON CACHE BOOL "Enable QR encode/decode" FORCE)
+set(ZXING_C_API OFF CACHE BOOL "Do not build the unused C wrapper" FORCE)
+set(ZXING_EXAMPLES OFF CACHE BOOL "Do not build ZXing examples" FORCE)
+set(ZXING_BLACKBOX_TESTS OFF CACHE BOOL "Do not build ZXing tests" FORCE)
+set(ZXING_UNIT_TESTS OFF CACHE BOOL "Do not build ZXing tests" FORCE)
+set(ZXING_DISABLE_PCH ON CACHE BOOL "Avoid MinGW precompiled-header relocation failures" FORCE)
+FetchContent_Declare(zxing_cpp
+    GIT_REPOSITORY https://github.com/zxing-cpp/zxing-cpp.git
+    GIT_TAG v3.1.1
+    GIT_SHALLOW TRUE
+    GIT_SUBMODULES ""
+)
+FetchContent_MakeAvailable(zxing_cpp)
+# SmallDTL enables Qt's automatic MOC globally; ZXing is a plain C++ target,
+# and its similarly named ZXingQt.h is an optional adapter, not a Qt QObject.
+set_target_properties(ZXing PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+set(SMALLDTL_THIRD_PARTY_LICENSE_DIR "${CMAKE_CURRENT_BINARY_DIR}/third-party-licenses")
+file(MAKE_DIRECTORY "${SMALLDTL_THIRD_PARTY_LICENSE_DIR}")
+configure_file("${zxing_cpp_SOURCE_DIR}/LICENSE"
+               "${SMALLDTL_THIRD_PARTY_LICENSE_DIR}/ZXing-C++-Apache-2.0.txt" COPYONLY)
+
 qt_add_executable(ScreenshotHotkeyManager WIN32
     src/main.cpp
     src/app/AppDataPaths.h
@@ -43,6 +76,8 @@ qt_add_executable(ScreenshotHotkeyManager WIN32
     src/screenshots/ScreenshotDatabase.cpp
     src/screenshots/ScreenshotEditorImage.h
     src/screenshots/ScreenshotEditorImage.cpp
+    src/qrcode/QrCodeManager.h
+    src/qrcode/QrCodeManager.cpp
     src/hotkeys/HotkeyManager.h
     src/hotkeys/HotkeyManager.cpp
 )
@@ -70,6 +105,7 @@ qt_add_qml_module(ScreenshotHotkeyManager
         qml/pages/SettingsPage.qml
         qml/pages/ClipboardHistoryPage.qml
         qml/pages/FileShelfPage.qml
+        qml/pages/QrCodePage.qml
 )
 
 target_link_libraries(ScreenshotHotkeyManager PRIVATE
@@ -81,6 +117,7 @@ target_link_libraries(ScreenshotHotkeyManager PRIVATE
     Qt6::Concurrent
     Qt6::Network
     Qt6::Sql
+    ZXing::ZXing
 )
 
 target_compile_definitions(ScreenshotHotkeyManager PRIVATE
@@ -122,9 +159,11 @@ if(BUILD_TESTING)
         src/screenshots/ScreenshotDatabase.cpp
         src/screenshots/ScreenshotEditorImage.h
         src/screenshots/ScreenshotEditorImage.cpp
+        src/qrcode/QrCodeManager.h
+        src/qrcode/QrCodeManager.cpp
     )
     target_link_libraries(ScreenshotHotkeyManagerTests PRIVATE
-        Qt6::Core Qt6::Gui Qt6::Quick Qt6::QuickControls2 Qt6::Widgets Qt6::Concurrent Qt6::Sql Qt6::Test
+        Qt6::Core Qt6::Gui Qt6::Quick Qt6::QuickControls2 Qt6::Widgets Qt6::Concurrent Qt6::Sql Qt6::Test ZXing::ZXing
     )
     qt_add_qml_module(ScreenshotHotkeyManagerTests
         URI ScreenshotHotkeyManagerTest
@@ -143,6 +182,7 @@ if(BUILD_TESTING)
             qml/pages/SettingsPage.qml
             qml/pages/ClipboardHistoryPage.qml
             qml/pages/FileShelfPage.qml
+            qml/pages/QrCodePage.qml
     )
     target_compile_definitions(ScreenshotHotkeyManagerTests PRIVATE
         QT_NO_CAST_FROM_ASCII

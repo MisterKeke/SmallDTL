@@ -10,6 +10,7 @@
 #include "../hotkeys/HotkeyManager.h"
 #include "../profiles/ProfileManager.h"
 #include "../screenshots/ScreenshotManager.h"
+#include "../qrcode/QrCodeManager.h"
 #include "../settings/SettingsManager.h"
 
 class QMenu;
@@ -40,6 +41,7 @@ public:
     ScreenshotManager *screenshots();
     ClipboardHistoryManager *clipboardHistory();
     FileShelfManager *fileShelf();
+    QrCodeManager *qrCode();
     HotkeyManager *hotkeys();
     ActionManager *actions();
     ActionSequenceRunner *actionRunner();
@@ -122,6 +124,7 @@ private:
     SettingsManager m_settings;
     ProfileManager m_profiles;
     ScreenshotManager m_screenshots;
+    QrCodeManager m_qrCode;
     ClipboardHistoryManager m_clipboardHistory;
     FileShelfManager m_fileShelf;
     ActionManager m_actions;

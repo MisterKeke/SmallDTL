@@ -8,6 +8,10 @@ struct ActionStep {
     QString path;
     QString arguments;
     QString url;
+    QString qrText;
+    QString qrErrorCorrection = QStringLiteral("M");
+    int qrPixelsPerModule = 8;
+    int qrMarginModules = 4;
     QString targetProfileId;
     int delayMs = 1000;
 };

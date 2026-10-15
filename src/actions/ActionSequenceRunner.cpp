@@ -3,6 +3,7 @@
 #include "ActionManager.h"
 #include "../profiles/ProfileManager.h"
 #include "../screenshots/ScreenshotManager.h"
+#include "../qrcode/QrCodeManager.h"
 
 #include <QDesktopServices>
 #include <QDir>
@@ -19,6 +20,8 @@ QString actionLabel(const QString &type)
     if (type == QStringLiteral("openFile")) return QStringLiteral("Open file");
     if (type == QStringLiteral("openUrl")) return QStringLiteral("Open URL");
     if (type == QStringLiteral("saveScreenshot")) return QStringLiteral("Save clipboard screenshot");
+    if (type == QStringLiteral("generateQr")) return QStringLiteral("Generate QR and copy image");
+    if (type == QStringLiteral("decodeQrImage")) return QStringLiteral("Decode QR image");
     if (type == QStringLiteral("switchProfile")) return QStringLiteral("Switch profile");
     if (type == QStringLiteral("wait")) return QStringLiteral("Wait");
     return QStringLiteral("Action");
@@ -26,8 +29,9 @@ QString actionLabel(const QString &type)
 }
 
 ActionSequenceRunner::ActionSequenceRunner(ActionManager *actions, ProfileManager *profiles,
-                                           ScreenshotManager *screenshots, QObject *parent)
-    : QObject(parent), m_actions(actions), m_profiles(profiles), m_screenshots(screenshots),
+                                           ScreenshotManager *screenshots, QrCodeManager *qrCode,
+                                           QObject *parent)
+    : QObject(parent), m_actions(actions), m_profiles(profiles), m_screenshots(screenshots), m_qrCode(qrCode),
       m_waitTimer(new QTimer(this))
 {
     m_waitTimer->setSingleShot(true);
@@ -42,6 +46,22 @@ ActionSequenceRunner::ActionSequenceRunner(ActionManager *actions, ProfileManage
         else
             scheduleNext();
     });
+    if (m_qrCode) {
+        connect(m_qrCode, &QrCodeManager::sequenceActionFinished, this,
+                [this](quint64 token, bool success, const QString &message) {
+            if (!m_running || token != m_pendingQrActionToken)
+                return;
+            m_pendingQrActionToken = 0;
+            if (!success) {
+                finish(message, true);
+                return;
+            }
+            if (m_pendingQrIsDecode && !message.isEmpty())
+                m_qrOutputs.append(message);
+            m_pendingQrIsDecode = false;
+            scheduleNext();
+        });
+    }
 }
 
 bool ActionSequenceRunner::running() const { return m_running; }
@@ -63,6 +83,8 @@ bool ActionSequenceRunner::start(const QString &sequenceId)
     m_sequenceName = info.value(QStringLiteral("name")).toString();
     m_steps = m_actions->steps(sequenceId);
     m_stepIndex = 0;
+    m_qrOutputs.clear();
+    m_pendingQrActionToken = 0;
     ++m_runGeneration;
     m_running = true;
     emit runningChanged();
@@ -76,6 +98,8 @@ void ActionSequenceRunner::cancel()
     if (!m_running)
         return;
     m_waitTimer->stop();
+    if (m_pendingQrActionToken && m_qrCode)
+        m_qrCode->cancelSequenceAction(m_pendingQrActionToken);
     finish(QStringLiteral("%1 was cancelled.").arg(m_sequenceName), false, true);
 }
 
@@ -98,6 +122,28 @@ void ActionSequenceRunner::runNext()
             m_pendingScreenshotPath = m_screenshots->saveClipboardImage();
             if (m_pendingScreenshotPath.isEmpty())
                 finish(m_screenshots->lastSaveError(), true);
+            return;
+        }
+        if (type == QStringLiteral("generateQr") || type == QStringLiteral("decodeQrImage")) {
+            if (!m_qrCode) {
+                finish(QStringLiteral("QR actions are unavailable."), true);
+                return;
+            }
+            m_pendingQrActionToken = m_nextQrActionToken++;
+            m_pendingQrIsDecode = type == QStringLiteral("decodeQrImage");
+            QString error;
+            if (!m_qrCode->runSequenceAction(
+                    m_pendingQrActionToken, type,
+                    m_pendingQrIsDecode ? step.value(QStringLiteral("path")).toString()
+                                        : step.value(QStringLiteral("qrText")).toString(),
+                    step.value(QStringLiteral("qrPixelsPerModule"), 8).toInt(),
+                    step.value(QStringLiteral("qrMarginModules"), 4).toInt(),
+                    step.value(QStringLiteral("qrErrorCorrection"), QStringLiteral("M")).toString(),
+                    &error)) {
+                m_pendingQrActionToken = 0;
+                m_pendingQrIsDecode = false;
+                finish(error.isEmpty() ? QStringLiteral("Could not start the QR action.") : error, true);
+            }
             return;
         }
         QString error;
@@ -183,10 +229,16 @@ void ActionSequenceRunner::finish(const QString &message, bool isError, bool was
     ++m_runGeneration;
     m_waitTimer->stop();
     m_pendingScreenshotPath.clear();
+    m_pendingQrActionToken = 0;
+    m_pendingQrIsDecode = false;
     m_steps.clear();
     m_stepIndex = 0;
     emit runningChanged();
-    setStatus(message);
+    QString finalMessage = message;
+    if (!isError && !wasCancelled && !m_qrOutputs.isEmpty()) {
+        finalMessage += QStringLiteral("\nDecoded QR content:\n") + m_qrOutputs.join(QStringLiteral("\n---\n")).left(3000);
+    }
+    setStatus(finalMessage);
     if (isError)
         emit failed(message);
     else if (!wasCancelled)

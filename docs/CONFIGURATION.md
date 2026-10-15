@@ -38,6 +38,12 @@ On first launch with a legacy `screenshot-index.json`, all valid paths (includin
 
 The gallery supports tag filtering, checkbox and Ctrl/Shift selection, Select All and clear selection. Bulk tag controls show unchecked, checked, and mixed states.
 
+## QR codes
+
+QR generation and decoding are local and use the statically linked ZXing-C++ v3.1.1 library (Apache-2.0); the portable bundle includes the upstream license in `licenses/`. The QR page accepts text or URLs, with configurable module size, quiet-zone margin, and L/M/Q/H error correction. It decodes clipboard images, gallery screenshots, selected files, and dropped files, and lists multiple codes for review. Decoded data is displayed as text only; the app does not open URLs or execute content. Copying a generated code marks the clipboard write as app-owned, so it cannot feed automatic screenshot saving or clipboard history.
+
+Generation, file decoding, and gallery image decoding run on worker threads and obey the 64-megapixel/256-MiB image limits. Saving a generated image to the gallery is explicit and supports an optional existing tag. The `Generate QR` sequence action writes the generated image to the clipboard through the shared ownership-aware service; `Decode QR image` reads a configured local image path and reports decoded text in sequence status. Neither action contacts a remote service.
+
 Database schema version 6 stores `capture_profile_id` without coupling SQLite to profile JSON files, adds independently fingerprinted clipboard-history records, and stores file-shelf references. Automatic clipboard screenshot records retain the profile ID captured when the clipboard event was accepted; existing and manual records use an empty value when no profile snapshot applies.
 
 ## File shelf

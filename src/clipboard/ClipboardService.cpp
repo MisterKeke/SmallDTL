@@ -64,6 +64,11 @@ void ClipboardService::writeSnapshot(const ClipboardSnapshot &snapshot)
     m_clipboard->setMimeData(mime);
 }
 
+QImage ClipboardService::currentImage() const
+{
+    return m_clipboard ? m_clipboard->image() : QImage();
+}
+
 void ClipboardService::readClipboardChange()
 {
     if (!m_clipboard || !m_clipboard->mimeData()) {

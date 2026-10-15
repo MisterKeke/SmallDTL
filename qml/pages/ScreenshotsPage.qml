@@ -239,6 +239,23 @@ Item {
                                 onClicked: root.edit(path, imageUrl, screenshotId, pixelWidth, pixelHeight)
                                 background: Rectangle { radius: 5; color: "#aa191a20" }
                             }
+                            ToolButton {
+                                objectName: "screenshotCardDecodeQr"
+                                anchors.right: parent.right
+                                anchors.top: parent.top
+                                anchors.rightMargin: 44
+                                z: 2
+                                text: "QR"
+                                enabled: !missing
+                                font.pixelSize: 9
+                                ToolTip.visible: hovered
+                                ToolTip.text: "Decode QR codes from this screenshot"
+                                onClicked: {
+                                    app.showPage("QR Codes")
+                                    qrCode.decodeFile(path, "Gallery screenshot")
+                                }
+                                background: Rectangle { radius: 5; color: "#aa191a20" }
+                            }
                             CheckBox {
                                 anchors.left: parent.left
                                 anchors.top: parent.top

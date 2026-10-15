@@ -124,6 +124,7 @@ public:
     Q_INVOKABLE void selectDestination(const QString &directory);
 
     Q_INVOKABLE QString saveClipboardImage();
+    Q_INVOKABLE QString saveGeneratedImage(const QImage &image, const QString &tagId = {});
     Q_INVOKABLE bool saveHistoryImage(const QString &payloadPath, const QString &tagId = {});
     Q_INVOKABLE bool openImage(const QString &path) const;
     Q_INVOKABLE bool openContainingFolder(const QString &path) const;

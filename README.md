@@ -4,7 +4,7 @@ A local Windows productivity application built with C++20, Qt 6/QML, WinAPI, and
 
 ## Features
 
-- Eight pages: Dashboard, Screenshots, Clipboard History, File Shelf, Hotkeys, Profiles, Actions, Settings; dark/light/system appearance and a configurable accent.
+- Nine pages: Dashboard, Screenshots, QR Codes, Clipboard History, File Shelf, Hotkeys, Profiles, Actions, Settings; dark/light/system appearance and a configurable accent.
 - Clipboard saving from Screenshots, Ctrl+V, tray, or a configured hotkey. Text paste remains functional in editors/dialogs.
 - Optional automatic saving of images copied from other apps, with a tray pause/resume action, duplicate-content filtering, and an optional automatic tag. Manual saves remain available; app-owned clipboard copies are ignored.
 - Clipboard history for copied text, images, and file references, with a searchable page and configurable global popup shortcut. Entries can be restored to the clipboard, pinned, deleted, or explicitly saved to the screenshot gallery with an optional tag.
@@ -14,6 +14,7 @@ A local Windows productivity application built with C++20, Qt 6/QML, WinAPI, and
 - SQLite-backed screenshot records and tags, with gallery filtering, checkboxes, Ctrl/Shift multi-selection, Select All, and transactional mixed-state bulk tagging.
 - Managed gallery, lazy cached thumbnails, metadata, preview, open/copy/rename, remove membership, and separately confirmed deletion. Removing tags or gallery membership keeps files.
 - Screenshot editor with source-pixel cropping, optional aspect-ratio locking, freehand drawing, color and stroke controls, undo/redo, reset, zoom, and pan. Save as copy is the default, and can inherit the source screenshot's tags.
+- Local QR generation and decoding from text, URLs, clipboard images, gallery screenshots, files, or drag-and-drop. Generated codes can be copied, exported, or explicitly saved to the screenshot gallery with an optional tag. Decoded content is shown for review; SmallDTL never opens URLs or runs decoded content.
 - Profile CRUD, independent duplication, descriptions/icons, destinations, activation shortcuts, and self-contained import/export.
 - Profile-specific and application-wide hotkeys with recording, editing, disabling, actual registration status, and conflicts.
 - Ordered executable/arguments, folder, file, HTTP/HTTPS URL, screenshot, profile-switch, and asynchronous-wait actions, with editing, cancellation, and failure reporting.
@@ -40,6 +41,8 @@ Clipboard history captures text, clipboard images, and file URLs from external c
 The File Shelf stores only source paths and display metadata in SQLite. Add files/folders through the buttons or by dropping them onto the shelf. The default global shortcut is Ctrl+Shift+F. Shelf selection supports checkboxes, Ctrl-click, Shift-click, and Select All. The compact popup can open items and locations, copy paths, and start a native file URL drag for compatible Windows applications. Copy/Move to folder shows destination-name collisions and applies per-item skip, rename, or explicit replacement choices on a worker thread. A successful Move updates the shelf reference while retaining its stable ID. Removing a reference or clearing the shelf never removes its source; missing references stay listed and can be removed.
 
 The screenshot database uses versioned SQLite migrations (schema 6), foreign-key enforcement, stable screenshot IDs, and unique tag names and screenshot-tag pairs. Clipboard history records use unique content fingerprints and stable IDs; file-shelf references use Unicode case-folded path keys and stable IDs. Renames update paths without changing IDs or tags. Removing gallery membership removes the database record and its assignments while leaving the image on disk.
+
+QR generation and decoding run locally through statically linked ZXing-C++ v3.1.1, licensed under Apache-2.0. The portable package includes the upstream license at `licenses/ZXing-C++-Apache-2.0.txt`; no QR runtime DLL or network service is required. The QR page supports module size, quiet-zone margin, and L/M/Q/H error correction. Action sequences can generate a QR image to the clipboard or decode a local image path.
 
 Automatic clipboard records use the source label `clipboard-auto` and retain the profile ID captured at event time. Settings, including history retention and shortcut preferences, and profiles stay in JSON. The portable package carries Qt's `sqldrivers/qsqlite.dll` alongside the executable.
 

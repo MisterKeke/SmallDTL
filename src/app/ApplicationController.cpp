@@ -29,8 +29,9 @@ bool isReservedPasteShortcut(int key, int modifiers)
 ApplicationController::ApplicationController(QObject *parent)
     : QObject(parent), m_settings(this), m_profiles(&m_settings, this),
       m_screenshots(&m_profiles, &m_settings, this),
+      m_qrCode(&m_screenshots, this),
       m_clipboardHistory(&m_screenshots, &m_settings, this), m_fileShelf(&m_screenshots, this), m_actions(&m_profiles, this),
-      m_actionRunner(&m_actions, &m_profiles, &m_screenshots, this), m_hotkeys(&m_profiles, &m_settings, this)
+      m_actionRunner(&m_actions, &m_profiles, &m_screenshots, &m_qrCode, this), m_hotkeys(&m_profiles, &m_settings, this)
 {
     createTrayIcon();
     connect(&m_settings,&SettingsManager::errorOccurred,this,[this](const QString &message){setStatus(message,true,true);});
@@ -89,7 +90,8 @@ ApplicationController::ApplicationController(QObject *parent)
         setStatus(message, true, true);
     });
     connect(&m_actionRunner, &ActionSequenceRunner::completed, this, [this](const QString &name) {
-        setStatus(QStringLiteral("Action sequence completed: %1").arg(name));
+        Q_UNUSED(name);
+        setStatus(m_actionRunner.status());
     });
     connect(&m_actionRunner, &ActionSequenceRunner::runningChanged,
             this, &ApplicationController::actionSequenceRunningChanged);
@@ -115,6 +117,7 @@ ProfileManager *ApplicationController::profiles() { return &m_profiles; }
 ScreenshotManager *ApplicationController::screenshots() { return &m_screenshots; }
 ClipboardHistoryManager *ApplicationController::clipboardHistory() { return &m_clipboardHistory; }
 FileShelfManager *ApplicationController::fileShelf() { return &m_fileShelf; }
+QrCodeManager *ApplicationController::qrCode() { return &m_qrCode; }
 HotkeyManager *ApplicationController::hotkeys() { return &m_hotkeys; }
 ActionManager *ApplicationController::actions() { return &m_actions; }
 ActionSequenceRunner *ApplicationController::actionRunner() { return &m_actionRunner; }
@@ -354,6 +357,10 @@ void ApplicationController::chooseProfileScreenshotDirectory(const QString &prof
 
 QString ApplicationController::chooseActionPath(const QString &actionType, const QString &currentPath)
 {
+    if (actionType == QStringLiteral("decodeQrImage")) {
+        return QFileDialog::getOpenFileName(nullptr, QStringLiteral("Choose image to decode"), currentPath,
+            QStringLiteral("Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tif *.tiff);;All files (*)"));
+    }
     if (actionType == QStringLiteral("openFolder")) {
         return QFileDialog::getExistingDirectory(nullptr, QStringLiteral("Choose folder"), currentPath,
                                                   QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);

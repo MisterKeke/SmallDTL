@@ -1,6 +1,7 @@
 #include "app/ApplicationController.h"
 #include "app/AppDataPaths.h"
 #include "screenshots/ThumbnailProvider.h"
+#include "qrcode/QrImageProvider.h"
 #include <QImageReader>
 
 #include <QApplication>
@@ -75,6 +76,7 @@ int main(int argc, char *argv[])
 
     QQmlApplicationEngine engine;
     engine.addImageProvider(QStringLiteral("thumbnail"),new ThumbnailProvider);
+    engine.addImageProvider(QStringLiteral("qrpreview"),new QrImageProvider(controller.qrCode()));
     int smokeWarnings=0;
     if(smokeTest)QObject::connect(&engine,&QQmlEngine::warnings,&application,[&smokeWarnings](const QList<QQmlError> &warnings){smokeWarnings+=warnings.size();});
     engine.rootContext()->setContextProperty(QStringLiteral("app"), &controller);
@@ -83,6 +85,7 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("screenshots"), controller.screenshots());
     engine.rootContext()->setContextProperty(QStringLiteral("clipboardHistory"), controller.clipboardHistory());
     engine.rootContext()->setContextProperty(QStringLiteral("fileShelf"), controller.fileShelf());
+    engine.rootContext()->setContextProperty(QStringLiteral("qrCode"), controller.qrCode());
     engine.rootContext()->setContextProperty(QStringLiteral("hotkeys"), controller.hotkeys());
     engine.rootContext()->setContextProperty(QStringLiteral("actions"), controller.actions());
     engine.rootContext()->setContextProperty(QStringLiteral("actionRunner"), controller.actionRunner());
@@ -97,7 +100,7 @@ int main(int argc, char *argv[])
     controller.initializeWindow(window);
     controller.showAtStartup();
     if(smokeTest)QTimer::singleShot(1000,&application,[&]{
-        for(const QString &page:{QStringLiteral("Dashboard"),QStringLiteral("Screenshots"),QStringLiteral("Clipboard History"),QStringLiteral("File Shelf"),QStringLiteral("Hotkeys"),QStringLiteral("Profiles"),QStringLiteral("Actions"),QStringLiteral("Settings")})controller.setCurrentPage(page);
+        for(const QString &page:{QStringLiteral("Dashboard"),QStringLiteral("Screenshots"),QStringLiteral("Clipboard History"),QStringLiteral("File Shelf"),QStringLiteral("QR Codes"),QStringLiteral("Hotkeys"),QStringLiteral("Profiles"),QStringLiteral("Actions"),QStringLiteral("Settings")})controller.setCurrentPage(page);
         auto metrics=std::make_shared<QJsonObject>(QJsonObject{{QStringLiteral("qmlWarnings"),smokeWarnings},{QStringLiteral("loaded"),!engine.rootObjects().isEmpty()},
             {QStringLiteral("applicationDisplayName"),QGuiApplication::applicationDisplayName()},
             {QStringLiteral("windowTitle"),window ? window->title() : QString()}});

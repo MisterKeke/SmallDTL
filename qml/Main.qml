@@ -84,6 +84,7 @@ ApplicationWindow {
                             text: app.currentPage === "Screenshots" ? "Capture and organize clipboard images"
                                   : app.currentPage === "Clipboard History" ? "Find and restore copied text, images, and file references"
                                   : app.currentPage === "File Shelf" ? "Keep reusable file and folder references together"
+                                  : app.currentPage === "QR Codes" ? "Generate QR codes and inspect decoded content locally"
                                   : app.currentPage === "Profiles" ? "Keep shortcuts and destinations organized"
                                   : app.currentPage === "Hotkeys" ? (hotkeys.globalScope ? "Shortcuts available across every profile" : "Global shortcuts for the active profile")
                                   : app.currentPage === "Actions" ? "Compose ordered actions and run them from a shortcut"
@@ -168,7 +169,7 @@ ApplicationWindow {
                     currentIndex: app.currentPage === "Dashboard" ? 0 : app.currentPage === "Screenshots" ? 1
                                   : app.currentPage === "Profiles" ? 2 : app.currentPage === "Hotkeys" ? 3
                                   : app.currentPage === "Actions" ? 4 : app.currentPage === "Settings" ? 5
-                                  : app.currentPage === "Clipboard History" ? 6 : 7
+                                  : app.currentPage === "Clipboard History" ? 6 : app.currentPage === "File Shelf" ? 7 : 8
                     DashboardPage {}
                     ScreenshotsPage {}
                     ProfilesPage {}
@@ -177,6 +178,7 @@ ApplicationWindow {
                     SettingsPage {}
                     ClipboardHistoryPage {}
                     FileShelfPage {}
+                    QrCodePage {}
                 }
             }
         }

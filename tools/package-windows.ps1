@@ -50,8 +50,14 @@ try {
     if ($process.ExitCode -ne 0) { throw "Packaged-runtime smoke test failed ($($process.ExitCode))." }
     Copy-Item -LiteralPath (Join-Path $projectRoot 'README.md') -Destination $OutputDirectory
     Copy-Item -LiteralPath (Join-Path $projectRoot 'docs') -Destination $OutputDirectory -Recurse
+    $licenseDirectory = Join-Path $OutputDirectory 'licenses'
+    New-Item -ItemType Directory -Path $licenseDirectory -Force | Out-Null
+    $zxingLicense = Join-Path $BuildDirectory 'third-party-licenses/ZXing-C++-Apache-2.0.txt'
+    if (!(Test-Path -LiteralPath $zxingLicense)) { throw 'Portable package is missing the ZXing-C++ Apache-2.0 license.' }
+    Copy-Item -LiteralPath $zxingLicense -Destination $licenseDirectory
+    if (Get-ChildItem -LiteralPath $OutputDirectory -Filter '*ZXing*.dll' -File -Recurse) { throw 'Portable QR build unexpectedly requires a ZXing DLL.' }
     if (!(Test-Path -LiteralPath (Join-Path $sqlDriverDirectory 'qsqlite.dll'))) { throw 'Portable package is missing the SQLite driver.' }
-    $manifest = [ordered]@{ application='SmallDTL'; configuration='Release'; qtRoot=$QtRoot; builtAt=(Get-Date -Format o); tests='passed'; packagedRuntimeSmokeTest='passed'; sqliteDriver='sqldrivers/qsqlite.dll' }
+    $manifest = [ordered]@{ application='SmallDTL'; configuration='Release'; qtRoot=$QtRoot; builtAt=(Get-Date -Format o); tests='passed'; packagedRuntimeSmokeTest='passed'; sqliteDriver='sqldrivers/qsqlite.dll'; qrDependency='ZXing-C++ v3.1.1 (static, Apache-2.0)'; qrLicense='licenses/ZXing-C++-Apache-2.0.txt' }
     $manifest | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $OutputDirectory 'build-manifest.json') -Encoding utf8
     Compress-Archive -LiteralPath $OutputDirectory -DestinationPath ($OutputDirectory + '.zip')
     Write-Output "Portable application: $OutputDirectory"

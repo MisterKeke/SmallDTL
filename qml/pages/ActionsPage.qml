@@ -42,6 +42,10 @@ Item {
                 stepPath: step.path,
                 stepArguments: step.arguments,
                 stepUrl: step.url,
+                stepQrText: step.qrText,
+                stepQrPixelsPerModule: step.qrPixelsPerModule,
+                stepQrMarginModules: step.qrMarginModules,
+                stepQrErrorCorrection: step.qrErrorCorrection,
                 stepTargetProfileId: step.targetProfileId,
                 stepDelayMs: step.delayMs
             }
@@ -67,6 +71,8 @@ Item {
         if (type === "openFile") return "Open file"
         if (type === "openUrl") return "Open URL"
         if (type === "saveScreenshot") return "Save clipboard screenshot"
+        if (type === "generateQr") return "Generate QR and copy image"
+        if (type === "decodeQrImage") return "Decode QR image"
         if (type === "switchProfile") return "Switch profile"
         if (type === "wait") return "Wait"
         return "Action"
@@ -293,7 +299,7 @@ Item {
                             implicitContentWidthPolicy: ComboBox.WidestText
                             Layout.minimumWidth: implicitWidth
                             Layout.fillWidth: true
-                            model: ["Launch application", "Open folder", "Open file", "Open URL", "Save clipboard screenshot", "Switch profile", "Wait"]
+                            model: ["Launch application", "Open folder", "Open file", "Open URL", "Save clipboard screenshot", "Generate QR and copy image", "Decode QR image", "Switch profile", "Wait"]
                         }
                         Button {
                             objectName: "addStepButton"
@@ -302,7 +308,7 @@ Item {
                             onClicked: {
                                 if (!root.hasSelectedSequence())
                                     return
-                                const types = ["launchApplication", "openFolder", "openFile", "openUrl", "saveScreenshot", "switchProfile", "wait"]
+                                const types = ["launchApplication", "openFolder", "openFile", "openUrl", "saveScreenshot", "generateQr", "decodeQrImage", "switchProfile", "wait"]
                                 const stepId = actions.addStep(root.selectedSequenceId, types[stepTypePicker.currentIndex])
                                 if (stepId.length > 0)
                                     app.dismissMessage()
@@ -331,6 +337,10 @@ Item {
                                     required property string stepPath
                                     required property string stepArguments
                                     required property string stepUrl
+                                    required property string stepQrText
+                                    required property int stepQrPixelsPerModule
+                                    required property int stepQrMarginModules
+                                    required property string stepQrErrorCorrection
                                     required property string stepTargetProfileId
                                     required property int stepDelayMs
                                     Layout.fillWidth: true
@@ -356,8 +366,8 @@ Item {
                                         }
                                         RowLayout {
                                             Layout.fillWidth: true
-                                            visible: stepType === "launchApplication" || stepType === "openFolder" || stepType === "openFile"
-                                            Label { text: stepType === "launchApplication" ? "Executable" : stepType === "openFolder" ? "Folder" : "File"; color: settings.palette["#999aa4"]; font.pixelSize: 9; Layout.preferredWidth: 55 }
+                                            visible: stepType === "launchApplication" || stepType === "openFolder" || stepType === "openFile" || stepType === "decodeQrImage"
+                                            Label { text: stepType === "launchApplication" ? "Executable" : stepType === "openFolder" ? "Folder" : stepType === "decodeQrImage" ? "Image" : "File"; color: settings.palette["#999aa4"]; font.pixelSize: 9; Layout.preferredWidth: 55 }
                                             TextField {
                                                 id: pathEditor
                                                 objectName: "stepPathEditor"
@@ -372,6 +382,41 @@ Item {
                                                     const selected = app.chooseActionPath(stepType, stepPath)
                                                     if (selected.length > 0) actions.updateStep(root.selectedSequenceId, stepId, { "path": selected })
                                                 }
+                                            }
+                                        }
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            visible: stepType === "generateQr"
+                                            Label { text: "Text / URL"; color: settings.palette["#999aa4"]; font.pixelSize: 9; Layout.preferredWidth: 55 }
+                                            TextField {
+                                                Layout.fillWidth: true
+                                                text: stepQrText
+                                                objectName: "stepQrTextEditor"
+                                                placeholderText: "Text or URL to encode"
+                                                onEditingFinished: { actions.updateStep(root.selectedSequenceId, stepId, { "qrText": text }); text = Qt.binding(function() { return stepQrText }) }
+                                            }
+                                        }
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            visible: stepType === "generateQr"
+                                            Label { text: "QR image"; color: settings.palette["#999aa4"]; font.pixelSize: 9; Layout.preferredWidth: 55 }
+                                            Label { text: "px/module"; color: settings.palette["#999aa4"]; font.pixelSize: 9 }
+                                            SpinBox {
+                                                from: 1; to: 20; value: stepQrPixelsPerModule
+                                                onValueModified: { actions.updateStep(root.selectedSequenceId, stepId, { "qrPixelsPerModule": value }); value = Qt.binding(function() { return stepQrPixelsPerModule }) }
+                                            }
+                                            Label { text: "Margin"; color: settings.palette["#999aa4"]; font.pixelSize: 9 }
+                                            SpinBox {
+                                                from: 0; to: 20; value: stepQrMarginModules
+                                                onValueModified: { actions.updateStep(root.selectedSequenceId, stepId, { "qrMarginModules": value }); value = Qt.binding(function() { return stepQrMarginModules }) }
+                                            }
+                                            ComboBox {
+                                                model: [{code: "L", label: "L"}, {code: "M", label: "M"}, {code: "Q", label: "Q"}, {code: "H", label: "H"}]
+                                                textRole: "label"
+                                                valueRole: "code"
+                                                currentValue: stepQrErrorCorrection
+                                                Layout.preferredWidth: 66
+                                                onActivated: { actions.updateStep(root.selectedSequenceId, stepId, { "qrErrorCorrection": currentValue }); currentValue = Qt.binding(function() { return stepQrErrorCorrection }) }
                                             }
                                         }
                                         RowLayout {

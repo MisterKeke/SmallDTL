@@ -24,6 +24,8 @@ const QString kOpenUrl = QStringLiteral("openUrl");
 const QString kSaveScreenshot = QStringLiteral("saveScreenshot");
 const QString kSwitchProfile = QStringLiteral("switchProfile");
 const QString kWait = QStringLiteral("wait");
+const QString kGenerateQr = QStringLiteral("generateQr");
+const QString kDecodeQrImage = QStringLiteral("decodeQrImage");
 constexpr int kMaximumSequences = 100;
 constexpr int kMaximumSteps = 100;
 constexpr int kMaximumWaitMs = 600000;
@@ -31,7 +33,8 @@ constexpr int kMaximumWaitMs = 600000;
 bool isKnownStepType(const QString &type)
 {
     return type == kLaunchApplication || type == kOpenFolder || type == kOpenFile ||
-           type == kOpenUrl || type == kSaveScreenshot || type == kSwitchProfile || type == kWait;
+           type == kOpenUrl || type == kSaveScreenshot || type == kSwitchProfile || type == kWait ||
+           type == kGenerateQr || type == kDecodeQrImage;
 }
 }
 
@@ -149,6 +152,17 @@ QString ActionManager::validateSequence(const QString &sequenceId, QString *erro
                 if (!url.isValid() || (url.scheme() != QStringLiteral("http") &&
                                        url.scheme() != QStringLiteral("https")) || url.host().isEmpty())
                     reason = prefix + QStringLiteral("enter a valid HTTP or HTTPS URL.");
+            } else if (step.type == kGenerateQr) {
+                if (step.qrText.trimmed().isEmpty() || step.qrText.toUtf8().size() > 20 * 1024 ||
+                    step.qrPixelsPerModule < 1 || step.qrPixelsPerModule > 20 ||
+                    step.qrMarginModules < 0 || step.qrMarginModules > 20 ||
+                    (step.qrErrorCorrection != QStringLiteral("L") && step.qrErrorCorrection != QStringLiteral("M") &&
+                     step.qrErrorCorrection != QStringLiteral("Q") && step.qrErrorCorrection != QStringLiteral("H")))
+                    reason = prefix + QStringLiteral("enter text and valid QR size, margin, and error-correction settings.");
+            } else if (step.type == kDecodeQrImage) {
+                const QFileInfo image(step.path);
+                if (step.path.trimmed().isEmpty() || !image.exists() || !image.isFile())
+                    reason = prefix + QStringLiteral("choose an existing image file containing QR code(s).");
             } else if (step.type == kSwitchProfile &&
                        (!m_profiles || step.targetProfileId==QStringLiteral("global") || !m_profiles->profileById(step.targetProfileId)))
                 reason = prefix + QStringLiteral("choose an available profile.");
@@ -254,6 +268,14 @@ bool ActionManager::updateStep(const QString &sequenceId, const QString &stepId,
         step.arguments = changes.value(QStringLiteral("arguments")).toString();
     if (changes.contains(QStringLiteral("url")))
         step.url = changes.value(QStringLiteral("url")).toString().trimmed();
+    if (changes.contains(QStringLiteral("qrText")))
+        step.qrText = changes.value(QStringLiteral("qrText")).toString();
+    if (changes.contains(QStringLiteral("qrErrorCorrection")))
+        step.qrErrorCorrection = changes.value(QStringLiteral("qrErrorCorrection")).toString();
+    if (changes.contains(QStringLiteral("qrPixelsPerModule")))
+        step.qrPixelsPerModule = changes.value(QStringLiteral("qrPixelsPerModule")).toInt();
+    if (changes.contains(QStringLiteral("qrMarginModules")))
+        step.qrMarginModules = changes.value(QStringLiteral("qrMarginModules")).toInt();
     if (changes.contains(QStringLiteral("targetProfileId")))
         step.targetProfileId = changes.value(QStringLiteral("targetProfileId")).toString();
     if (changes.contains(QStringLiteral("delayMs")))
@@ -392,6 +414,10 @@ QVariantMap ActionManager::stepToVariant(const ActionStep &step) const
     return {{QStringLiteral("stepId"), step.id}, {QStringLiteral("stepType"), step.type},
             {QStringLiteral("enabled"), step.enabled}, {QStringLiteral("path"), step.path},
             {QStringLiteral("arguments"), step.arguments}, {QStringLiteral("url"), step.url},
+            {QStringLiteral("qrText"), step.qrText},
+            {QStringLiteral("qrErrorCorrection"), step.qrErrorCorrection},
+            {QStringLiteral("qrPixelsPerModule"), step.qrPixelsPerModule},
+            {QStringLiteral("qrMarginModules"), step.qrMarginModules},
             {QStringLiteral("targetProfileId"), step.targetProfileId},
             {QStringLiteral("delayMs"), step.delayMs}};
 }
@@ -403,6 +429,10 @@ QJsonObject ActionManager::serializeSequence(const ActionSequence &sequence)
         steps.append(QJsonObject{{QStringLiteral("id"), step.id}, {QStringLiteral("type"), step.type},
                                  {QStringLiteral("enabled"), step.enabled}, {QStringLiteral("path"), step.path},
                                  {QStringLiteral("arguments"), step.arguments}, {QStringLiteral("url"), step.url},
+                                 {QStringLiteral("qrText"), step.qrText},
+                                 {QStringLiteral("qrErrorCorrection"), step.qrErrorCorrection},
+                                 {QStringLiteral("qrPixelsPerModule"), step.qrPixelsPerModule},
+                                 {QStringLiteral("qrMarginModules"), step.qrMarginModules},
                                  {QStringLiteral("targetProfileId"), step.targetProfileId},
                                  {QStringLiteral("delayMs"), step.delayMs}});
     }
@@ -428,6 +458,10 @@ bool ActionManager::parseSequence(const QJsonObject &object, ActionSequence *seq
         const QJsonObject item = value.toObject();
         for(const QString &key:{QStringLiteral("id"),QStringLiteral("type"),QStringLiteral("path"),QStringLiteral("arguments"),QStringLiteral("url"),QStringLiteral("targetProfileId")})if(!JsonValidation::string(item,key))return false;
         if(!JsonValidation::boolean(item,QStringLiteral("enabled")) || !JsonValidation::integer(item,QStringLiteral("delayMs"),0,2147483647))return false;
+        if (item.contains(QStringLiteral("qrText")) && !JsonValidation::string(item, QStringLiteral("qrText"))) return false;
+        if (item.contains(QStringLiteral("qrErrorCorrection")) && !JsonValidation::string(item, QStringLiteral("qrErrorCorrection"))) return false;
+        if (item.contains(QStringLiteral("qrPixelsPerModule")) && !JsonValidation::integer(item, QStringLiteral("qrPixelsPerModule"), 1, 20)) return false;
+        if (item.contains(QStringLiteral("qrMarginModules")) && !JsonValidation::integer(item, QStringLiteral("qrMarginModules"), 0, 20)) return false;
         ActionStep step;
         step.id = item.value(QStringLiteral("id")).toString();
         step.type = item.value(QStringLiteral("type")).toString();
@@ -435,6 +469,10 @@ bool ActionManager::parseSequence(const QJsonObject &object, ActionSequence *seq
         step.path = item.value(QStringLiteral("path")).toString();
         step.arguments = item.value(QStringLiteral("arguments")).toString();
         step.url = item.value(QStringLiteral("url")).toString();
+        step.qrText = item.value(QStringLiteral("qrText")).toString();
+        step.qrErrorCorrection = item.value(QStringLiteral("qrErrorCorrection")).toString(QStringLiteral("M"));
+        step.qrPixelsPerModule = item.value(QStringLiteral("qrPixelsPerModule")).toInt(8);
+        step.qrMarginModules = item.value(QStringLiteral("qrMarginModules")).toInt(4);
         step.targetProfileId = item.value(QStringLiteral("targetProfileId")).toString();
         step.delayMs = item.value(QStringLiteral("delayMs")).toInt(1000);
         if (!JsonValidation::safeId(step.id) || stepIds.contains(step.id) || !isKnownStepType(step.type))
