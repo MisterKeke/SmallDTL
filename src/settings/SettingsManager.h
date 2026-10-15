@@ -18,6 +18,8 @@ class SettingsManager final : public QObject {
     Q_PROPERTY(QString filenamePattern READ filenamePattern WRITE setFilenamePattern NOTIFY preferencesChanged)
     Q_PROPERTY(QString appearance READ appearance WRITE setAppearance NOTIFY preferencesChanged)
     Q_PROPERTY(QString accentColor READ accentColor WRITE setAccentColor NOTIFY preferencesChanged)
+    Q_PROPERTY(bool automaticClipboardSavingEnabled READ automaticClipboardSavingEnabled WRITE setAutomaticClipboardSavingEnabled NOTIFY preferencesChanged)
+    Q_PROPERTY(QString automaticClipboardSaveTagId READ automaticClipboardSaveTagId WRITE setAutomaticClipboardSaveTagId NOTIFY preferencesChanged)
 public:
     explicit SettingsManager(QObject *parent = nullptr);
     QString generalScreenshotDirectory() const;
@@ -47,6 +49,10 @@ public slots:
     bool setAppearance(const QString &value);
     QString accentColor() const;
     bool setAccentColor(const QString &value);
+    bool automaticClipboardSavingEnabled() const;
+    bool setAutomaticClipboardSavingEnabled(bool enabled);
+    QString automaticClipboardSaveTagId() const;
+    bool setAutomaticClipboardSaveTagId(const QString &tagId);
 signals:
     void preferencesChanged();
     void generalScreenshotDirectoryChanged();

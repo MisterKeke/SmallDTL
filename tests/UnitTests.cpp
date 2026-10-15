@@ -2,6 +2,7 @@
 #include "../src/actions/ActionSequenceRunner.h"
 #include "../src/app/AppDataPaths.h"
 #include "../src/app/ApplicationController.h"
+#include "../src/clipboard/ClipboardService.h"
 #include "../src/hotkeys/HotkeyUtils.h"
 #include "../src/profiles/ProfileManager.h"
 #include "../src/screenshots/ScreenshotManager.h"
@@ -431,8 +432,10 @@ private slots:
         QCOMPARE(migrated.sourceScreenshotId, QString());
         QString childId;
         QVERIFY2(database.addScreenshot(QDir(AppDataPaths::root()).filePath(QStringLiteral("new-copy.png")), QSize(8, 6), 20,
-                                        QStringLiteral("edited-copy"), &childId, migrated.id, false),
+                                        QStringLiteral("edited-copy"), &childId, migrated.id, false,
+                                        QStringLiteral("captured-profile-id")),
                  qPrintable(database.lastError()));
+        QCOMPARE(database.screenshotById(childId).captureProfileId, QStringLiteral("captured-profile-id"));
         QVERIFY2(database.removeScreenshot(migrated.id), qPrintable(database.lastError()));
         QVERIFY(database.screenshotById(childId).sourceScreenshotId.isEmpty());
     }
@@ -1060,6 +1063,170 @@ private slots:
         const QImage saved(first);QCOMPARE(saved,image);
     }
 
+    void clipboardServiceSuppressesAppOwnedImageChanges()
+    {
+        QClipboard *clipboard = QGuiApplication::clipboard();
+        auto previous = std::make_unique<QMimeData>();
+        if (const auto *mime = clipboard->mimeData())
+            for (const auto &format : mime->formats()) previous->setData(format, mime->data(format));
+        const auto restore = qScopeGuard([&] { clipboard->setMimeData(previous.release()); });
+        ClipboardService service(clipboard);
+        QSignalSpy external(&service, &ClipboardService::externalImageAvailable);
+        QImage image(18, 12, QImage::Format_ARGB32);
+        image.fill(Qt::magenta);
+        service.writeImage(image);
+        QCOMPARE(service.hasImage(), true);
+        QCOMPARE(external.count(), 0);
+        service.processImageChange(image, true);
+        QCOMPARE(external.count(), 0);
+        service.processImageChange(image, false);
+        QCOMPARE(external.count(), 1);
+        QCOMPARE(external.first().first().value<QImage>(), image);
+    }
+
+    void automaticClipboardSavesDeduplicateAndKeepManualSaves()
+    {
+        QTemporaryDir destination(g_testData->filePath(QStringLiteral("auto-save-destination-XXXXXX")));
+        QVERIFY(destination.isValid());
+        SettingsManager settings;
+        QVERIFY(settings.setGeneralScreenshotDirectory(destination.path()));
+        QVERIFY(settings.setAutomaticClipboardSavingEnabled(true));
+        ProfileManager profiles(&settings);
+        ScreenshotManager screenshots(&profiles, &settings);
+        QSignalSpy finished(&screenshots, &ScreenshotManager::saveFinished);
+        const QString tagId = screenshots.createTag(QStringLiteral("Automatic"));
+        QVERIFY(!tagId.isEmpty());
+        QVERIFY(settings.setAutomaticClipboardSaveTagId(tagId));
+
+        QImage image(29, 17, QImage::Format_ARGB32);
+        image.fill(QColor(210, 30, 60));
+        screenshots.setAutomaticClipboardSavingPaused(true);
+        screenshots.m_clipboardService.processImageChange(image, false);
+        QCOMPARE(screenshots.m_fingerprintJobs.size(), 0);
+        screenshots.setAutomaticClipboardSavingPaused(false);
+        screenshots.m_clipboardService.processImageChange(image, false);
+        screenshots.m_clipboardService.processImageChange(image.convertToFormat(QImage::Format_RGB32), false);
+        screenshots.finishPendingSaves();
+        const auto records = screenshots.m_database.screenshots();
+        QCOMPARE(records.size(), 1);
+        QCOMPARE(records.first().source, QStringLiteral("clipboard-auto"));
+        QCOMPARE(records.first().captureProfileId, profiles.activeProfileId());
+        QCOMPARE(records.first().tags, QStringList{QStringLiteral("Automatic")});
+        QCOMPARE(QImage(records.first().path).convertToFormat(QImage::Format_RGBA8888),
+                 image.convertToFormat(QImage::Format_RGBA8888));
+        QCOMPARE(finished.count(), 1);
+        QVERIFY(finished.first().at(1).toBool());
+
+        // An explicit manual save is intentionally independent of the automatic
+        // content fingerprint cache and can still save the same clipboard image.
+        QVERIFY(settings.setAutomaticClipboardSavingEnabled(false));
+        QClipboard *clipboard = QGuiApplication::clipboard();
+        auto previous = std::make_unique<QMimeData>();
+        if (const auto *mime = clipboard->mimeData())
+            for (const auto &format : mime->formats()) previous->setData(format, mime->data(format));
+        const auto restore = qScopeGuard([&] { clipboard->setMimeData(previous.release()); });
+        clipboard->setImage(image);
+        const QString manual = screenshots.saveClipboardImage();
+        QVERIFY(!manual.isEmpty());
+        screenshots.finishPendingSaves();
+        QVERIFY(QFileInfo::exists(manual));
+        QCOMPARE(finished.count(), 2);
+        QVERIFY2(finished.last().at(1).toBool(), qPrintable(finished.last().at(2).toString()));
+        QCOMPARE(screenshots.m_database.screenshots().size(), 2);
+    }
+
+    void automaticClipboardSnapshotsProfileAndDestinationAcrossRapidChanges()
+    {
+        QTemporaryDir first(g_testData->filePath(QStringLiteral("auto-profile-one-XXXXXX")));
+        QTemporaryDir second(g_testData->filePath(QStringLiteral("auto-profile-two-XXXXXX")));
+        QVERIFY(first.isValid());
+        QVERIFY(second.isValid());
+        SettingsManager settings;
+        QVERIFY(settings.setGeneralScreenshotDirectory(first.path()));
+        QVERIFY(settings.setAutomaticClipboardSavingEnabled(true));
+        ProfileManager profiles(&settings);
+        const QString profileOne = profiles.activeProfileId();
+        QVERIFY(profiles.setScreenshotDirectory(profileOne, first.path()));
+        const QString profileTwo = profiles.createProfile(QStringLiteral("Second capture target"));
+        QVERIFY(!profileTwo.isEmpty());
+        QVERIFY(profiles.setScreenshotDirectory(profileTwo, second.path()));
+        ScreenshotManager screenshots(&profiles, &settings);
+
+        QImage one(21, 14, QImage::Format_ARGB32);
+        one.fill(Qt::cyan);
+        QImage two(22, 15, QImage::Format_ARGB32);
+        two.fill(Qt::darkGreen);
+        screenshots.m_clipboardService.processImageChange(one, false);
+        QVERIFY(profiles.setActiveProfile(profileTwo));
+        screenshots.m_clipboardService.processImageChange(two, false);
+        screenshots.finishPendingSaves();
+
+        const auto records = screenshots.m_database.screenshots();
+        QCOMPARE(records.size(), 2);
+        bool foundOne = false;
+        bool foundTwo = false;
+        for (const ScreenshotRecord &record : records) {
+            if (record.captureProfileId == profileOne) {
+                foundOne = true;
+                QCOMPARE(QFileInfo(record.path).absolutePath(), QFileInfo(first.path()).absoluteFilePath());
+                QCOMPARE(QImage(record.path), one);
+            } else if (record.captureProfileId == profileTwo) {
+                foundTwo = true;
+                QCOMPARE(QFileInfo(record.path).absolutePath(), QFileInfo(second.path()).absoluteFilePath());
+                QCOMPARE(QImage(record.path), two);
+            }
+        }
+        QVERIFY(foundOne);
+        QVERIFY(foundTwo);
+    }
+
+    void automaticClipboardReportsUnavailableDestinationsAndQueueSaturation()
+    {
+        QTemporaryDir destination(g_testData->filePath(QStringLiteral("auto-error-destination-XXXXXX")));
+        QVERIFY(destination.isValid());
+        SettingsManager settings;
+        QVERIFY(settings.setGeneralScreenshotDirectory(destination.path()));
+        QVERIFY(settings.setAutomaticClipboardSavingEnabled(true));
+        ProfileManager profiles(&settings);
+        ScreenshotManager screenshots(&profiles, &settings);
+        QSignalSpy messages(&screenshots, &ScreenshotManager::messageChanged);
+        QSignalSpy finished(&screenshots, &ScreenshotManager::saveFinished);
+        QImage first(12, 12, QImage::Format_ARGB32); first.fill(Qt::red);
+        QImage second(13, 12, QImage::Format_ARGB32); second.fill(Qt::blue);
+        QImage third(14, 12, QImage::Format_ARGB32); third.fill(Qt::green);
+        screenshots.m_clipboardService.processImageChange(first, false);
+        screenshots.m_clipboardService.processImageChange(second, false);
+        screenshots.m_clipboardService.processImageChange(third, false);
+        QVERIFY(messages.count() >= 1);
+        QVERIFY(messages.last().first().toString().contains(QStringLiteral("queue is full")));
+        screenshots.finishPendingSaves();
+        QCOMPARE(screenshots.m_database.screenshots().size(), 2);
+
+        const QString unavailable = QDir(destination.path()).filePath(QStringLiteral("removed-later"));
+        QVERIFY(QDir().mkpath(unavailable));
+        screenshots.setDestinationOverride(unavailable);
+        QImage fourth(10, 10, QImage::Format_ARGB32); fourth.fill(Qt::yellow);
+        screenshots.m_clipboardService.processImageChange(fourth, false);
+        QVERIFY(QDir().rmdir(unavailable));
+        screenshots.finishPendingSaves();
+        QVERIFY(messages.count() >= 2);
+        QVERIFY(messages.last().first().toString().contains(QStringLiteral("destination is unavailable")));
+        QCOMPARE(screenshots.m_database.screenshots().size(), 2);
+
+        screenshots.clearDestinationOverride();
+        const QString transientTag = screenshots.createTag(QStringLiteral("Removed during save"));
+        QVERIFY(!transientTag.isEmpty());
+        QVERIFY(settings.setAutomaticClipboardSaveTagId(transientTag));
+        screenshots.m_clipboardService.processImageChange(fourth, false);
+        QVERIFY(screenshots.deleteTag(transientTag));
+        screenshots.finishPendingSaves();
+        QCOMPARE(finished.count(), 3);
+        QVERIFY(!finished.last().at(1).toBool());
+        QVERIFY(QFileInfo::exists(finished.last().first().toString()));
+        QVERIFY(finished.last().at(2).toString().contains(QStringLiteral("could not be added to the gallery")));
+        QCOMPARE(screenshots.m_database.screenshots().size(), 2);
+    }
+
     void settingsPreferencesRoundTrip()
     {
         SettingsManager settings;
@@ -1068,12 +1235,14 @@ private slots:
         QVERIFY(settings.setAppearance(QStringLiteral("light")));QVERIFY(!settings.darkTheme());
         QVERIFY(settings.setAccentColor(QStringLiteral("#4287f5")));
         QVERIFY(settings.setNotificationsEnabled(false));QVERIFY(settings.setMinimizeToTray(true));
+        QVERIFY(settings.setAutomaticClipboardSavingEnabled(true));
+        QVERIFY(settings.setAutomaticClipboardSaveTagId(QStringLiteral("tag-identifier")));
 #ifdef Q_OS_WIN
         QVERIFY(settings.setStartWithWindows(true));
         QSettings startup(QDir(AppDataPaths::root()).filePath(QStringLiteral("test-startup.ini")),QSettings::IniFormat);
         QVERIFY(startup.value(QStringLiteral("ScreenshotHotkeyManager")).toString().startsWith(QLatin1Char('"')));
 #endif
-        SettingsManager restored;QCOMPARE(restored.filenamePattern(),settings.filenamePattern());QCOMPARE(restored.accentColor(),settings.accentColor());QVERIFY(!restored.notificationsEnabled());QVERIFY(restored.minimizeToTray());QVERIFY(!restored.darkTheme());
+        SettingsManager restored;QCOMPARE(restored.filenamePattern(),settings.filenamePattern());QCOMPARE(restored.accentColor(),settings.accentColor());QVERIFY(!restored.notificationsEnabled());QVERIFY(restored.minimizeToTray());QVERIFY(!restored.darkTheme());QVERIFY(restored.automaticClipboardSavingEnabled());QCOMPARE(restored.automaticClipboardSaveTagId(),QStringLiteral("tag-identifier"));
         const QColor accent=restored.palette().value(QStringLiteral("#e96782")).value<QColor>();QCOMPARE(accent,QColor(QStringLiteral("#4287f5")));
     }
 

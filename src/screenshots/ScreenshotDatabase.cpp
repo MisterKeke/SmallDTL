@@ -99,10 +99,10 @@ bool ScreenshotDatabase::migrateSchema()
     if (!versionQuery.exec(QStringLiteral("PRAGMA user_version")) || !versionQuery.next())
         return transactionError(QStringLiteral("Could not read screenshot database schema version"), versionQuery.lastError().text());
     int version = versionQuery.value(0).toInt();
-    if (version > 3)
+    if (version > 4)
         return transactionError(QStringLiteral("Screenshot database was created by a newer SmallDTL version"));
 
-    while (version < 3) {
+    while (version < 4) {
         if (!m_database->transaction())
             return transactionError(QStringLiteral("Could not start screenshot database migration"), m_database->lastError().text());
         QSqlQuery query(*m_database);
@@ -142,6 +142,11 @@ bool ScreenshotDatabase::migrateSchema()
                  query.exec(QStringLiteral("PRAGMA user_version = 3"));
             if (ok)
                 version = 3;
+        } else if (version == 3) {
+            ok = query.exec(QStringLiteral("ALTER TABLE screenshots ADD COLUMN capture_profile_id TEXT NOT NULL DEFAULT ''")) &&
+                 query.exec(QStringLiteral("PRAGMA user_version = 4"));
+            if (ok)
+                version = 4;
         }
         if (!ok) {
             const QString detail = query.lastError().text();
@@ -254,8 +259,8 @@ QVector<ScreenshotRecord> ScreenshotDatabase::screenshots(const QString &directo
         return result;
     QSqlQuery query(*m_database);
     const QString sql = tagId.isEmpty()
-        ? QStringLiteral("SELECT id, path, captured_at, width, height, size_bytes, source, source_screenshot_id FROM screenshots ORDER BY captured_at DESC, path COLLATE NOCASE")
-        : QStringLiteral("SELECT s.id, s.path, s.captured_at, s.width, s.height, s.size_bytes, s.source, s.source_screenshot_id FROM screenshots s "
+        ? QStringLiteral("SELECT id, path, captured_at, width, height, size_bytes, source, source_screenshot_id, capture_profile_id FROM screenshots ORDER BY captured_at DESC, path COLLATE NOCASE")
+        : QStringLiteral("SELECT s.id, s.path, s.captured_at, s.width, s.height, s.size_bytes, s.source, s.source_screenshot_id, s.capture_profile_id FROM screenshots s "
                          "WHERE EXISTS(SELECT 1 FROM screenshot_tags st WHERE st.screenshot_id=s.id AND st.tag_id=?) "
                          "ORDER BY s.captured_at DESC, s.path COLLATE NOCASE");
     query.prepare(sql);
@@ -275,6 +280,7 @@ QVector<ScreenshotRecord> ScreenshotDatabase::screenshots(const QString &directo
         record.sizeBytes = query.value(5).toLongLong();
         record.source = query.value(6).toString();
         record.sourceScreenshotId = query.value(7).toString();
+        record.captureProfileId = query.value(8).toString();
         if (!directory.isEmpty() && QFileInfo(record.path).absolutePath().compare(directory, Qt::CaseInsensitive) != 0)
             continue;
         result.append(record);
@@ -301,7 +307,7 @@ ScreenshotRecord ScreenshotDatabase::screenshotById(const QString &id) const
     if (!checkThread() || !m_ready)
         return {};
     QSqlQuery query(*m_database);
-    query.prepare(QStringLiteral("SELECT id, path, captured_at, width, height, size_bytes, source, source_screenshot_id "
+    query.prepare(QStringLiteral("SELECT id, path, captured_at, width, height, size_bytes, source, source_screenshot_id, capture_profile_id "
                                  "FROM screenshots WHERE id=?"));
     query.addBindValue(id);
     if (!query.exec() || !query.next())
@@ -315,6 +321,7 @@ ScreenshotRecord ScreenshotDatabase::screenshotById(const QString &id) const
     record.sizeBytes = query.value(5).toLongLong();
     record.source = query.value(6).toString();
     record.sourceScreenshotId = query.value(7).toString();
+    record.captureProfileId = query.value(8).toString();
     QSqlQuery tagsQuery(*m_database);
     tagsQuery.prepare(QStringLiteral("SELECT tags.name FROM screenshot_tags JOIN tags ON tags.id=screenshot_tags.tag_id "
                                      "WHERE screenshot_tags.screenshot_id=? ORDER BY tags.name COLLATE NOCASE"));
@@ -354,7 +361,8 @@ QString ScreenshotDatabase::screenshotIdForPath(const QString &path) const
 
 bool ScreenshotDatabase::addScreenshot(const QString &path, const QSize &dimensions, qint64 sizeBytes,
                                        const QString &source, QString *id,
-                                       const QString &sourceScreenshotId, bool inheritTags)
+                                       const QString &sourceScreenshotId, bool inheritTags,
+                                       const QString &captureProfileId, const QString &tagId)
 {
     if (!checkThread() || !m_ready)
         return false;
@@ -371,8 +379,8 @@ bool ScreenshotDatabase::addScreenshot(const QString &path, const QSize &dimensi
     if (!m_database->transaction())
         return transactionError(QStringLiteral("Could not start screenshot registration"), m_database->lastError().text());
     QSqlQuery query(*m_database);
-    query.prepare(QStringLiteral("INSERT INTO screenshots(id, path, captured_at, width, height, size_bytes, source, source_screenshot_id) "
-                                 "VALUES(?, ?, ?, ?, ?, ?, ?, ?)"));
+    query.prepare(QStringLiteral("INSERT INTO screenshots(id, path, captured_at, width, height, size_bytes, source, source_screenshot_id, capture_profile_id) "
+                                 "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)"));
     const QString screenshotId = newId();
     query.addBindValue(screenshotId);
     query.addBindValue(normalized);
@@ -382,6 +390,7 @@ bool ScreenshotDatabase::addScreenshot(const QString &path, const QSize &dimensi
     query.addBindValue(qMax<qint64>(0, sizeBytes));
     query.addBindValue(source);
     query.addBindValue(sourceScreenshotId.isEmpty() ? QVariant() : QVariant(sourceScreenshotId));
+    query.addBindValue(captureProfileId.isEmpty() ? QVariant(QStringLiteral("")) : QVariant(captureProfileId));
     if (!query.exec()) {
         m_database->rollback();
         return transactionError(QStringLiteral("Could not add screenshot to the gallery"), query.lastError().text());
@@ -396,6 +405,17 @@ bool ScreenshotDatabase::addScreenshot(const QString &path, const QSize &dimensi
             const QString detail = tagsQuery.lastError().text();
             m_database->rollback();
             return transactionError(QStringLiteral("Could not copy source screenshot tags"), detail);
+        }
+    }
+    if (!tagId.isEmpty()) {
+        QSqlQuery tagQuery(*m_database);
+        tagQuery.prepare(QStringLiteral("INSERT INTO screenshot_tags(screenshot_id, tag_id) VALUES(?, ?)"));
+        tagQuery.addBindValue(screenshotId);
+        tagQuery.addBindValue(tagId);
+        if (!tagQuery.exec()) {
+            const QString detail = tagQuery.lastError().text();
+            m_database->rollback();
+            return transactionError(QStringLiteral("Could not assign the automatic screenshot tag"), detail);
         }
     }
     if (!m_database->commit()) {
@@ -476,7 +496,7 @@ bool ScreenshotDatabase::restoreScreenshot(const ScreenshotRecord &record)
     if (!m_database->transaction())
         return transactionError(QStringLiteral("Could not start screenshot restoration"), m_database->lastError().text());
     QSqlQuery insert(*m_database);
-    insert.prepare(QStringLiteral("INSERT INTO screenshots(id, path, captured_at, width, height, size_bytes, source, source_screenshot_id) VALUES(?, ?, ?, ?, ?, ?, ?, ?)"));
+    insert.prepare(QStringLiteral("INSERT INTO screenshots(id, path, captured_at, width, height, size_bytes, source, source_screenshot_id, capture_profile_id) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)"));
     insert.addBindValue(record.id);
     insert.addBindValue(normalizedPath(record.path));
     insert.addBindValue(record.timestamp);
@@ -485,6 +505,7 @@ bool ScreenshotDatabase::restoreScreenshot(const ScreenshotRecord &record)
     insert.addBindValue(record.sizeBytes);
     insert.addBindValue(record.source);
     insert.addBindValue(record.sourceScreenshotId.isEmpty() ? QVariant() : QVariant(record.sourceScreenshotId));
+    insert.addBindValue(record.captureProfileId.isEmpty() ? QVariant(QStringLiteral("")) : QVariant(record.captureProfileId));
     if (!insert.exec()) {
         m_database->rollback();
         return transactionError(QStringLiteral("Could not restore screenshot record"), insert.lastError().text());

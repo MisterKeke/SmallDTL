@@ -27,6 +27,8 @@ qt_add_executable(ScreenshotHotkeyManager WIN32
     src/actions/ActionSequenceRunner.cpp
     src/app/ApplicationController.h
     src/app/ApplicationController.cpp
+    src/clipboard/ClipboardService.h
+    src/clipboard/ClipboardService.cpp
     src/settings/SettingsManager.h
     src/settings/SettingsManager.cpp
     src/profiles/ProfileManager.h
@@ -90,6 +92,8 @@ if(BUILD_TESTING)
         tests/UnitTests.cpp
         src/app/ApplicationController.h
         src/app/ApplicationController.cpp
+        src/clipboard/ClipboardService.h
+        src/clipboard/ClipboardService.cpp
         src/hotkeys/HotkeyManager.h
         src/hotkeys/HotkeyManager.cpp
         src/app/AppDataPaths.h

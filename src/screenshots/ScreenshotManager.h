@@ -16,6 +16,7 @@
 
 #include "../profiles/ProfileManager.h"
 #include "ScreenshotDatabase.h"
+#include "../clipboard/ClipboardService.h"
 
 class SettingsManager;
 class QClipboard;
@@ -97,6 +98,8 @@ class ScreenshotManager final : public QObject
     Q_PROPERTY(ScreenshotGalleryModel *gallery READ gallery CONSTANT)
     Q_PROPERTY(QVariantList tags READ tags NOTIFY tagsChanged)
     Q_PROPERTY(QString galleryTagFilter READ galleryTagFilter NOTIFY galleryTagFilterChanged)
+    Q_PROPERTY(bool automaticClipboardSavingEnabled READ automaticClipboardSavingEnabled NOTIFY automaticClipboardSavingChanged)
+    Q_PROPERTY(bool automaticClipboardSavingPaused READ automaticClipboardSavingPaused NOTIFY automaticClipboardSavingChanged)
 
 public:
     ScreenshotManager(ProfileManager *profiles, SettingsManager *settings, QObject *parent = nullptr);
@@ -107,6 +110,8 @@ public:
     ScreenshotGalleryModel *gallery();
     QVariantList tags() const;
     QString galleryTagFilter() const { return m_galleryTagFilter; }
+    bool automaticClipboardSavingEnabled() const;
+    bool automaticClipboardSavingPaused() const { return m_automaticClipboardSavingPaused; }
     bool databaseReady() const { return m_databaseReady; }
     QString databaseError() const { return m_database.lastError(); }
     QString profileDestination(const QString &profileId) const;
@@ -119,7 +124,7 @@ public:
     Q_INVOKABLE QString saveClipboardImage();
     Q_INVOKABLE bool openImage(const QString &path) const;
     Q_INVOKABLE bool openContainingFolder(const QString &path) const;
-    Q_INVOKABLE bool copyImageToClipboard(const QString &path) const;
+    Q_INVOKABLE bool copyImageToClipboard(const QString &path);
     Q_INVOKABLE void copyPath(const QString &path) const;
     Q_INVOKABLE QString renameScreenshot(const QString &path, const QString &newName);
     Q_INVOKABLE bool removeFromCollection(const QString &path);
@@ -130,6 +135,7 @@ public:
     Q_INVOKABLE int tagAssignmentState(const QString &tagId, const QStringList &screenshotIds) const;
     Q_INVOKABLE bool setTagForScreenshots(const QStringList &screenshotIds, const QString &tagId, bool assigned);
     Q_INVOKABLE void setGalleryTagFilter(const QString &tagId);
+    Q_INVOKABLE void setAutomaticClipboardSavingPaused(bool paused);
     Q_INVOKABLE QPointF editorPointToImage(qreal x, qreal y, qreal displayWidth, qreal displayHeight,
                                            int imageWidth, int imageHeight) const;
     Q_INVOKABLE QVariantMap editorCropFromDrag(qreal startX, qreal startY, qreal endX, qreal endY,
@@ -144,11 +150,9 @@ signals:
     void clipboardHasImageChanged();
     void tagsChanged();
     void galleryTagFilterChanged();
+    void automaticClipboardSavingChanged();
     void messageChanged(const QString &message, bool isError);
     void saveFinished(const QString &path, bool success, const QString &message);
-
-private slots:
-    void updateClipboardState();
 
 private:
     friend class UnitTests;
@@ -156,27 +160,57 @@ private:
         bool success = false;
         QString error;
     };
+    struct SaveMetadata {
+        QString sourceScreenshotId;
+        QString captureProfileId;
+        QString tagId;
+        QString source;
+        QByteArray automaticFingerprint;
+        bool inheritTags = false;
+        bool automatic = false;
+    };
+    struct AutomaticEvent {
+        QImage image;
+        QString destination;
+        QString profileId;
+        QString tagId;
+        qint64 reservedBytes = 0;
+    };
 
     QString resolvedDestination() const;
     QString nextFilePath(const QString &directory) const;
     static SaveResult writeImage(const QImage &image, const QString &path);
+    static QByteArray imageFingerprint(const QImage &image);
     void completeSave(const QString &path, const SaveResult &result);
+    void acceptAutomaticClipboardImage(const QImage &image);
+    void finishAutomaticFingerprint(quint64 eventId, const QByteArray &fingerprint);
+    void processAutomaticFingerprint(quint64 eventId, const QByteArray &fingerprint);
+    void queueImageWrite(const QImage &image, const QString &path, const SaveMetadata &metadata);
     void refreshGallery();
-    bool addToCollection(const QString &path, const QString &sourceScreenshotId = {}, bool inheritTags = false);
+    bool addToCollection(const QString &path, const QString &sourceScreenshotId = {}, bool inheritTags = false,
+                         const QString &captureProfileId = {}, const QString &tagId = {}, const QString &source = {});
 
     ProfileManager *m_profiles = nullptr;
     SettingsManager *m_settings = nullptr;
     QClipboard *m_clipboard = nullptr;
+    ClipboardService m_clipboardService;
     ScreenshotDatabase m_database;
     ScreenshotGalleryModel m_gallery;
     QString m_destinationOverride;
     QSet<QString> m_pendingPaths;
     QString m_galleryTagFilter;
     bool m_databaseReady = false;
-    bool m_clipboardHasImage = false;
     QHash<QString,qint64> m_pendingBytes;
     QHash<QString,QFuture<SaveResult>> m_jobs;
-    struct EditedSave { QString sourceScreenshotId; bool inheritTags = false; };
-    QHash<QString, EditedSave> m_editedSaves;
+    QHash<QString, SaveMetadata> m_saveMetadata;
+    QHash<quint64, AutomaticEvent> m_automaticEvents;
+    QHash<quint64, QFuture<QByteArray>> m_fingerprintJobs;
+    QHash<quint64, QByteArray> m_readyFingerprints;
+    QSet<QByteArray> m_savedAutomaticFingerprints;
+    QSet<QByteArray> m_inFlightAutomaticFingerprints;
+    qint64 m_fingerprintBytes = 0;
+    quint64 m_nextAutomaticEventId = 1;
+    quint64 m_nextFingerprintToProcess = 1;
+    bool m_automaticClipboardSavingPaused = false;
     QString m_lastSaveError;
 };

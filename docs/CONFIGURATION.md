@@ -12,7 +12,7 @@ Schema 1 profiles/shared actions migrate on startup. Each profile receives indep
 
 ## Settings
 
-Schema 1 retains existing directories, active profile, close-to-tray, and start-minimized fields. Optional new fields: `startWithWindows`, `minimizeToTray`, `notificationsEnabled`, `filenamePattern`, `appearance`, `accentColor`. Unknown valid settings fields survive edits; supported malformed files are backed up before repair.
+Schema 1 retains existing directories, active profile, close-to-tray, and start-minimized fields. Optional new fields: `startWithWindows`, `minimizeToTray`, `notificationsEnabled`, `filenamePattern`, `appearance`, `accentColor`, `automaticClipboardSavingEnabled`, and `automaticClipboardSaveTagId`. Automatic saving is opt-in and off by default. The tray menu pauses/resumes the current run without changing that persisted preference. The selected tag is a stable screenshot-database tag ID; deleting that tag clears the preference. Unknown valid settings fields survive edits; supported malformed files are backed up before repair.
 
 Startup uses a quoted executable path in the current user's Run key, without elevation. Tests substitute a temporary INI file. State publishes only after the JSON commit; a failed startup-preference commit restores the previous registration preference.
 
@@ -26,11 +26,15 @@ The runner snapshots steps and uses queued callbacks and a wait timer. Generatio
 
 Resolution is session override → active profile → general default. PNGs stage in the chosen folder and commit without replacement. Failure cleans staging data; originals are never moved/deleted. Dispatched writes are completed/indexed at shutdown.
 
+Automatic clipboard saving is opt-in. A shared clipboard service emits image snapshots for downstream consumers; this stage saves them without opening the main window and does not implement clipboard history. The destination, active profile ID, and selected tag are captured when an external image event is accepted. Content fingerprints are calculated off the UI thread and deduplicated in memory for the current run. SmallDTL clipboard writes are marked as app-owned to prevent save loops. The existing 64-megapixel/256-MiB image and two-job/512-MiB queue limits apply to fingerprint work and file writes; queue saturation and unavailable destinations produce errors instead of falling back to another folder. Explicit manual saves bypass automatic fingerprint deduplication. Pending fingerprint and file-write work is drained at shutdown.
+
 Screenshot records and tags live in `screenshots.db`, with versioned migrations, an owning-thread SQLite connection, and foreign keys enabled. Schema records have stable UUIDs, paths, UTC timestamps when available, dimensions, byte size, a source label, and an optional source screenshot ID. Edited copies keep that source link and may copy its tags in the same registration transaction. Source links clear if their parent record is removed. Tags are unique without case sensitivity; screenshot/tag pairs are unique. Rename changes the record path and retains its ID and assignments. Bulk assignment and removal use a single transaction and roll back together on failure. Removing a tag or gallery membership leaves image files untouched.
 
 On first launch with a legacy `screenshot-index.json`, all valid paths (including paths to missing images) are imported in one transaction with a migration marker. The source JSON stays byte-for-byte intact. An import error is reported and the import is retried on a later launch. Settings and profiles remain in their existing JSON files.
 
 The gallery supports tag filtering, checkbox and Ctrl/Shift selection, Select All and clear selection. Bulk tag controls show unchecked, checked, and mixed states.
+
+Database schema version 4 stores `capture_profile_id` without coupling SQLite to profile JSON files. Automatic clipboard records retain the profile ID captured when the clipboard event was accepted; existing and manual records use an empty value when no profile snapshot applies.
 
 The editor opens from a gallery card or preview. It crops rectangular regions, optionally locked to free, square, 4:3, or 16:9 ratios, and adds freehand strokes with selectable color and image-pixel width. Undo, redo, reset, zoom, and pan operate on editor state. Pointer positions map from the displayed image rectangle to source-image pixels, so exports remain aligned at different zoom and DPI scales. The editor preview and drawing overlay are bounded in size; full-resolution decoding, crop, drawing, and PNG encoding run on a worker. Saving creates a collision-safe copy in the active screenshot destination, registers it with its source ID, and offers to inherit source tags. The original image is retained. Closing with unsaved crop or drawing changes asks before discarding.
 

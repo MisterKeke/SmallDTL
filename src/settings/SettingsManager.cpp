@@ -47,6 +47,8 @@ void SettingsManager::load() {
     m_data.insert(QStringLiteral("filenamePattern"), QStringLiteral("Screenshot_{timestamp}"));
     m_data.insert(QStringLiteral("appearance"), QStringLiteral("dark"));
     m_data.insert(QStringLiteral("accentColor"), QStringLiteral("#e96782"));
+    m_data.insert(QStringLiteral("automaticClipboardSavingEnabled"), false);
+    m_data.insert(QStringLiteral("automaticClipboardSaveTagId"), QString());
     QFile file(settingsFilePath());
     if (!file.exists()) {
         QDir().mkpath(fallback);
@@ -168,6 +170,14 @@ QString SettingsManager::accentColor() const { return m_data.value(QStringLitera
 bool SettingsManager::setAccentColor(const QString &value) {
     if (!QColor::isValidColorName(value) || QColor(value).alpha()!=255) { report(QStringLiteral("Enter a valid opaque accent color.")); emit preferencesChanged(); return false; }
     return update(QStringLiteral("accentColor"), value);
+}
+bool SettingsManager::automaticClipboardSavingEnabled() const { return m_data.value(QStringLiteral("automaticClipboardSavingEnabled")).toBool(); }
+bool SettingsManager::setAutomaticClipboardSavingEnabled(bool enabled) {
+    return update(QStringLiteral("automaticClipboardSavingEnabled"), enabled);
+}
+QString SettingsManager::automaticClipboardSaveTagId() const { return m_data.value(QStringLiteral("automaticClipboardSaveTagId")).toString(); }
+bool SettingsManager::setAutomaticClipboardSaveTagId(const QString &tagId) {
+    return update(QStringLiteral("automaticClipboardSaveTagId"), tagId.trimmed());
 }
 
 QVariantMap SettingsManager::palette() const {

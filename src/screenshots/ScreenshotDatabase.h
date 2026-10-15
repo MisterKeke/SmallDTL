@@ -19,6 +19,7 @@ struct ScreenshotRecord
     qint64 sizeBytes = 0;
     QString source;
     QString sourceScreenshotId;
+    QString captureProfileId;
     QStringList tags;
 };
 
@@ -45,7 +46,8 @@ public:
     QString screenshotIdForPath(const QString &path) const;
     bool addScreenshot(const QString &path, const QSize &dimensions, qint64 sizeBytes,
                        const QString &source, QString *id = nullptr,
-                       const QString &sourceScreenshotId = {}, bool inheritTags = false);
+                       const QString &sourceScreenshotId = {}, bool inheritTags = false,
+                       const QString &captureProfileId = {}, const QString &tagId = {});
     bool updateScreenshotPath(const QString &id, const QString &path);
     bool updateScreenshotMetadata(const QString &id, const QString &timestamp,
                                   const QSize &dimensions, qint64 sizeBytes);

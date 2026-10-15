@@ -6,6 +6,7 @@ A local Windows productivity application built with C++20, Qt 6/QML, WinAPI, and
 
 - Six pages: Dashboard, Screenshots, Hotkeys, Profiles, Actions, Settings; dark/light/system appearance and a configurable accent.
 - Clipboard saving from Screenshots, Ctrl+V, tray, or a configured hotkey. Text paste remains functional in editors/dialogs.
+- Optional automatic saving of images copied from other apps, with a tray pause/resume action, duplicate-content filtering, and an optional automatic tag. Manual saves remain available; app-owned clipboard copies are ignored.
 - Destination priority: session folder, active profile folder, general default. Unavailable destinations produce errors without redirection.
 - Validated filename templates, Unicode paths, and a no-replace PNG commit. Original Windows screenshots remain untouched.
 - SQLite-backed screenshot records and tags, with gallery filtering, checkboxes, Ctrl/Shift multi-selection, Select All, and transactional mixed-state bulk tagging.
@@ -30,9 +31,11 @@ Settings use schema 1 with backward-compatible preferences; profiles use schema 
 
 Legacy shared `actions.json` is migrated independently into each legacy profile. Original actions and profile backups are retained. Invalid/newer configurations are preserved. Import accepts self-contained schema 2 exports, regenerates IDs, disables shortcuts, and clears activation shortcuts for review.
 
-Data uses Qt's application-data directory, not the executable folder: settings and profiles remain in `settings.json` and `profiles/*.json`; screenshot records and tags use `screenshots.db`; thumbnails use `cache/thumbnails/`. The legacy `screenshot-index.json` is imported transactionally on first launch and retained unchanged as a migration source. Import failures are reported and retried on the next launch.
+Data uses Qt's application-data directory, not the executable folder: settings and profiles remain in `settings.json` and `profiles/*.json`; screenshot records and tags use `screenshots.db`; thumbnails use `cache/thumbnails/`. Automatic clipboard saving is off by default and can be enabled in Settings. Pause or resume it from the tray without opening the window. A selected tag is applied to each automatic save. Repeated image notifications are fingerprinted on a worker and deduplicated for the current run; manual saves are never deduplicated. Accepted automatic saves keep the destination and profile active at event time. Unavailable destinations and a full save queue are reported, and saves are not redirected. The legacy `screenshot-index.json` is imported transactionally on first launch and retained unchanged as a migration source. Import failures are reported and retried on the next launch.
 
 The screenshot database uses versioned SQLite migrations, foreign-key enforcement, stable screenshot IDs, and unique tag names and screenshot-tag pairs. Renames update paths without changing IDs or tags. Removing gallery membership removes the database record and its assignments while leaving the image on disk.
+
+Automatic clipboard records use the source label `clipboard-auto` and retain the profile ID captured at event time (database schema 4). Settings and profiles stay in JSON. The portable package carries Qt's `sqldrivers/qsqlite.dll` alongside the executable.
 
 Filename templates support `{timestamp}`, `{date}`, and `{time}`; default `Screenshot_{timestamp}`. PNG extensions and collision suffixes are automatic. Limits: 64 megapixels/256 MiB per image, two pending writes, 512 MiB queued image data, and 256 MiB Qt decoding allocation. Editor previews and overlay textures are bounded; full-resolution crop/draw export runs on a worker. Metadata is asynchronous and thumbnails load on demand.
 

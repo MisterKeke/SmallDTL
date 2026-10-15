@@ -14,6 +14,7 @@
 #include <QSaveFile>
 #include <QTemporaryFile>
 #include <QCryptographicHash>
+#include <QByteArrayView>
 #include <QScopeGuard>
 #include <QStandardPaths>
 #include <QJsonArray>
@@ -155,7 +156,8 @@ QString ScreenshotGalleryModel::idAt(int row) const
 
 ScreenshotManager::ScreenshotManager(ProfileManager *profiles, SettingsManager *settings, QObject *parent)
     : QObject(parent), m_profiles(profiles), m_settings(settings),
-      m_clipboard(QGuiApplication::clipboard()), m_database({}, nullptr), m_gallery(this)
+      m_clipboard(QGuiApplication::clipboard()), m_clipboardService(m_clipboard, this),
+      m_database({}, nullptr), m_gallery(this)
 {
     const QString legacyIndex = QDir(AppDataPaths::root()).filePath(QStringLiteral("screenshot-index.json"));
     m_databaseReady = m_database.initialize(legacyIndex);
@@ -166,7 +168,14 @@ ScreenshotManager::ScreenshotManager(ProfileManager *profiles, SettingsManager *
             emit messageChanged(QStringLiteral("Screenshot database unavailable: %1").arg(m_database.lastError()), true);
         });
     }
-    connect(m_clipboard, &QClipboard::dataChanged, this, &ScreenshotManager::updateClipboardState);
+    connect(&m_clipboardService, &ClipboardService::hasImageChanged, this, [this] {
+        emit clipboardHasImageChanged();
+    });
+    connect(&m_clipboardService, &ClipboardService::externalImageAvailable,
+            this, &ScreenshotManager::acceptAutomaticClipboardImage);
+    connect(m_settings, &SettingsManager::preferencesChanged, this, [this] {
+        emit automaticClipboardSavingChanged();
+    });
     connect(m_profiles, &ProfileManager::activeProfileChanged, this, [this] {
         m_gallery.setDirectory(resolvedDestination());refreshGallery();
         emit destinationChanged();
@@ -185,12 +194,20 @@ ScreenshotManager::ScreenshotManager(ProfileManager *profiles, SettingsManager *
     });
     m_gallery.setDirectory(resolvedDestination());
     refreshGallery();
-    updateClipboardState();
 }
 
 QString ScreenshotManager::destination() const { return resolvedDestination(); }
 bool ScreenshotManager::destinationOverridden() const { return !m_destinationOverride.isEmpty(); }
-bool ScreenshotManager::clipboardHasImage() const { return m_clipboardHasImage; }
+bool ScreenshotManager::clipboardHasImage() const { return m_clipboardService.hasImage(); }
+bool ScreenshotManager::automaticClipboardSavingEnabled() const { return m_settings->automaticClipboardSavingEnabled(); }
+
+void ScreenshotManager::setAutomaticClipboardSavingPaused(bool paused)
+{
+    if (m_automaticClipboardSavingPaused == paused)
+        return;
+    m_automaticClipboardSavingPaused = paused;
+    emit automaticClipboardSavingChanged();
+}
 ScreenshotGalleryModel *ScreenshotManager::gallery() { return &m_gallery; }
 
 QVariantList ScreenshotManager::tags() const
@@ -253,8 +270,8 @@ QString ScreenshotManager::saveClipboardImage()
     }
 
     constexpr qint64 maximumBytes=256LL*1024*1024;
-    qint64 queuedBytes=0;for(auto bytes:m_pendingBytes)queuedBytes+=bytes;
-    if(image.sizeInBytes()>maximumBytes || qint64(image.width())*image.height()>64*1024*1024 || queuedBytes+image.sizeInBytes()>512LL*1024*1024 || m_pendingPaths.size()>=2) {
+    qint64 queuedBytes=m_fingerprintBytes;for(auto bytes:m_pendingBytes)queuedBytes+=bytes;
+    if(image.sizeInBytes()>maximumBytes || qint64(image.width())*image.height()>64*1024*1024 || queuedBytes+image.sizeInBytes()>512LL*1024*1024 || m_pendingPaths.size()+m_fingerprintJobs.size()>=2) {
         m_lastSaveError=QStringLiteral("Image exceeds the 64 megapixel / 256 MiB limit, or two saves are already pending. Try again after saving finishes.");
         emit messageChanged(m_lastSaveError,true);return {};
     }
@@ -268,39 +285,59 @@ QString ScreenshotManager::saveClipboardImage()
     }
 
     const QString path = nextFilePath(directoryPath);
-    m_pendingPaths.insert(path);m_pendingBytes.insert(path,image.sizeInBytes());
+    SaveMetadata metadata;
+    metadata.source = QStringLiteral("clipboard");
+    queueImageWrite(image, path, metadata);
+    return path;
+}
+
+void ScreenshotManager::queueImageWrite(const QImage &image, const QString &path, const SaveMetadata &metadata)
+{
+    m_pendingPaths.insert(path);
+    m_pendingBytes.insert(path, image.sizeInBytes());
+    m_saveMetadata.insert(path, metadata);
     auto *watcher = new QFutureWatcher<SaveResult>(this);
     connect(watcher, &QFutureWatcher<SaveResult>::finished, this, [this, watcher, path] {
         const SaveResult result = watcher->result();
         watcher->deleteLater();
-        completeSave(path,result);
+        completeSave(path, result);
     });
-    const QFuture<SaveResult> future=QtConcurrent::run([image,path]{return writeImage(image,path);});
-    m_jobs.insert(path,future);
+    const QFuture<SaveResult> future = QtConcurrent::run([image, path] { return writeImage(image, path); });
+    m_jobs.insert(path, future);
     watcher->setFuture(future);
-    return path;
 }
 
 void ScreenshotManager::completeSave(const QString &path,const SaveResult &result) {
         if(!m_pendingPaths.contains(path))return;
         m_jobs.remove(path);
         m_pendingPaths.remove(path);m_pendingBytes.remove(path);
-        const EditedSave editedSave = m_editedSaves.take(path);
-        const bool isEdited = !editedSave.sourceScreenshotId.isEmpty();
+        const SaveMetadata metadata = m_saveMetadata.take(path);
+        const bool isEdited = !metadata.sourceScreenshotId.isEmpty();
         if (!result.success) {
+            if (metadata.automatic)
+                m_inFlightAutomaticFingerprints.remove(metadata.automaticFingerprint);
             const QString message = QStringLiteral("Could not save screenshot: %1").arg(result.error);
             emit messageChanged(message, true);
             emit saveFinished(path, false, message);
             return;
         }
-        if (!addToCollection(path, editedSave.sourceScreenshotId, editedSave.inheritTags)) {
+        if (!addToCollection(path, metadata.sourceScreenshotId, metadata.inheritTags,
+                             metadata.captureProfileId, metadata.tagId, metadata.source)) {
             if (isEdited)
                 QFile::remove(path);
+            if (metadata.automatic)
+                m_inFlightAutomaticFingerprints.remove(metadata.automaticFingerprint);
             const QString message = QStringLiteral("Screenshot was saved, but could not be added to the gallery: %1")
                                         .arg(m_lastSaveError);
             emit messageChanged(message, true);
             emit saveFinished(path, false, message);
             return;
+        }
+        if (metadata.automatic) {
+            m_inFlightAutomaticFingerprints.remove(metadata.automaticFingerprint);
+            if (m_savedAutomaticFingerprints.size() >= 4096)
+                m_savedAutomaticFingerprints.clear();
+            m_savedAutomaticFingerprints.insert(metadata.automaticFingerprint);
         }
         const QString message = QStringLiteral("%1 saved to %2")
                                     .arg(isEdited ? QStringLiteral("Edited copy") : QStringLiteral("Screenshot"),
@@ -310,8 +347,18 @@ void ScreenshotManager::completeSave(const QString &path,const SaveResult &resul
 }
 
 void ScreenshotManager::finishPendingSaves() {
-    const auto jobs=m_jobs;
-    for(auto it=jobs.begin();it!=jobs.end();++it){auto future=it.value();future.waitForFinished();completeSave(it.key(),future.result());}
+    while (!m_fingerprintJobs.isEmpty()) {
+        const quint64 eventId = m_nextFingerprintToProcess;
+        QFuture<QByteArray> future = m_fingerprintJobs.value(eventId);
+        future.waitForFinished();
+        finishAutomaticFingerprint(eventId, future.result());
+    }
+    const auto jobs = m_jobs;
+    for (auto it = jobs.begin(); it != jobs.end(); ++it) {
+        auto future = it.value();
+        future.waitForFinished();
+        completeSave(it.key(), future.result());
+    }
 }
 
 bool ScreenshotManager::openImage(const QString &path) const
@@ -336,7 +383,7 @@ bool ScreenshotManager::openContainingFolder(const QString &path) const
     return QDesktopServices::openUrl(QUrl::fromLocalFile(file.absolutePath()));
 }
 
-bool ScreenshotManager::copyImageToClipboard(const QString &path) const
+bool ScreenshotManager::copyImageToClipboard(const QString &path)
 {
     QImageReader reader(path);
     const QSize dimensions=reader.size();
@@ -347,7 +394,7 @@ bool ScreenshotManager::copyImageToClipboard(const QString &path) const
             QStringLiteral("Could not read that screenshot."), true);
         return false;
     }
-    m_clipboard->setImage(image);
+    m_clipboardService.writeImage(image);
     emit const_cast<ScreenshotManager *>(this)->messageChanged(
         QStringLiteral("Screenshot copied to the clipboard."), false);
     return true;
@@ -477,6 +524,8 @@ bool ScreenshotManager::deleteTag(const QString &tagId)
         m_galleryTagFilter.clear();
         emit galleryTagFilterChanged();
     }
+    if (m_settings->automaticClipboardSaveTagId() == tagId)
+        m_settings->setAutomaticClipboardSaveTagId({});
     emit tagsChanged();
     refreshGallery();
     return true;
@@ -568,8 +617,8 @@ QString ScreenshotManager::saveEditedScreenshot(const QString &sourceScreenshotI
     for (qint64 bytes : std::as_const(m_pendingBytes))
         queuedBytes += bytes;
     if (outputBytes > 256LL * 1024 * 1024 || processingBytes > 512LL * 1024 * 1024 ||
-        queuedBytes + processingBytes > 512LL * 1024 * 1024 ||
-        m_pendingPaths.size() >= 2)
+        queuedBytes + m_fingerprintBytes + processingBytes > 512LL * 1024 * 1024 ||
+        m_pendingPaths.size() + m_fingerprintJobs.size() >= 2)
         return fail(QStringLiteral("The edited image exceeds the 64 megapixel / 256 MiB limit, or two saves are already pending."));
 
     const QString directoryPath = resolvedDestination();
@@ -578,7 +627,11 @@ QString ScreenshotManager::saveEditedScreenshot(const QString &sourceScreenshotI
     const QString targetPath = nextFilePath(directoryPath);
     m_pendingPaths.insert(targetPath);
     m_pendingBytes.insert(targetPath, processingBytes);
-    m_editedSaves.insert(targetPath, {sourceScreenshotId, inheritTags});
+    SaveMetadata metadata;
+    metadata.sourceScreenshotId = sourceScreenshotId;
+    metadata.inheritTags = inheritTags;
+    metadata.source = QStringLiteral("edited-copy");
+    m_saveMetadata.insert(targetPath, metadata);
 
     auto *watcher = new QFutureWatcher<SaveResult>(this);
     connect(watcher, &QFutureWatcher<SaveResult>::finished, this, [this, watcher, targetPath] {
@@ -598,13 +651,137 @@ QString ScreenshotManager::saveEditedScreenshot(const QString &sourceScreenshotI
     return targetPath;
 }
 
-void ScreenshotManager::updateClipboardState()
+void ScreenshotManager::acceptAutomaticClipboardImage(const QImage &image)
 {
-    const bool hasImage = m_clipboard && m_clipboard->mimeData() && m_clipboard->mimeData()->hasImage();
-    if (hasImage == m_clipboardHasImage)
+    if (!automaticClipboardSavingEnabled() || m_automaticClipboardSavingPaused)
         return;
-    m_clipboardHasImage = hasImage;
-    emit clipboardHasImageChanged();
+    constexpr qint64 maximumBytes = 256LL * 1024 * 1024;
+    const qint64 imageBytes = image.sizeInBytes();
+    const qint64 hashWorkingBytes = imageBytes + qint64(image.width()) * 4;
+    if (image.isNull() || image.width() <= 0 || image.height() <= 0 ||
+        imageBytes <= 0 || imageBytes > maximumBytes ||
+        qint64(image.width()) * image.height() > 64LL * 1024 * 1024) {
+        emit messageChanged(QStringLiteral("Automatic clipboard save skipped: image exceeds the 64 megapixel / 256 MiB limit."), true);
+        return;
+    }
+
+    qint64 queuedBytes = m_fingerprintBytes;
+    for (qint64 bytes : std::as_const(m_pendingBytes))
+        queuedBytes += bytes;
+    if (m_pendingPaths.size() + m_fingerprintJobs.size() >= 2 ||
+        queuedBytes + hashWorkingBytes > 512LL * 1024 * 1024) {
+        emit messageChanged(QStringLiteral("Automatic clipboard save queue is full. The image was not saved; try copying it again after a save finishes."), true);
+        return;
+    }
+
+    AutomaticEvent event;
+    event.image = image;
+    event.destination = resolvedDestination();
+    event.profileId = m_profiles->activeProfileId();
+    event.tagId = m_settings->automaticClipboardSaveTagId();
+    event.reservedBytes = hashWorkingBytes;
+    if (!m_databaseReady) {
+        emit messageChanged(QStringLiteral("Automatic clipboard save is unavailable: %1")
+                                .arg(m_database.lastError().isEmpty() ? QStringLiteral("screenshot database is unavailable") : m_database.lastError()), true);
+        return;
+    }
+    if (!QDir(event.destination).exists() || !QFileInfo(event.destination).isDir()) {
+        emit messageChanged(QStringLiteral("Automatic clipboard save destination is unavailable: %1. No other folder was used.").arg(event.destination), true);
+        return;
+    }
+    const quint64 eventId = m_nextAutomaticEventId++;
+    m_automaticEvents.insert(eventId, event);
+    m_fingerprintBytes += hashWorkingBytes;
+    auto *watcher = new QFutureWatcher<QByteArray>(this);
+    connect(watcher, &QFutureWatcher<QByteArray>::finished, this, [this, watcher, eventId] {
+        const QByteArray fingerprint = watcher->result();
+        watcher->deleteLater();
+        finishAutomaticFingerprint(eventId, fingerprint);
+    });
+    const QFuture<QByteArray> future = QtConcurrent::run([image] { return imageFingerprint(image); });
+    m_fingerprintJobs.insert(eventId, future);
+    watcher->setFuture(future);
+}
+
+void ScreenshotManager::finishAutomaticFingerprint(quint64 eventId, const QByteArray &fingerprint)
+{
+    if (!m_automaticEvents.contains(eventId))
+        return;
+    m_readyFingerprints.insert(eventId, fingerprint);
+    while (m_readyFingerprints.contains(m_nextFingerprintToProcess)) {
+        const QByteArray nextFingerprint = m_readyFingerprints.take(m_nextFingerprintToProcess);
+        processAutomaticFingerprint(m_nextFingerprintToProcess, nextFingerprint);
+        ++m_nextFingerprintToProcess;
+    }
+}
+
+void ScreenshotManager::processAutomaticFingerprint(quint64 eventId, const QByteArray &fingerprint)
+{
+    const auto eventIt = m_automaticEvents.find(eventId);
+    if (eventIt == m_automaticEvents.end())
+        return;
+    AutomaticEvent event = eventIt.value();
+    m_fingerprintBytes -= event.reservedBytes;
+    m_automaticEvents.erase(eventIt);
+    m_fingerprintJobs.remove(eventId);
+    if (fingerprint.isEmpty()) {
+        emit messageChanged(QStringLiteral("Automatic clipboard save could not fingerprint the image."), true);
+        return;
+    }
+    if (m_savedAutomaticFingerprints.contains(fingerprint) ||
+        m_inFlightAutomaticFingerprints.contains(fingerprint))
+        return;
+
+    qint64 queuedBytes = 0;
+    for (qint64 bytes : std::as_const(m_pendingBytes))
+        queuedBytes += bytes;
+    if (m_pendingPaths.size() >= 2 || queuedBytes + event.image.sizeInBytes() > 512LL * 1024 * 1024) {
+        emit messageChanged(QStringLiteral("Automatic clipboard save queue is full. The image was not saved; try copying it again after a save finishes."), true);
+        return;
+    }
+    if (!QDir(event.destination).exists() || !QFileInfo(event.destination).isDir()) {
+        emit messageChanged(QStringLiteral("Automatic clipboard save destination is unavailable: %1. No other folder was used.").arg(event.destination), true);
+        return;
+    }
+    const QString path = nextFilePath(event.destination);
+    SaveMetadata metadata;
+    metadata.source = QStringLiteral("clipboard-auto");
+    metadata.captureProfileId = event.profileId;
+    metadata.tagId = event.tagId;
+    metadata.automatic = true;
+    metadata.automaticFingerprint = fingerprint;
+    m_inFlightAutomaticFingerprints.insert(fingerprint);
+    queueImageWrite(event.image, path, metadata);
+}
+
+QByteArray ScreenshotManager::imageFingerprint(const QImage &image)
+{
+    if (image.isNull())
+        return {};
+    // Canonical RGBA bytes make fingerprints independent of QImage's source
+    // pixel format. Convert one row at a time to keep the temporary memory
+    // bounded even for wide images. This runs on a worker, never in the UI.
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    QByteArray header;
+    header.reserve(8);
+    for (int i = 0; i < 4; ++i) {
+        header.append(char((quint32(image.width()) >> (i * 8)) & 0xff));
+        header.append(char((quint32(image.height()) >> (i * 8)) & 0xff));
+    }
+    hash.addData(header);
+    QByteArray row(qsizetype(image.width()) * 4, Qt::Uninitialized);
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x) {
+            const QColor color = image.pixelColor(x, y);
+            const qsizetype offset = qsizetype(x) * 4;
+            row[offset] = char(color.red());
+            row[offset + 1] = char(color.green());
+            row[offset + 2] = char(color.blue());
+            row[offset + 3] = char(color.alpha());
+        }
+        hash.addData(QByteArrayView(row.constData(), row.size()));
+    }
+    return hash.result();
 }
 
 QString ScreenshotManager::resolvedDestination() const
@@ -620,7 +797,8 @@ QString ScreenshotManager::nextFilePath(const QString &directory) const
     return ScreenshotNaming::uniqueFilePath(directory, QDateTime::currentDateTime(), m_pendingPaths,m_settings->filenamePattern());
 }
 
-bool ScreenshotManager::addToCollection(const QString &path, const QString &sourceScreenshotId, bool inheritTags)
+bool ScreenshotManager::addToCollection(const QString &path, const QString &sourceScreenshotId, bool inheritTags,
+                                        const QString &captureProfileId, const QString &tagId, const QString &source)
 {
     if (!m_databaseReady) {
         m_lastSaveError = m_database.lastError().isEmpty()
@@ -630,9 +808,11 @@ bool ScreenshotManager::addToCollection(const QString &path, const QString &sour
     }
     const QFileInfo file(path);
     QImageReader reader(path);
-    const QString source = sourceScreenshotId.isEmpty() ? QStringLiteral("clipboard") : QStringLiteral("edited-copy");
-    if (!m_database.addScreenshot(file.absoluteFilePath(), reader.size(), file.size(), source, nullptr,
-                                  sourceScreenshotId, inheritTags)) {
+    const QString recordSource = source.isEmpty()
+        ? (sourceScreenshotId.isEmpty() ? QStringLiteral("clipboard") : QStringLiteral("edited-copy"))
+        : source;
+    if (!m_database.addScreenshot(file.absoluteFilePath(), reader.size(), file.size(), recordSource, nullptr,
+                                  sourceScreenshotId, inheritTags, captureProfileId, tagId)) {
         m_lastSaveError = m_database.lastError();
         return false;
     }

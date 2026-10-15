@@ -46,6 +46,7 @@ Item {
                     Preference { title: "Close to tray"; description: "Closing the window keeps global shortcuts available."; value: settings.closeToTray; apply: function(value) { settings.setCloseToTray(value) } }
                     Preference { title: "Minimize to tray"; description: "Hide the taskbar window when you minimize it."; value: settings.minimizeToTray; apply: function(value) { settings.setMinimizeToTray(value) } }
                     Preference { title: "Success notifications"; description: "Show nonessential tray notifications. Errors are always reported."; value: settings.notificationsEnabled; apply: function(value) { settings.setNotificationsEnabled(value) } }
+                    Preference { title: "Automatically save clipboard images"; description: "Save images copied from other apps without opening SmallDTL. Pause temporarily from the tray menu."; value: settings.automaticClipboardSavingEnabled; apply: function(value) { settings.setAutomaticClipboardSavingEnabled(value) } }
                 }
             }
             Rectangle {
@@ -92,6 +93,19 @@ Item {
                     }
                     Label { text: "Use {timestamp}, {date}, or {time}. PNG extension and unique suffixes are added automatically."; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true; color: settings.palette["#9697a3"] }
                     Label { text: "Images: up to 64 megapixels and 256 MiB; up to two queued saves. Thumbnails load on demand and are cached locally."; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true; color: settings.palette["#9697a3"] }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Label { text: "Tag automatic saves"; Layout.fillWidth: true }
+                        ComboBox {
+                            objectName: "automaticClipboardTagPicker"
+                            model: [{ tagId: "", name: "No tag" }].concat(screenshots.tags)
+                            textRole: "name"
+                            valueRole: "tagId"
+                            currentIndex: Math.max(0, indexOfValue(settings.automaticClipboardSaveTagId))
+                            enabled: settings.automaticClipboardSavingEnabled
+                            onActivated: settings.setAutomaticClipboardSaveTagId(currentValue)
+                        }
+                    }
                     RowLayout {
                         Label { text: "Known folders"; Layout.fillWidth: true }
                         Button { text: "Add folder"; onClicked: app.chooseScreenshotDestination() }

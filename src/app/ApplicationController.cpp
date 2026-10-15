@@ -39,6 +39,8 @@ ApplicationController::ApplicationController(QObject *parent)
     if(!startup.isEmpty())QTimer::singleShot(0,this,[this,startup]{setStatus(startup.join(QLatin1Char('\n')),true,true);});
     connect(&m_screenshots, &ScreenshotManager::messageChanged,
             this, &ApplicationController::onScreenshotMessage);
+    connect(&m_screenshots, &ScreenshotManager::automaticClipboardSavingChanged,
+            this, &ApplicationController::rebuildTrayMenu);
     connect(&m_profiles, &ProfileManager::errorOccurred, this, [this](const QString &message) {
         setStatus(message, true, true);
     });
@@ -462,6 +464,16 @@ void ApplicationController::rebuildTrayMenu()
     connect(openAction, &QAction::triggered, this, &ApplicationController::showWindow);
     QAction *saveAction = m_trayMenu->addAction(QStringLiteral("Save Clipboard Screenshot"));
     connect(saveAction, &QAction::triggered, this, &ApplicationController::saveClipboardScreenshot);
+    const bool autoEnabled = m_screenshots.automaticClipboardSavingEnabled();
+    const bool paused = m_screenshots.automaticClipboardSavingPaused();
+    QAction *autoSaveAction = m_trayMenu->addAction(
+        !autoEnabled ? QStringLiteral("Automatic Clipboard Saving Off") :
+        paused ? QStringLiteral("Resume Automatic Clipboard Saving") :
+                 QStringLiteral("Pause Automatic Clipboard Saving"));
+    autoSaveAction->setEnabled(autoEnabled);
+    connect(autoSaveAction, &QAction::triggered, this, [this] {
+        m_screenshots.setAutomaticClipboardSavingPaused(!m_screenshots.automaticClipboardSavingPaused());
+    });
     m_trayMenu->addSeparator();
     QAction *activeAction = m_trayMenu->addAction(QStringLiteral("Active Profile: %1").arg(m_profiles.activeProfileName()));
     activeAction->setEnabled(false);
