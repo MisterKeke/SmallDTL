@@ -42,11 +42,7 @@ WindowArrangementManager::WindowArrangementManager(ProfileManager *profiles,QObj
 {
     loadLayouts();
     connect(&m_windowWatcher,&QFutureWatcher<QVector<ArrangementWindow>>::finished,this,[this]{
-        QHash<quintptr,QString> selection;for(const auto &window:m_windows)if(window.selected)selection.insert(window.handle,normalizedExecutable(window.executable));
-        QVector<ArrangementWindow> refreshed=m_windowWatcher.result();for(auto &window:refreshed)window.selected=selection.value(window.handle)==normalizedExecutable(window.executable);
-        beginResetModel();m_windows=std::move(refreshed);endResetModel();emit windowsChanged();m_resolutions.clear();setBusy(false);
-        setStatus(QStringLiteral("Found %1 eligible open window(s). Select windows to arrange.").arg(m_windows.size()));
-        rebuildPreview();
+        finishWindowJob(m_windowWatcher.result());
     });
     connect(m_profiles,&ProfileManager::activeProfileChanged,this,[this]{
         setSelectedLayoutId({});m_previewLayoutId.clear();m_resolutions.clear();m_preview.clear();
@@ -88,8 +84,99 @@ void WindowArrangementManager::updateMonitorList(){
 }
 
 void WindowArrangementManager::refreshWindows(){
-    if(m_busy)return;setBusy(true);updateMonitorList();setStatus(QStringLiteral("Refreshing open windows…"));
+    enqueueWindowJob(WindowJob{});
+}
+
+bool WindowArrangementManager::enqueueWindowJob(const WindowJob &job)
+{
+    if (job.kind == WindowJobKind::Refresh) {
+        if ((m_hasCurrentWindowJob && m_currentWindowJob.kind == WindowJobKind::Refresh) ||
+            std::any_of(m_windowJobs.cbegin(), m_windowJobs.cend(), [](const WindowJob &queued) {
+                return queued.kind == WindowJobKind::Refresh;
+            }))
+            return true;
+    }
+    if (m_windowJobs.size() >= 16) {
+        const QString message = QStringLiteral("The window operation queue is full; try again after the current refresh finishes.");
+        setStatus(message, true);
+        if (job.kind == WindowJobKind::Apply)
+            emit layoutApplyFinished(job.requestId, false, message);
+        return false;
+    }
+    m_windowJobs.enqueue(job);
+    setBusy(true);
+    startNextWindowJob();
+    return true;
+}
+
+void WindowArrangementManager::startNextWindowJob()
+{
+    if (m_windowWatcher.isRunning() || m_hasCurrentWindowJob || m_windowJobs.isEmpty()) {
+        setBusy(m_windowWatcher.isRunning() || m_hasCurrentWindowJob || !m_windowJobs.isEmpty());
+        return;
+    }
+    m_currentWindowJob = m_windowJobs.dequeue();
+    m_hasCurrentWindowJob = true;
+    updateMonitorList();
+    if (m_currentWindowJob.kind == WindowJobKind::Refresh)
+        setStatus(QStringLiteral("Refreshing open windows…"));
+    else if (m_currentWindowJob.kind == WindowJobKind::Preview)
+        setStatus(QStringLiteral("Refreshing windows for layout preview…"));
+    else
+        setStatus(QStringLiteral("Refreshing windows before applying the layout…"));
+    setBusy(true);
     m_windowWatcher.setFuture(QtConcurrent::run(&WindowArrangementManager::enumerateWindows));
+}
+
+void WindowArrangementManager::finishWindowJob(const QVector<ArrangementWindow> &windows)
+{
+    const WindowJob job = m_currentWindowJob;
+    QHash<quintptr, ArrangementWindow> previous;
+    for (const ArrangementWindow &window : std::as_const(m_windows))
+        if (window.selected)
+            previous.insert(window.handle, window);
+    QVector<ArrangementWindow> refreshed = windows;
+    for (ArrangementWindow &window : refreshed) {
+        const auto old = previous.constFind(window.handle);
+        window.selected = old != previous.cend() && old->processId == window.processId &&
+                          normalizedExecutable(old->executable) == normalizedExecutable(window.executable);
+    }
+    beginResetModel();
+    m_windows = std::move(refreshed);
+    endResetModel();
+    emit windowsChanged();
+
+    if (job.kind == WindowJobKind::Refresh) {
+        rebuildPreview();
+        setStatus(QStringLiteral("Found %1 eligible open window(s). Select windows to arrange.").arg(m_windows.size()));
+    } else if (job.kind == WindowJobKind::Preview) {
+        if (m_selectedLayoutId == job.layoutId) {
+            m_previewLayoutId = job.layoutId;
+            m_resolutions = job.resolutions;
+            rebuildPreview();
+            setStatus(QStringLiteral("Layout preview refreshed. Review matched, missing, and ambiguous windows."));
+        }
+    } else {
+        m_previewLayoutId = job.layoutId;
+        m_resolutions = job.resolutions;
+        rebuildPreview();
+        const bool cancelled = m_cancelledApplyRequests.remove(job.requestId) > 0;
+        QString error;
+        const bool success = !cancelled && applyFreshLayout(job.layoutId, &error);
+        if (cancelled) {
+            error = QStringLiteral("Window layout application was cancelled.");
+            setStatus(error);
+        } else if (!success) {
+            if (error.isEmpty()) error = QStringLiteral("Could not apply the saved window layout.");
+            setStatus(error, true);
+        }
+        emit layoutApplyFinished(job.requestId, success, error);
+    }
+
+    m_currentWindowJob = {};
+    m_hasCurrentWindowJob = false;
+    setBusy(!m_windowJobs.isEmpty());
+    startNextWindowJob();
 }
 void WindowArrangementManager::setWindowSelected(const QString &windowId,bool selected){
     bool ok=false;const quintptr handle=windowId.toULongLong(&ok);const int row=ok?windowIndex(handle):-1;if(row<0)return;
@@ -113,22 +200,41 @@ WindowArrangementManager::Monitor WindowArrangementManager::monitorFor(const QSt
 void WindowArrangementManager::capturePrevious(const QVector<quintptr> &handles){
     QVector<Snapshot> snapshot;
 #ifdef Q_OS_WIN
-    for(quintptr value:handles){HWND hwnd=reinterpret_cast<HWND>(value);RECT rect{};if(IsWindow(hwnd)&&GetWindowRect(hwnd,&rect))snapshot.append({value,QRect(rect.left,rect.top,rect.right-rect.left,rect.bottom-rect.top),IsZoomed(hwnd)!=FALSE});}
+    for(quintptr value:handles){const int row=windowIndex(value);if(row<0)continue;const ArrangementWindow &window=m_windows.at(row);HWND hwnd=reinterpret_cast<HWND>(value);RECT rect{};if(windowIdentityIsCurrent(window)&&GetWindowRect(hwnd,&rect))snapshot.append({value,window.processId,window.executable,QRect(rect.left,rect.top,rect.right-rect.left,rect.bottom-rect.top),IsZoomed(hwnd)!=FALSE});}
 #else
     Q_UNUSED(handles)
 #endif
     if(!snapshot.isEmpty())m_previous=std::move(snapshot);
 }
-bool WindowArrangementManager::placeWindow(quintptr value,const QRect &rect,bool maximize)const{
+bool WindowArrangementManager::windowIdentityIsCurrent(const ArrangementWindow &window,const QString &titleRule)const{
 #ifdef Q_OS_WIN
-    HWND hwnd=reinterpret_cast<HWND>(value);if(!IsWindow(hwnd))return false;
+    HWND hwnd=reinterpret_cast<HWND>(window.handle);if(!IsWindow(hwnd))return false;
+    DWORD processId=0;GetWindowThreadProcessId(hwnd,&processId);if(!processId||processId!=window.processId)return false;
+    HANDLE process=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,FALSE,processId);if(!process)return false;
+    wchar_t executable[32768]{};DWORD size=DWORD(std::size(executable));
+    const bool readExecutable=QueryFullProcessImageNameW(process,0,executable,&size)!=FALSE;
+    CloseHandle(process);
+    if(!readExecutable||normalizedExecutable(QString::fromWCharArray(executable,int(size)))!=normalizedExecutable(window.executable))return false;
+    if(!titleRule.isEmpty()){
+        wchar_t title[1024]{};const int length=GetWindowTextW(hwnd,title,int(std::size(title)));
+        if(length<=0||!QString::fromWCharArray(title,length).contains(titleRule,Qt::CaseInsensitive))return false;
+    }
+    return true;
+#else
+    Q_UNUSED(window) Q_UNUSED(titleRule) return false;
+#endif
+}
+bool WindowArrangementManager::placeWindow(const ArrangementWindow &window,const QRect &rect,bool maximize,const QString &titleRule)const{
+#ifdef Q_OS_WIN
+    if(!windowIdentityIsCurrent(window,titleRule))return false;
+    HWND hwnd=reinterpret_cast<HWND>(window.handle);
     ShowWindowAsync(hwnd,SW_RESTORE);
     const bool positioned=SetWindowPos(hwnd,nullptr,rect.x(),rect.y(),rect.width(),rect.height(),
                                        SWP_NOACTIVATE|SWP_NOZORDER|SWP_SHOWWINDOW|SWP_ASYNCWINDOWPOS)!=FALSE;
     if(maximize)ShowWindowAsync(hwnd,SW_MAXIMIZE);
     return positioned;
 #else
-    Q_UNUSED(value) Q_UNUSED(rect) Q_UNUSED(maximize) return false;
+    Q_UNUSED(window) Q_UNUSED(rect) Q_UNUSED(maximize) Q_UNUSED(titleRule) return false;
 #endif
 }
 bool WindowArrangementManager::arrangeSelected(const QString &placement){
@@ -137,7 +243,7 @@ bool WindowArrangementManager::arrangeSelected(const QString &placement){
     const auto normalized=WindowArrangementGeometry::placement(placement);QVector<quintptr> handles;for(int row:rows)handles.append(m_windows.at(row).handle);capturePrevious(handles);int placed=0,failed=0;
     for(int row:rows){const auto &window=m_windows.at(row);const Monitor monitor=monitorFor(window.monitor);
         const QRect target=WindowArrangementGeometry::denormalize(normalized,monitor.workArea);
-        if(placeWindow(window.handle,target,placement==QStringLiteral("maximize")))++placed;else ++failed;}
+        if(placeWindow(window,target,placement==QStringLiteral("maximize")))++placed;else ++failed;}
     setStatus(QStringLiteral("Arrangement requested for %1 window(s); %2 unavailable.").arg(placed).arg(failed),failed>0);return failed==0;
 }
 bool WindowArrangementManager::moveSelectedToMonitor(const QString &device){
@@ -148,13 +254,13 @@ bool WindowArrangementManager::moveSelectedToMonitor(const QString &device){
     QVector<quintptr> handles;for(int row:rows)handles.append(m_windows.at(row).handle);capturePrevious(handles);int placed=0,failed=0;
     for(int row:rows){const auto &window=m_windows.at(row);const auto source=window.workArea.isEmpty()?targetMonitor.workArea:window.workArea;
         const auto normalized=WindowArrangementGeometry::normalize(window.rect,source);
-        if(placeWindow(window.handle,WindowArrangementGeometry::denormalize(normalized,targetMonitor.workArea),false))++placed;else ++failed;}
+        if(placeWindow(window,WindowArrangementGeometry::denormalize(normalized,targetMonitor.workArea),false))++placed;else ++failed;}
     setStatus(QStringLiteral("Move requested for %1 window(s); %2 unavailable.").arg(placed).arg(failed),failed>0);return failed==0;
 }
 bool WindowArrangementManager::restorePreviousArrangement(){
     if(m_previous.isEmpty()){setStatus(QStringLiteral("There is no previous arrangement to restore."),true);return false;}
     QVector<Snapshot> snapshots=m_previous;m_previous.clear();int restored=0,failed=0;
-    for(const auto &snapshot:snapshots){if(placeWindow(snapshot.handle,snapshot.rect,snapshot.maximized))++restored;else ++failed;}
+    for(const auto &snapshot:snapshots){ArrangementWindow window;window.handle=snapshot.handle;window.processId=snapshot.processId;window.executable=snapshot.executable;if(placeWindow(window,snapshot.rect,snapshot.maximized))++restored;else ++failed;}
     setStatus(QStringLiteral("Restore requested for %1 window(s); %2 unavailable.").arg(restored).arg(failed),failed>0);return failed==0;
 }
 
@@ -172,8 +278,43 @@ bool WindowArrangementManager::renameLayout(const QString &id,const QString &nam
 bool WindowArrangementManager::deleteLayout(const QString &id){const int row=layoutIndex(id);if(row<0)return false;const WindowLayout old=m_layouts.takeAt(row);if(!saveLayouts()){m_layouts.insert(row,old);return false;}if(m_selectedLayoutId==id)setSelectedLayoutId({});if(m_previewLayoutId==id){m_previewLayoutId.clear();m_preview.clear();emit previewChanged();}emit layoutsChanged();return true;}
 QVariantList WindowArrangementManager::layoutSlots(const QString &id)const{QVariantList result;const int row=layoutIndex(id);if(row<0)return result;for(int i=0;i<m_layouts[row].rules.size();++i)result.append(slotToMap(m_layouts[row].rules.at(i),i));return result;}
 bool WindowArrangementManager::setTitleRule(const QString &id,int slotIndex,const QString &rule){const int row=layoutIndex(id);if(row<0||slotIndex<0||slotIndex>=m_layouts[row].rules.size()||rule.size()>300)return false;const QString old=m_layouts[row].rules[slotIndex].titleRule;m_layouts[row].rules[slotIndex].titleRule=rule.trimmed();if(!saveLayouts()){m_layouts[row].rules[slotIndex].titleRule=old;return false;}if(m_previewLayoutId==id){m_resolutions.remove(slotIndex);rebuildPreview();}return true;}
-bool WindowArrangementManager::previewLayout(const QString &id){updateMonitorList();if(layoutIndex(id)<0){setStatus(QStringLiteral("The saved layout is unavailable."),true);return false;}setSelectedLayoutId(id);m_previewLayoutId=id;m_resolutions.clear();rebuildPreview();return true;}
-bool WindowArrangementManager::resolveAmbiguous(int slotIndex,const QString &windowId){bool ok=false;const quintptr handle=windowId.toULongLong(&ok);if(!ok||layoutIndex(m_previewLayoutId)<0||slotIndex<0||slotIndex>=m_layouts[layoutIndex(m_previewLayoutId)].rules.size())return false;const int row=windowIndex(handle);if(row<0)return false;const auto &slot=m_layouts[layoutIndex(m_previewLayoutId)].rules.at(slotIndex);if(normalizedExecutable(m_windows[row].executable)!=normalizedExecutable(slot.executable)||(!slot.titleRule.isEmpty()&&!m_windows[row].title.contains(slot.titleRule,Qt::CaseInsensitive)))return false;m_resolutions.insert(slotIndex,handle);rebuildPreview();return true;}
+bool WindowArrangementManager::previewLayout(const QString &id)
+{
+    if (layoutIndex(id) < 0) {
+        setStatus(QStringLiteral("The saved layout is unavailable."), true);
+        return false;
+    }
+    WindowJob job;
+    job.kind = WindowJobKind::Preview;
+    job.layoutId = id;
+    if (m_previewLayoutId == id)
+        job.resolutions = m_resolutions;
+    setSelectedLayoutId(id);
+    m_preview.clear();
+    emit previewChanged();
+    return enqueueWindowJob(job);
+}
+
+bool WindowArrangementManager::resolveAmbiguous(int slotIndex,const QString &windowId)
+{
+    bool ok = false;
+    const quintptr handle = windowId.toULongLong(&ok);
+    const int layout = layoutIndex(m_previewLayoutId);
+    if (!ok || layout < 0 || slotIndex < 0 || slotIndex >= m_layouts.at(layout).rules.size())
+        return false;
+    const int row = windowIndex(handle);
+    if (row < 0)
+        return false;
+    const auto &slot = m_layouts.at(layout).rules.at(slotIndex);
+    const ArrangementWindow &window = m_windows.at(row);
+    if (normalizedExecutable(window.executable) != normalizedExecutable(slot.executable) ||
+        (!slot.titleRule.isEmpty() && !window.title.contains(slot.titleRule, Qt::CaseInsensitive)) ||
+        !windowIdentityIsCurrent(window, slot.titleRule))
+        return false;
+    m_resolutions.insert(slotIndex, handle);
+    rebuildPreview();
+    return true;
+}
 void WindowArrangementManager::rebuildPreview(){
     QVariantList rows;const int li=layoutIndex(m_previewLayoutId);if(li<0){m_preview.clear();emit previewChanged();return;}
     QStringList executables,titles;for(const auto &window:m_windows){executables.append(window.executable);titles.append(window.title);}
@@ -191,20 +332,131 @@ void WindowArrangementManager::rebuildPreview(){
     }
     m_preview=rows;emit previewChanged();
 }
-bool WindowArrangementManager::applyLayout(const QString &id){
-    updateMonitorList();
-    const int li=layoutIndex(id);if(li<0){setStatus(QStringLiteral("The saved layout is unavailable."),true);return false;}
-    if(m_previewLayoutId!=id){previewLayout(id);setStatus(QStringLiteral("Review the layout preview before applying it."));return false;}
-    for(int i=0;i<m_layouts[li].rules.size();++i){int count=0;for(const auto &row:m_preview)if(row.toMap().value(QStringLiteral("index")).toInt()==i)count=row.toMap().value(QStringLiteral("candidates")).toList().size();if(count>1&&!m_resolutions.contains(i)){setStatus(QStringLiteral("Resolve ambiguous window matches before applying the layout."),true);return false;}}
-    QVector<quintptr> handles;int placed=0,skipped=0;const auto layout=m_layouts[li];
-    for(int i=0;i<layout.rules.size();++i){quintptr handle=m_resolutions.value(i,0);if(!handle){const auto &slot=layout.rules.at(i);for(const auto &window:m_windows)if(normalizedExecutable(window.executable)==normalizedExecutable(slot.executable)&&(slot.titleRule.isEmpty()||window.title.contains(slot.titleRule,Qt::CaseInsensitive))){handle=window.handle;break;}}if(handle)handles.append(handle);}
-    capturePrevious(handles);
-    for(int i=0;i<layout.rules.size();++i){const auto &slot=layout.rules.at(i);quintptr handle=0;
-        if(m_resolutions.contains(i))handle=m_resolutions.value(i);else for(const auto &window:m_windows)if(normalizedExecutable(window.executable)==normalizedExecutable(slot.executable)&&(slot.titleRule.isEmpty()||window.title.contains(slot.titleRule,Qt::CaseInsensitive))){handle=window.handle;break;}
-        if(!handle){++skipped;continue;}const Monitor monitor=monitorFor(slot.monitor);if(monitor.workArea.isEmpty()){++skipped;continue;}
-        handles.append(handle);if(placeWindow(handle,WindowArrangementGeometry::denormalize(slot.rect,monitor.workArea),slot.maximized))++placed;else ++skipped;
+bool WindowArrangementManager::applyLayout(const QString &id)
+{
+    return requestApplyLayout(id) != 0;
+}
+
+quint64 WindowArrangementManager::requestApplyLayout(const QString &id)
+{
+    if (layoutIndex(id) < 0) {
+        setStatus(QStringLiteral("The saved layout is unavailable."), true);
+        return 0;
     }
-    setStatus(QStringLiteral("Applied %1 window(s); skipped %2 missing or unavailable match(es).%3").arg(placed).arg(skipped).arg(placed>0&&std::any_of(layout.rules.cbegin(),layout.rules.cend(),[this,&layout](const WindowLayoutSlot &slot){return monitorFor(slot.monitor).device!=slot.monitor;})?QStringLiteral(" Disconnected monitors used the primary monitor."):QString()));return placed>0;
+    WindowJob job;
+    job.kind = WindowJobKind::Apply;
+    job.layoutId = id;
+    job.requestId = m_nextApplyRequestId++;
+    if (job.requestId == 0)
+        job.requestId = m_nextApplyRequestId++;
+    if (m_previewLayoutId == id)
+        job.resolutions = m_resolutions;
+    setSelectedLayoutId(id);
+    if (m_previewLayoutId != id) {
+        m_preview.clear();
+        emit previewChanged();
+    }
+    if (!enqueueWindowJob(job))
+        return 0;
+    return job.requestId;
+}
+
+void WindowArrangementManager::cancelApplyLayout(quint64 requestId)
+{
+    if (!requestId)
+        return;
+    QQueue<WindowJob> retained;
+    while (!m_windowJobs.isEmpty()) {
+        const WindowJob job = m_windowJobs.dequeue();
+        if (job.kind != WindowJobKind::Apply || job.requestId != requestId)
+            retained.enqueue(job);
+    }
+    m_windowJobs = std::move(retained);
+    if (m_hasCurrentWindowJob && m_currentWindowJob.kind == WindowJobKind::Apply &&
+        m_currentWindowJob.requestId == requestId)
+        m_cancelledApplyRequests.insert(requestId);
+    setBusy(m_windowWatcher.isRunning() || m_hasCurrentWindowJob || !m_windowJobs.isEmpty());
+}
+
+bool WindowArrangementManager::applyFreshLayout(const QString &id,QString *error)
+{
+    const int layoutRow = layoutIndex(id);
+    if (layoutRow < 0) {
+        if (error) *error = QStringLiteral("The saved window layout is no longer available.");
+        return false;
+    }
+    const WindowLayout layout = m_layouts.at(layoutRow);
+    struct Placement { ArrangementWindow window; QRect rect; bool maximize=false; QString titleRule; };
+    QVector<Placement> placements;
+    int skipped = 0;
+    for (int slotIndex = 0; slotIndex < layout.rules.size(); ++slotIndex) {
+        const WindowLayoutSlot &slot = layout.rules.at(slotIndex);
+        QStringList executables, titles;
+        for (const ArrangementWindow &window : m_windows) {
+            executables.append(window.executable);
+            titles.append(window.title);
+        }
+        const QVector<int> candidates = WindowArrangementMatching::matchingRows(
+            slot.executable, slot.titleRule, executables, titles);
+        const quintptr resolved = m_resolutions.value(slotIndex, 0);
+        if (candidates.size() > 1 && !resolved) {
+            if (error) *error = QStringLiteral("The refreshed layout preview has ambiguous matches. Resolve them in Window Arrangements before applying.");
+            return false;
+        }
+        int matchedRow = -1;
+        if (resolved) {
+            matchedRow = windowIndex(resolved);
+            if (matchedRow < 0 || !candidates.contains(matchedRow)) {
+                if (error) *error = QStringLiteral("A previously resolved window is no longer a valid match. Review the refreshed preview.");
+                return false;
+            }
+        } else if (candidates.size() == 1) {
+            matchedRow = candidates.first();
+        }
+        if (matchedRow < 0) {
+            ++skipped;
+            continue;
+        }
+        const ArrangementWindow window = m_windows.at(matchedRow);
+        if (!windowIdentityIsCurrent(window, slot.titleRule)) {
+            ++skipped;
+            continue;
+        }
+        const Monitor monitor = monitorFor(slot.monitor);
+        if (monitor.workArea.isEmpty()) {
+            ++skipped;
+            continue;
+        }
+        placements.append({window, WindowArrangementGeometry::denormalize(slot.rect, monitor.workArea),
+                           slot.maximized, slot.titleRule});
+    }
+    if (placements.isEmpty()) {
+        const QString message = QStringLiteral("No current windows matched this layout; missing or inaccessible matches were skipped.");
+        if (error) *error = message;
+        setStatus(message, true);
+        return false;
+    }
+    QVector<quintptr> handles;
+    for (const Placement &placement : std::as_const(placements))
+        handles.append(placement.window.handle);
+    capturePrevious(handles);
+    int placed = 0;
+    for (const Placement &placement : std::as_const(placements)) {
+        if (placeWindow(placement.window, placement.rect, placement.maximize, placement.titleRule))
+            ++placed;
+        else
+            ++skipped;
+    }
+    const bool disconnected = std::any_of(layout.rules.cbegin(), layout.rules.cend(), [this](const WindowLayoutSlot &slot) {
+        return monitorFor(slot.monitor).device != slot.monitor;
+    });
+    const QString message = QStringLiteral("Applied %1 window(s); skipped %2 missing or unavailable match(es).%3")
+                                .arg(placed).arg(skipped)
+                                .arg(disconnected ? QStringLiteral(" Disconnected monitors used the primary monitor.") : QString());
+    setStatus(message, placed == 0 || skipped > 0);
+    if (placed == 0 && error)
+        *error = message;
+    return placed > 0;
 }
 QVariantList WindowArrangementManager::layoutOptions()const{QVariantList result;for(const auto &layout:m_layouts)result.append(QVariantMap{{QStringLiteral("id"),layout.id},{QStringLiteral("name"),layout.name},{QStringLiteral("profileId"),layout.profileId},{QStringLiteral("profileName"),m_profiles->profileById(layout.profileId)?m_profiles->profileById(layout.profileId)->name:QStringLiteral("Unavailable profile")}});return result;}
 bool WindowArrangementManager::containsLayout(const QString &id)const{return layoutIndex(id)>=0;}

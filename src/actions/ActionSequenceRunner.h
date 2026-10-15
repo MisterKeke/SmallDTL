@@ -53,6 +53,7 @@ private:
     QStringList m_qrOutputs;
     quint64 m_pendingQrActionToken = 0;
     quint64 m_nextQrActionToken = 1;
+    quint64 m_pendingWindowLayoutToken = 0;
     bool m_pendingQrIsDecode = false;
     quint64 m_runGeneration = 0;
     int m_stepIndex = 0;

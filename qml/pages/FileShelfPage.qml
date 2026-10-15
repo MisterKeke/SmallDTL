@@ -5,11 +5,16 @@ import QtQuick.Dialogs
 
 Item {
     id: root
+    objectName: "fileShelfPage"
     property bool compact: false
     property var transferPlan: []
     property string transferDestination: ""
     property bool transferMove: false
     property string operationDetails: ""
+
+    function handleDroppedUrls(urls) {
+        return fileShelf.addFileUrls(urls)
+    }
 
     Connections {
         target: app
@@ -59,17 +64,8 @@ Item {
         z: 5
         keys: ["text/uri-list"]
         onDropped: function(drop) {
-            if (!drop.hasUrls)
-                return
-            var paths = []
-            for (var i = 0; i < drop.urls.length; ++i) {
-                var path = drop.urls[i].toLocalFile()
-                if (path.length > 0) paths.push(path)
-            }
-            if (paths.length > 0) {
-                fileShelf.addPaths(paths)
+            if (drop.hasUrls && root.handleDroppedUrls(drop.urls))
                 drop.acceptProposedAction()
-            }
         }
     }
 
@@ -143,16 +139,8 @@ Item {
                 z: 5
                 keys: ["text/uri-list"]
                 onDropped: function(drop) {
-                    if (!drop.hasUrls) return
-                    var paths = []
-                    for (var i = 0; i < drop.urls.length; ++i) {
-                        var path = drop.urls[i].toLocalFile()
-                        if (path.length > 0) paths.push(path)
-                    }
-                    if (paths.length > 0) {
-                        fileShelf.addPaths(paths)
+                    if (drop.hasUrls && root.handleDroppedUrls(drop.urls))
                         drop.acceptProposedAction()
-                    }
                 }
             }
             ListView {
@@ -231,7 +219,7 @@ Item {
                                 text: shelfRow.fileType
                                       + "  ·  " + (shelfRow.itemType === "folder" ? "Size unavailable" : root.formatSize(shelfRow.sizeBytes))
                                       + "  ·  " + (shelfRow.available ? "Available" : "Missing")
-                                color: shelfRow.available ? settings.palette["#a4a5af"] : settings.palette["#ff8d9c"]
+                                color: shelfRow.available ? settings.palette["#a5a6b0"] : settings.palette["#ff8d9c"]
                                 font.pixelSize: 9
                                 elide: Text.ElideRight
                             }

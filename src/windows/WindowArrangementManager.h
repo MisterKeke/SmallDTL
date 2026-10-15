@@ -4,8 +4,10 @@
 #include <QFutureWatcher>
 #include <QHash>
 #include <QJsonObject>
+#include <QQueue>
 #include <QVariantList>
 #include <QVector>
+#include <QSet>
 
 #include "WindowArrangementGeometry.h"
 
@@ -78,6 +80,8 @@ public:
     Q_INVOKABLE bool previewLayout(const QString &id);
     Q_INVOKABLE bool resolveAmbiguous(int slotIndex,const QString &windowId);
     Q_INVOKABLE bool applyLayout(const QString &id);
+    quint64 requestApplyLayout(const QString &id);
+    void cancelApplyLayout(quint64 requestId);
     Q_INVOKABLE QVariantList layoutOptions() const;
     Q_INVOKABLE bool containsLayout(const QString &id) const;
     Q_INVOKABLE QVariantMap layoutInfo(const QString &id) const;
@@ -92,9 +96,17 @@ signals:
     void previewChanged();
     void selectedLayoutIdChanged();
     void errorOccurred(const QString &message);
+    void layoutApplyFinished(quint64 requestId,bool success,const QString &message);
 private:
+    enum class WindowJobKind { Refresh, Preview, Apply };
+    struct WindowJob {
+        WindowJobKind kind=WindowJobKind::Refresh;
+        QString layoutId;
+        quint64 requestId=0;
+        QHash<int,quintptr> resolutions;
+    };
     struct Monitor { QString device; QString name; QRect bounds; QRect workArea; bool primary=false; };
-    struct Snapshot { quintptr handle=0; QRect rect; bool maximized=false; };
+    struct Snapshot { quintptr handle=0; quint32 processId=0; QString executable; QRect rect; bool maximized=false; };
     static QVector<ArrangementWindow> enumerateWindows();
     static QVector<Monitor> enumerateMonitors();
     void setBusy(bool busy);
@@ -102,12 +114,18 @@ private:
     void loadLayouts();
     bool saveLayouts() const;
     void updateMonitorList();
+    bool enqueueWindowJob(const WindowJob &job);
+    void startNextWindowJob();
+    void finishWindowJob(const QVector<ArrangementWindow> &windows);
+    bool applyFreshLayout(const QString &id,QString *error);
     int layoutIndex(const QString &id) const;
     int windowIndex(quintptr handle) const;
     QVector<int> selectedRows() const;
     Monitor monitorFor(const QString &device) const;
     void capturePrevious(const QVector<quintptr> &handles);
-    bool placeWindow(quintptr handle,const QRect &rect,bool maximize=false) const;
+    bool placeWindow(const ArrangementWindow &window,const QRect &rect,bool maximize=false,
+                     const QString &titleRule={}) const;
+    bool windowIdentityIsCurrent(const ArrangementWindow &window,const QString &titleRule={}) const;
     void rebuildPreview();
     ProfileManager *m_profiles=nullptr;
     QVector<ArrangementWindow> m_windows;
@@ -115,6 +133,11 @@ private:
     QVector<WindowLayout> m_layouts;
     QVector<Snapshot> m_previous;
     QFutureWatcher<QVector<ArrangementWindow>> m_windowWatcher;
+    QQueue<WindowJob> m_windowJobs;
+    WindowJob m_currentWindowJob;
+    QSet<quint64> m_cancelledApplyRequests;
+    quint64 m_nextApplyRequestId=1;
+    bool m_hasCurrentWindowJob=false;
     QVariantList m_monitors;
     QVariantList m_preview;
     QHash<int,quintptr> m_resolutions;

@@ -136,6 +136,10 @@ endif()
 
 if(BUILD_TESTING)
     find_package(Qt6 6.8 REQUIRED COMPONENTS Test)
+    if(WIN32)
+        add_executable(WindowArrangementTestWindow WIN32 tests/WindowArrangementTestWindow.cpp)
+        target_link_libraries(WindowArrangementTestWindow PRIVATE user32)
+    endif()
     qt_add_executable(ScreenshotHotkeyManagerTests
         tests/UnitTests.cpp
         src/app/ApplicationController.h
@@ -199,6 +203,10 @@ if(BUILD_TESTING)
         TEST_QML_DIR="${CMAKE_CURRENT_SOURCE_DIR}/qml"
     )
     if(WIN32)
+        add_dependencies(ScreenshotHotkeyManagerTests WindowArrangementTestWindow)
+        target_compile_definitions(ScreenshotHotkeyManagerTests PRIVATE
+            SMALLDTL_TEST_WINDOW_HELPER="$<TARGET_FILE:WindowArrangementTestWindow>"
+        )
         target_link_libraries(ScreenshotHotkeyManagerTests PRIVATE shell32 user32 psapi)
     endif()
     add_test(NAME ScreenshotHotkeyManager.UnitTests COMMAND ScreenshotHotkeyManagerTests)

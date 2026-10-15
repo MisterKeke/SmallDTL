@@ -188,7 +188,9 @@ void ClipboardHistoryManager::acceptSnapshot(const ClipboardSnapshot &snapshot)
         event.image = image;
         event.capturedAt = utcNow();
         event.reservedBytes = bytes;
+        event.generation = m_captureGeneration;
         m_imageReservations.insert(event.id, bytes);
+        m_imageGenerations.insert(event.id, event.generation);
         m_pendingImageBytes += bytes;
         m_imageQueue.enqueue(event);
         dispatchImageWrites();
@@ -265,6 +267,7 @@ ClipboardHistoryManager::ImageResult ClipboardHistoryManager::writeHistoryImage(
                                                                                   const QString &storageDirectory)
 {
     ImageResult result;
+    result.generation = event.generation;
     QImage image = event.image.convertToFormat(QImage::Format_RGBA8888);
     if (image.isNull() || qint64(image.width()) * image.height() > MaximumImagePixels || image.sizeInBytes() > MaximumImageBytes) {
         result.error = QStringLiteral("Clipboard image exceeds the 64 megapixel / 256 MiB history limit.");
@@ -310,6 +313,13 @@ void ClipboardHistoryManager::completeImageWrite(const QString &id, const ImageR
     if (watcher)
         watcher->deleteLater();
     m_pendingImageBytes -= m_imageReservations.take(id);
+    const quint64 generation = m_imageGenerations.take(id);
+    if (generation != m_captureGeneration || result.generation != m_captureGeneration) {
+        if (result.error.isEmpty() && ownsPayload(result.record))
+            QFile::remove(result.record.payloadPath);
+        dispatchImageWrites();
+        return;
+    }
     if (!result.error.isEmpty()) {
         emit messageChanged(QStringLiteral("Could not save clipboard history image: %1").arg(result.error), true);
         dispatchImageWrites();
@@ -341,12 +351,12 @@ void ClipboardHistoryManager::cleanupRetention()
     QSet<QString> selected;
     qint64 bytes = 0;
     for (const ClipboardHistoryRecord &record : records) {
-        if (record.type == QStringLiteral("image"))
-            bytes += record.sizeBytes;
         const QDateTime captured = QDateTime::fromString(record.capturedAt, Qt::ISODateWithMs).toUTC();
         if (!record.pinned && captured.isValid() && captured < cutoff) {
             selected.insert(record.id);
             removeIds.append(record.id);
+        } else if (record.type == QStringLiteral("image")) {
+            bytes += record.sizeBytes;
         }
     }
     int count = records.size() - selected.size();
@@ -446,6 +456,12 @@ bool ClipboardHistoryManager::clearHistory()
     if (!m_database->deleteClipboardHistory(ids, &removed)) {
         emit messageChanged(QStringLiteral("Could not clear clipboard history: %1").arg(m_database->lastError()), true);
         return false;
+    }
+    ++m_captureGeneration;
+    while (!m_imageQueue.isEmpty()) {
+        const PendingImage invalidated = m_imageQueue.dequeue();
+        m_pendingImageBytes -= m_imageReservations.take(invalidated.id);
+        m_imageGenerations.remove(invalidated.id);
     }
     deleteOwnedPayloads(removed);
     refresh();

@@ -63,6 +63,8 @@ Item {
                     model: windowArrangements
                     ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
                     delegate: Rectangle {
+                        objectName: "windowArrangementWindowDelegate"
+                        width: windowList.width
                         required property int index
                         required property string windowId
                         required property string title
@@ -73,10 +75,10 @@ Item {
                         color: selected ? settings.palette["#30212a"] : settings.palette["#202127"]
                         RowLayout {
                             anchors.fill: parent; anchors.leftMargin: 7; anchors.rightMargin: 10; spacing: 9
-                            CheckBox { checked: selected; onToggled: { windowArrangements.setWindowSelected(windowId, checked); root.anchorRow = index } }
+                            CheckBox { objectName: "windowArrangementWindowCheckBox"; checked: selected; onToggled: { windowArrangements.setWindowSelected(windowId, checked); root.anchorRow = index } }
                             ColumnLayout {
                                 Layout.fillWidth: true; spacing: 1
-                                Label { text: title; color: settings.palette["#eeeef1"]; font.pixelSize: 11; elide: Text.ElideRight; Layout.fillWidth: true }
+                                Label { objectName: "windowArrangementWindowTitle"; text: title; color: settings.palette["#efedf1"]; font.pixelSize: 11; elide: Text.ElideRight; Layout.fillWidth: true }
                                 Label { text: executable; color: settings.palette["#858692"]; font.pixelSize: 9; elide: Text.ElideMiddle; Layout.fillWidth: true }
                             }
                             Label { text: monitor; color: settings.palette["#aaaab4"]; font.pixelSize: 9; Layout.preferredWidth: 100; elide: Text.ElideRight }
@@ -105,9 +107,13 @@ Item {
                     }
                     Label { text: "Layouts are saved to the active profile."; color: settings.palette["#898a95"]; font.pixelSize: 9 }
                     ListView {
+                        id: savedLayoutsList
+                        objectName: "windowArrangementLayouts"
                         Layout.fillWidth: true; Layout.fillHeight: true; clip: true; spacing: 4
                         model: root.layoutOptions()
                         delegate: Rectangle {
+                            width: savedLayoutsList.width
+                            objectName: "windowArrangementLayoutDelegate"
                             required property string layoutId; required property string name; required property int count
                             Layout.fillWidth: true; height: 38; radius: 7
                             color: windowArrangements.selectedLayoutId === layoutId ? settings.palette["#39222b"] : settings.palette["#202127"]
@@ -136,10 +142,13 @@ Item {
                         Button { text: "Apply layout"; enabled: windowArrangements.selectedLayoutId.length > 0 && windowArrangements.preview.length > 0; onClicked: windowArrangements.applyLayout(windowArrangements.selectedLayoutId) }
                     }
                     ListView {
+                        id: previewList
                         objectName: "windowArrangementPreview"
                         Layout.fillWidth: true; Layout.fillHeight: true; clip: true; spacing: 5
                         model: windowArrangements.preview
                         delegate: Rectangle {
+                            width: previewList.width
+                            objectName: "windowArrangementPreviewDelegate"
                             required property int index; required property string executable; required property string titleRule
                             required property string monitor; required property bool monitorMissing; required property string status; required property string resolvedId
                             property int slotIndex: index

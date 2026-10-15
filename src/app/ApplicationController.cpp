@@ -81,8 +81,8 @@ ApplicationController::ApplicationController(QObject *parent)
         } else if (actionType == QStringLiteral("sequence")) {
             runActionSequence(sequenceId);
         } else if(actionType==QStringLiteral("applyWindowLayout")){
-            if(!m_windowArrangements.previewLayout(layoutId)){setStatus(QStringLiteral("The saved window layout is unavailable."),true,true);return;}
-            if(!m_windowArrangements.applyLayout(layoutId))setStatus(m_windowArrangements.status(),true,true);
+            if(!m_windowArrangements.applyLayout(layoutId))
+                setStatus(m_windowArrangements.status(),true,true);
         }
     });
     connect(&m_hotkeys, &HotkeyManager::hotkeyTriggered, this, [this](const QString &description) {

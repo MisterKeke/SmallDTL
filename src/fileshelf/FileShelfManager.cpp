@@ -1,6 +1,7 @@
 #include "FileShelfManager.h"
 
 #include "../clipboard/ClipboardService.h"
+#include "../app/LocalFileUrl.h"
 #include "../screenshots/ScreenshotManager.h"
 
 #include <QDir>
@@ -17,6 +18,12 @@
 #include <QUuid>
 #include <QWindow>
 #include <QtConcurrent/QtConcurrentRun>
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace {
 QString normalized(const QString &path)
@@ -24,11 +31,106 @@ QString normalized(const QString &path)
     return QDir::cleanPath(QFileInfo(path).absoluteFilePath());
 }
 
-bool isWithinPath(const QString &parent, const QString &candidate)
+struct ComparablePath {
+    QString path;
+    QString fileIdentity;
+};
+
+QString finalPathForExistingNode(const QString &path, QString *fileIdentity)
 {
-    const QString base = QDir::fromNativeSeparators(QDir::cleanPath(parent)).toCaseFolded();
-    const QString child = QDir::fromNativeSeparators(QDir::cleanPath(candidate)).toCaseFolded();
-    return child == base || child.startsWith(base.endsWith(QLatin1Char('/')) ? base : base + QLatin1Char('/'));
+#ifdef Q_OS_WIN
+    const HANDLE handle = CreateFileW(reinterpret_cast<LPCWSTR>(path.utf16()), 0,
+                                      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                      nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (handle != INVALID_HANDLE_VALUE) {
+        const DWORD required = GetFinalPathNameByHandleW(handle, nullptr, 0,
+                                                          FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+        QString resolved;
+        if (required > 0) {
+            QVector<wchar_t> buffer(static_cast<qsizetype>(required) + 1);
+            const DWORD written = GetFinalPathNameByHandleW(handle, buffer.data(),
+                                                              static_cast<DWORD>(buffer.size()),
+                                                              FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+            if (written > 0 && written < buffer.size())
+                resolved = QString::fromWCharArray(buffer.constData(), static_cast<qsizetype>(written));
+        }
+        if (fileIdentity) {
+            FILE_ID_INFO info{};
+            if (GetFileInformationByHandleEx(handle, FileIdInfo, &info, sizeof(info))) {
+                QByteArray identity = QByteArray::number(info.VolumeSerialNumber, 16) + ':';
+                identity.append(reinterpret_cast<const char *>(info.FileId.Identifier), sizeof(info.FileId.Identifier));
+                *fileIdentity = QString::fromLatin1(identity.toHex());
+            }
+        }
+        CloseHandle(handle);
+        if (!resolved.isEmpty()) {
+            if (resolved.startsWith(QStringLiteral("\\\\?\\UNC\\"), Qt::CaseInsensitive))
+                resolved = QStringLiteral("\\\\") + resolved.mid(8);
+            else if (resolved.startsWith(QStringLiteral("\\\\?\\")))
+                resolved.remove(0, 4);
+            return resolved;
+        }
+    }
+#else
+    Q_UNUSED(fileIdentity)
+#endif
+    return QFileInfo(path).canonicalFilePath();
+}
+
+bool comparablePath(const QString &path, ComparablePath *result)
+{
+    if (!result || path.trimmed().isEmpty())
+        return false;
+    QFileInfo node(QDir::cleanPath(QFileInfo(path).absoluteFilePath()));
+    QStringList suffix;
+    while (!node.exists()) {
+        if (node.isSymLink())
+            return false;
+        const QString name = node.fileName();
+        const QString parent = node.dir().absolutePath();
+        if (name.isEmpty() || parent == node.absoluteFilePath())
+            return false;
+        suffix.prepend(name);
+        node.setFile(parent);
+    }
+    QString identity;
+    QString resolved = finalPathForExistingNode(node.absoluteFilePath(), &identity);
+    if (resolved.isEmpty())
+        return false;
+    for (const QString &part : suffix)
+        resolved = QDir(resolved).filePath(part);
+    result->path = QDir::fromNativeSeparators(QDir::cleanPath(resolved)).toCaseFolded();
+    result->fileIdentity = identity;
+    return true;
+}
+
+bool sameLocation(const QString &left, const QString &right)
+{
+    ComparablePath a, b;
+    if (!comparablePath(left, &a) || !comparablePath(right, &b))
+        return false;
+    return a.path == b.path || (!a.fileIdentity.isEmpty() && a.fileIdentity == b.fileIdentity);
+}
+
+bool rejectUnsafeFolderDestination(const QString &source, const QString &target, QString *error)
+{
+    ComparablePath resolvedSource, resolvedTarget;
+    if (!comparablePath(source, &resolvedSource) || !comparablePath(target, &resolvedTarget)) {
+        if (error) *error = QStringLiteral("Could not resolve the source or destination through filesystem aliases; the operation was rejected.");
+        return true;
+    }
+    if (resolvedSource.path == resolvedTarget.path ||
+        (!resolvedSource.fileIdentity.isEmpty() && resolvedSource.fileIdentity == resolvedTarget.fileIdentity)) {
+        if (error) *error = QStringLiteral("Source and destination resolve to the same filesystem location; the operation was rejected.");
+        return true;
+    }
+    if (resolvedTarget.path.startsWith(resolvedSource.path.endsWith(QLatin1Char('/'))
+                                           ? resolvedSource.path
+                                           : resolvedSource.path + QLatin1Char('/'))) {
+        if (error) *error = QStringLiteral("Destination resolves inside the source folder; the operation was rejected.");
+        return true;
+    }
+    return false;
 }
 
 bool copyStream(QIODevice *input, QIODevice *output, QString *error)
@@ -51,6 +153,10 @@ bool copyStream(QIODevice *input, QIODevice *output, QString *error)
 
 bool copyFileSafely(const QString &source, const QString &target, bool replace, QString *error)
 {
+    if (sameLocation(source, target)) {
+        if (error) *error = QStringLiteral("Source and destination resolve to the same filesystem location; the operation was rejected.");
+        return false;
+    }
     QFile input(source);
     if (!input.open(QIODevice::ReadOnly)) {
         if (error) *error = input.errorString();
@@ -141,8 +247,7 @@ bool movePath(const QString &source, const QString &target)
 
 bool pathIsSame(const QString &left, const QString &right)
 {
-    return QDir::fromNativeSeparators(QDir::cleanPath(left)).toCaseFolded() ==
-           QDir::fromNativeSeparators(QDir::cleanPath(right)).toCaseFolded();
+    return sameLocation(left, right);
 }
 
 QString availableRename(const QString &target)
@@ -163,6 +268,8 @@ QString availableRename(const QString &target)
 
 bool copyDirectorySafely(const QString &source, const QString &target, bool replace, QString *error)
 {
+    if (rejectUnsafeFolderDestination(source, target, error))
+        return false;
     const QString parent = QFileInfo(target).absolutePath();
     const QString stage = QDir(parent).filePath(QStringLiteral(".smalldtl-folder-%1")
                                                     .arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
@@ -175,6 +282,10 @@ bool copyDirectorySafely(const QString &source, const QString &target, bool repl
         if (!replace) {
             QDir(stage).removeRecursively();
             if (error) *error = QStringLiteral("A folder with this name appeared after the conflict preview.");
+            return false;
+        }
+        if (rejectUnsafeFolderDestination(source, target, error)) {
+            QDir(stage).removeRecursively();
             return false;
         }
         backup = QDir(parent).filePath(QStringLiteral(".smalldtl-replaced-%1")
@@ -225,13 +336,21 @@ FileShelfManager::TransferSummary executeTransfers(const QVector<FileShelfManage
             continue;
         }
         QString target = QDir(destination).filePath(item.targetName);
-        if (item.directory && isWithinPath(item.source, destination)) {
+        QString safetyError;
+        if (item.directory && rejectUnsafeFolderDestination(item.source, target, &safetyError)) {
             ++result.failed;
-            result.details.append(QStringLiteral("%1: destination cannot be inside the source folder.").arg(item.source));
+            result.details.append(QStringLiteral("%1: %2").arg(item.source, safetyError));
+            continue;
+        }
+        ComparablePath resolvedSource, resolvedTarget;
+        if (!comparablePath(item.source, &resolvedSource) || !comparablePath(target, &resolvedTarget)) {
+            ++result.failed;
+            result.details.append(QStringLiteral("%1: source or destination could not be resolved safely through filesystem aliases; the operation was rejected.").arg(item.source));
             continue;
         }
         if (pathIsSame(target, item.source)) {
-            ++result.skipped;
+            ++result.failed;
+            result.details.append(QStringLiteral("%1: source and destination resolve to the same filesystem location; the operation was rejected.").arg(item.source));
             continue;
         }
         QString resolution = item.resolution;
@@ -255,12 +374,29 @@ FileShelfManager::TransferSummary executeTransfers(const QVector<FileShelfManage
         }
         const bool replace = resolution == QStringLiteral("replace");
         QString error;
+        if (item.directory && rejectUnsafeFolderDestination(item.source, target, &error)) {
+            ++result.failed;
+            result.details.append(QStringLiteral("%1: %2").arg(item.source, error));
+            continue;
+        }
+        if (!comparablePath(item.source, &resolvedSource) || !comparablePath(target, &resolvedTarget)) {
+            ++result.failed;
+            result.details.append(QStringLiteral("%1: source or destination could not be resolved safely before staging; the operation was rejected.").arg(item.source));
+            continue;
+        }
         const bool copied = item.directory
             ? copyDirectorySafely(item.source, target, replace, &error)
             : copyFileSafely(item.source, target, replace, &error);
         if (!copied) {
             ++result.failed;
             result.details.append(QStringLiteral("%1: %2").arg(item.source, error));
+            continue;
+        }
+        if (move && (item.directory ? rejectUnsafeFolderDestination(item.source, target, &error)
+                                    : pathIsSame(item.source, target))) {
+            ++result.failed;
+            result.details.append(QStringLiteral("%1: %2").arg(item.source,
+                error.isEmpty() ? QStringLiteral("source and destination resolve to the same filesystem location; the source was preserved.") : error));
             continue;
         }
         if (move && !removeSource(item.source, item.directory)) {
@@ -405,6 +541,25 @@ bool FileShelfManager::addPaths(const QStringList &paths)
         message += QStringLiteral(" %1 path(s) failed: %2").arg(failures.size()).arg(failures.join(QStringLiteral("; ")));
     setMessage(message, !failures.isEmpty());
     return failures.isEmpty();
+}
+
+bool FileShelfManager::addFileUrls(const QVariantList &urls)
+{
+    if (urls.isEmpty()) {
+        setMessage(QStringLiteral("No file URLs were dropped."), true);
+        return false;
+    }
+    QStringList paths;
+    paths.reserve(urls.size());
+    for (const QVariant &value : urls) {
+        QString path, error;
+        if (!LocalFileUrl::toPath(value, &path, &error)) {
+            setMessage(error, true);
+            return false;
+        }
+        paths.append(path);
+    }
+    return addPaths(paths);
 }
 
 void FileShelfManager::addFilesDialog()

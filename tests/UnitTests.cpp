@@ -1,6 +1,7 @@
 #include "../src/actions/ActionManager.h"
 #include "../src/actions/ActionSequenceRunner.h"
 #include "../src/app/AppDataPaths.h"
+#include "../src/app/LocalFileUrl.h"
 #include "../src/app/ApplicationController.h"
 #include "../src/clipboard/ClipboardService.h"
 #include "../src/fileshelf/FileShelfManager.h"
@@ -51,11 +52,13 @@
 #ifdef Q_OS_WIN
 #include <windows.h>
 #include <psapi.h>
+#include <winioctl.h>
 #endif
 #include <QtTest>
 #include <functional>
 #include <memory>
 #include <algorithm>
+#include <cstring>
 
 static std::unique_ptr<QTemporaryDir> g_testData;
 
@@ -159,6 +162,278 @@ private slots:
         bool valid=false;const Profile roundTrip=ProfileManager::parseProfile(ProfileManager::serializeProfile(*profiles.profileById(profileId)),&valid);QVERIFY(valid);
         QCOMPARE(roundTrip.hotkeys.first().layoutId,layoutId);
         QCOMPARE(actions.steps(sequence).first().toMap().value(QStringLiteral("layoutId")).toString(),layoutId);
+    }
+
+#ifdef Q_OS_WIN
+    void windowLayoutSequenceRefreshesNewlyLaunchedWindows()
+    {
+        const QString helperPath = QString::fromUtf8(SMALLDTL_TEST_WINDOW_HELPER);
+        QVERIFY2(QFileInfo(helperPath).isExecutable(), qPrintable(helperPath));
+        const auto closeHelper = qScopeGuard([] {
+            if (HWND helper = FindWindowW(nullptr, L"SmallDTL Test Arrangement Window"))
+                PostMessageW(helper, WM_CLOSE, 0, 0);
+        });
+        QString profileId;
+        {
+            SettingsManager settings;
+            ProfileManager profiles(&settings);
+            profileId = profiles.activeProfileId();
+        }
+        const QString layoutId = QStringLiteral("review-fresh-layout");
+        WindowLayout layout;
+        layout.id = layoutId;
+        layout.name = QStringLiteral("Fresh window test");
+        layout.profileId = profileId;
+        layout.rules.append({helperPath, QStringLiteral("SmallDTL Test Arrangement Window"),
+                             QStringLiteral("\\\\.\\DISPLAY-MISSING"),
+                             {0.22, 0.18, 0.36, 0.42}, false});
+        const QString layoutPath = QDir(AppDataPaths::root()).filePath(QStringLiteral("window-layouts.json"));
+        QVERIFY(QDir().mkpath(AppDataPaths::root()));
+        QFile layoutFile(layoutPath);
+        QVERIFY(layoutFile.open(QIODevice::WriteOnly));
+        const QByteArray layoutBytes = QJsonDocument(QJsonObject{
+            {QStringLiteral("schemaVersion"), 1},
+            {QStringLiteral("layouts"), QJsonArray{WindowArrangementManager::serializeLayout(layout)}}
+        }).toJson();
+        QCOMPARE(layoutFile.write(layoutBytes), qint64(layoutBytes.size()));
+        layoutFile.close();
+
+        ApplicationController controller;
+        WindowArrangementManager *arrangements = controller.windowArrangements();
+        QTRY_VERIFY_WITH_TIMEOUT(!arrangements->busy(), 5000);
+        for (int row = 0; row < arrangements->rowCount(); ++row)
+            QVERIFY(!arrangements->data(arrangements->index(row), WindowArrangementManager::TitleRole)
+                         .toString().contains(QStringLiteral("SmallDTL Test Arrangement Window")));
+
+        ActionManager *actions = controller.actions();
+        const QString sequenceId = actions->createSequence(QStringLiteral("Launch and arrange helper"));
+        QVERIFY(!sequenceId.isEmpty());
+        const QString launchId = actions->addStep(sequenceId, QStringLiteral("launchApplication"));
+        const QString waitId = actions->addStep(sequenceId, QStringLiteral("wait"));
+        const QString arrangeId = actions->addStep(sequenceId, QStringLiteral("applyWindowLayout"));
+        QVERIFY(!launchId.isEmpty() && !waitId.isEmpty() && !arrangeId.isEmpty());
+        QVERIFY(actions->updateStep(sequenceId, launchId, {{QStringLiteral("path"), helperPath}}));
+        QVERIFY(actions->updateStep(sequenceId, waitId, {{QStringLiteral("delayMs"), 600}}));
+        QVERIFY(actions->updateStep(sequenceId, arrangeId, {{QStringLiteral("layoutId"), layoutId}}));
+        QSignalSpy completed(controller.actionRunner(), &ActionSequenceRunner::completed);
+        QSignalSpy failed(controller.actionRunner(), &ActionSequenceRunner::failed);
+        QVERIFY(controller.actionRunner()->start(sequenceId));
+        QTRY_COMPARE_WITH_TIMEOUT(completed.count(), 1, 10000);
+        QCOMPARE(failed.count(), 0);
+        QVERIFY(!controller.actionRunner()->running());
+        QTRY_VERIFY_WITH_TIMEOUT([&] {
+            for (int row = 0; row < arrangements->rowCount(); ++row)
+                if (arrangements->data(arrangements->index(row), WindowArrangementManager::TitleRole)
+                        .toString().contains(QStringLiteral("SmallDTL Test Arrangement Window")))
+                    return true;
+            return false;
+        }(), 5000);
+        QVERIFY(arrangements->status().contains(QStringLiteral("Applied 1 window")));
+
+        HWND helper = FindWindowW(nullptr, L"SmallDTL Test Arrangement Window");
+        QVERIFY(helper);
+        QRect expected;
+        for (const QVariant &value : arrangements->monitors()) {
+            const QVariantMap monitor = value.toMap();
+            if (!monitor.value(QStringLiteral("primary")).toBool())
+                continue;
+            const QRect workArea(monitor.value(QStringLiteral("x")).toInt(),
+                                 monitor.value(QStringLiteral("y")).toInt(),
+                                 monitor.value(QStringLiteral("width")).toInt(),
+                                 monitor.value(QStringLiteral("height")).toInt());
+            expected = WindowArrangementGeometry::denormalize(layout.rules.first().rect, workArea);
+            break;
+        }
+        QVERIFY(!expected.isEmpty());
+        QTRY_VERIFY_WITH_TIMEOUT([&] {
+            RECT arranged{};
+            if (!GetWindowRect(helper, &arranged))
+                return false;
+            return QRect(arranged.left, arranged.top, arranged.right - arranged.left,
+                         arranged.bottom - arranged.top) == expected;
+        }(), 5000);
+
+        QSignalSpy applyFinished(arrangements, &WindowArrangementManager::layoutApplyFinished);
+        const quint64 cancelledRequest = arrangements->requestApplyLayout(layoutId);
+        QVERIFY(cancelledRequest != 0);
+        arrangements->cancelApplyLayout(cancelledRequest);
+        QTRY_COMPARE_WITH_TIMEOUT(applyFinished.count(), 1, 5000);
+        QCOMPARE(applyFinished.first().at(0).toULongLong(), cancelledRequest);
+        QVERIFY(!applyFinished.first().at(1).toBool());
+        QVERIFY(applyFinished.first().at(2).toString().contains(QStringLiteral("cancelled"), Qt::CaseInsensitive));
+        QTRY_VERIFY_WITH_TIMEOUT(!arrangements->busy(), 5000);
+        QTest::qWait(80);
+        RECT afterCancellation{};
+        QVERIFY(GetWindowRect(helper, &afterCancellation));
+        QCOMPARE(QRect(afterCancellation.left, afterCancellation.top,
+                       afterCancellation.right - afterCancellation.left,
+                       afterCancellation.bottom - afterCancellation.top), expected);
+
+        QQmlApplicationEngine engine;
+        engine.addImageProvider(QStringLiteral("thumbnail"), new ThumbnailProvider);
+        engine.addImageProvider(QStringLiteral("qrpreview"), new QrImageProvider(controller.qrCode()));
+        for (const auto &entry : QList<QPair<QString, QObject *>>{
+                 {QStringLiteral("app"), &controller}, {QStringLiteral("settings"), controller.settings()},
+                 {QStringLiteral("profiles"), controller.profiles()}, {QStringLiteral("screenshots"), controller.screenshots()},
+                 {QStringLiteral("clipboardHistory"), controller.clipboardHistory()}, {QStringLiteral("fileShelf"), controller.fileShelf()},
+                 {QStringLiteral("qrCode"), controller.qrCode()}, {QStringLiteral("hotkeys"), controller.hotkeys()},
+                 {QStringLiteral("actions"), controller.actions()}, {QStringLiteral("actionRunner"), controller.actionRunner()},
+                 {QStringLiteral("windowArrangements"), arrangements}})
+            engine.rootContext()->setContextProperty(entry.first, entry.second);
+        QSignalSpy qmlWarnings(&engine, &QQmlEngine::warnings);
+        engine.loadFromModule(QStringLiteral("ScreenshotHotkeyManagerTest"), QStringLiteral("Main"));
+        QVERIFY(!engine.rootObjects().isEmpty());
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        QVERIFY(window);
+        controller.initializeWindow(window);
+        window->show();
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        controller.setCurrentPage(QStringLiteral("Window Arrangements"));
+        QTRY_VERIFY(findItem(window->contentItem(), QStringLiteral("windowArrangementWindowList")));
+        arrangements->previewLayout(layoutId);
+        QTRY_VERIFY_WITH_TIMEOUT(!arrangements->busy(), 5000);
+        QTRY_VERIFY(findItem(window->contentItem(), QStringLiteral("windowArrangementWindowDelegate")));
+        QTRY_VERIFY(findItem(window->contentItem(), QStringLiteral("windowArrangementLayoutDelegate")));
+        QTRY_VERIFY(findItem(window->contentItem(), QStringLiteral("windowArrangementPreviewDelegate")));
+        QQuickItem *windowList = findItem(window->contentItem(), QStringLiteral("windowArrangementWindowList"));
+        QQuickItem *windowDelegate = findItem(window->contentItem(), QStringLiteral("windowArrangementWindowDelegate"));
+        QQuickItem *savedList = findItem(window->contentItem(), QStringLiteral("windowArrangementLayouts"));
+        QQuickItem *savedDelegate = findItem(window->contentItem(), QStringLiteral("windowArrangementLayoutDelegate"));
+        QQuickItem *previewList = findItem(window->contentItem(), QStringLiteral("windowArrangementPreview"));
+        QQuickItem *previewDelegate = findItem(window->contentItem(), QStringLiteral("windowArrangementPreviewDelegate"));
+        QVERIFY(windowList->width() > 0 && windowDelegate->width() > 0);
+        QVERIFY(std::abs(windowDelegate->width() - windowList->width()) < 1.0);
+        QVERIFY(savedList->width() > 0 && savedDelegate->width() > 0);
+        QVERIFY(std::abs(savedDelegate->width() - savedList->width()) < 1.0);
+        QVERIFY(previewList->width() > 0 && previewDelegate->width() > 0);
+        QVERIFY(std::abs(previewDelegate->width() - previewList->width()) < 1.0);
+        QVERIFY(findItem(window->contentItem(), QStringLiteral("windowArrangementWindowCheckBox"))->width() > 0);
+        QVERIFY(findItem(window->contentItem(), QStringLiteral("windowArrangementWindowTitle"))->width() > 0);
+        QCOMPARE(qmlWarnings.count(), 0);
+        QVERIFY(window->grabWindow().save(QDir(QCoreApplication::applicationDirPath()).filePath(
+            QStringLiteral("window-arrangements-populated-review.png"))));
+        window->hide();
+        PostMessageW(helper, WM_CLOSE, 0, 0);
+        QTRY_VERIFY_WITH_TIMEOUT(FindWindowW(nullptr, L"SmallDTL Test Arrangement Window") == nullptr, 5000);
+    }
+
+    void fileShelfMoveRejectsDirectoryAliasReplace()
+    {
+        QTemporaryDir temporary(g_testData->filePath(QStringLiteral("junction-alias-XXXXXX")));
+        QVERIFY(temporary.isValid());
+        const QString source = QDir(temporary.path()).filePath(QStringLiteral("source"));
+        const QString alias = QDir(temporary.path()).filePath(QStringLiteral("parent-alias"));
+        QVERIFY(QDir().mkpath(source));
+        QFile sentinel(QDir(source).filePath(QStringLiteral("keep.txt")));
+        QVERIFY(sentinel.open(QIODevice::WriteOnly));
+        QCOMPARE(sentinel.write(QByteArrayLiteral("source survives")), qint64(15));
+        sentinel.close();
+        DWORD junctionError = ERROR_SUCCESS;
+        bool linked = CreateDirectoryW(reinterpret_cast<LPCWSTR>(alias.utf16()), nullptr) != FALSE;
+        if (!linked)
+            junctionError = GetLastError();
+        HANDLE junction = linked
+            ? CreateFileW(reinterpret_cast<LPCWSTR>(alias.utf16()), GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
+                          FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr)
+            : INVALID_HANDLE_VALUE;
+        if (linked && junction == INVALID_HANDLE_VALUE) {
+            linked = false;
+            junctionError = GetLastError();
+        }
+        if (linked) {
+            const QString substitute = QStringLiteral("\\??\\") + QDir::toNativeSeparators(temporary.path());
+            const QString printName = QDir::toNativeSeparators(temporary.path());
+            const qsizetype substituteBytes = substitute.size() * qsizetype(sizeof(wchar_t));
+            const qsizetype printBytes = printName.size() * qsizetype(sizeof(wchar_t));
+            const qsizetype dataBytes = 8 + substituteBytes + qsizetype(sizeof(wchar_t)) +
+                                        printBytes + qsizetype(sizeof(wchar_t));
+            QByteArray storage(8 + dataBytes, Qt::Uninitialized);
+            struct MountPointReparseData {
+                ULONG tag;
+                USHORT dataLength;
+                USHORT reserved;
+                USHORT substituteOffset;
+                USHORT substituteLength;
+                USHORT printOffset;
+                USHORT printLength;
+                WCHAR pathBuffer[1];
+            };
+            auto *reparse = reinterpret_cast<MountPointReparseData *>(storage.data());
+            reparse->tag = 0xA0000003UL;
+            reparse->dataLength = static_cast<USHORT>(dataBytes);
+            reparse->reserved = 0;
+            reparse->substituteOffset = 0;
+            reparse->substituteLength = static_cast<USHORT>(substituteBytes);
+            reparse->printOffset = static_cast<USHORT>(substituteBytes + sizeof(wchar_t));
+            reparse->printLength = static_cast<USHORT>(printBytes);
+            std::memcpy(reparse->pathBuffer, substitute.utf16(), size_t(substituteBytes));
+            reparse->pathBuffer[substitute.size()] = L'\0';
+            std::memcpy(reinterpret_cast<char *>(reparse->pathBuffer) + substituteBytes + sizeof(wchar_t),
+                        printName.utf16(), size_t(printBytes));
+            reparse->pathBuffer[substitute.size() + 1 + printName.size()] = L'\0';
+            DWORD bytesReturned = 0;
+            linked = DeviceIoControl(junction, FSCTL_SET_REPARSE_POINT, reparse,
+                                     static_cast<DWORD>(8 + dataBytes), nullptr, 0, &bytesReturned, nullptr) != FALSE;
+            if (!linked)
+                junctionError = GetLastError();
+            CloseHandle(junction);
+        }
+        if (!linked) {
+            RemoveDirectoryW(reinterpret_cast<LPCWSTR>(alias.utf16()));
+            const QString reason = QStringLiteral("Could not create an isolated temporary directory junction (Win32 error %1).")
+                                       .arg(junctionError);
+            QSKIP(qPrintable(reason));
+        }
+        const auto removeAlias = qScopeGuard([&] { RemoveDirectoryW(reinterpret_cast<LPCWSTR>(alias.utf16())); });
+        QVERIFY(QFileInfo(QDir(alias).filePath(QStringLiteral("source"))).isDir());
+
+        SettingsManager settings;
+        ProfileManager profiles(&settings);
+        ScreenshotManager screenshots(&profiles, &settings);
+        FileShelfManager shelf(&screenshots);
+        QVERIFY(shelf.addPaths({source}));
+        QCOMPARE(shelf.rowCount(), 1);
+        shelf.toggleSelection(shelf.data(shelf.index(0), FileShelfManager::IdRole).toString());
+        QVariantList plan = shelf.previewTransfer(alias, true);
+        QCOMPARE(plan.size(), 1);
+        QVERIFY(plan.first().toMap().value(QStringLiteral("conflict")).toBool());
+        QVariantMap item = plan.first().toMap();
+        item.insert(QStringLiteral("resolution"), QStringLiteral("replace"));
+        plan[0] = item;
+        QSignalSpy finished(&shelf, &FileShelfManager::operationFinished);
+        QVERIFY(shelf.startTransfer(plan, alias, true));
+        QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 1, 10000);
+        const QList<QVariant> outcome = finished.takeFirst();
+        QCOMPARE(outcome.at(0).toInt(), 0);
+        QCOMPARE(outcome.at(2).toInt(), 1);
+        QFile stillThere(QDir(source).filePath(QStringLiteral("keep.txt")));
+        QVERIFY(stillThere.open(QIODevice::ReadOnly));
+        QCOMPARE(stillThere.readAll(), QByteArrayLiteral("source survives"));
+        QVERIFY(QFileInfo(QDir(alias).filePath(QStringLiteral("source/keep.txt"))).exists());
+    }
+#endif
+
+    void fileDropUrlConversionPreservesUnicodeAndRejectsRemoteUrls()
+    {
+        QTemporaryDir temporary(g_testData->filePath(QStringLiteral("file-url-unicode-XXXXXX")));
+        QVERIFY(temporary.isValid());
+        const QString unicodePath = QDir(temporary.path()).filePath(QStringLiteral("café space % file.txt"));
+        QFile file(unicodePath);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.close();
+        QString converted, error;
+        QVERIFY2(LocalFileUrl::toPath(QVariant::fromValue(QUrl::fromLocalFile(unicodePath)), &converted, &error),
+                 qPrintable(error));
+        QCOMPARE(converted, unicodePath);
+        QVERIFY(!LocalFileUrl::toPath(QVariant::fromValue(QUrl(QStringLiteral("https://example.test/file.png"))),
+                                      &converted, &error));
+        QVERIFY(!error.isEmpty());
+#ifdef Q_OS_WIN
+        QVERIFY(LocalFileUrl::toPath(QVariant::fromValue(QUrl(QStringLiteral("file://server/share/folder%20name/a.png"))),
+                                     &converted, &error));
+        QVERIFY(converted.startsWith(QStringLiteral("\\\\server\\share"), Qt::CaseInsensitive) ||
+                converted.startsWith(QStringLiteral("//server/share"), Qt::CaseInsensitive));
+#endif
     }
 
 #ifdef Q_OS_WIN
@@ -1787,6 +2062,36 @@ private slots:
         QVERIFY(QFileInfo::exists(galleryCopyPath));
     }
 
+    void clipboardHistoryClearInvalidatesActiveAndQueuedImageCaptures()
+    {
+        SettingsManager settings;
+        ProfileManager profiles(&settings);
+        ScreenshotManager screenshots(&profiles, &settings);
+        ClipboardHistoryManager history(&screenshots, &settings);
+        auto imageSnapshot = [](const QColor &color) {
+            ClipboardSnapshot snapshot;
+            snapshot.type = QStringLiteral("image");
+            snapshot.image = QImage(64, 48, QImage::Format_ARGB32);
+            snapshot.image.fill(color);
+            return snapshot;
+        };
+        screenshots.clipboardService()->processContentChange(imageSnapshot(QColor(QStringLiteral("#d24b4b"))), false);
+        screenshots.clipboardService()->processContentChange(imageSnapshot(QColor(QStringLiteral("#4bd26f"))), false);
+        screenshots.clipboardService()->processContentChange(imageSnapshot(QColor(QStringLiteral("#4b65d2"))), false);
+        QVERIFY(history.clearHistory());
+        screenshots.clipboardService()->processContentChange(imageSnapshot(QColor(QStringLiteral("#e6c44b"))), false);
+        history.finishPendingSaves();
+
+        const QVector<ClipboardHistoryRecord> records = screenshots.database()->clipboardHistory();
+        QCOMPARE(records.size(), 1);
+        QCOMPARE(history.count(), 1);
+        QVERIFY(QFileInfo::exists(records.first().payloadPath));
+        QCOMPARE(QImage(records.first().payloadPath).pixelColor(0, 0), QColor(QStringLiteral("#e6c44b")));
+        const QString payloadDirectory = QDir(AppDataPaths::root()).filePath(QStringLiteral("clipboard-history"));
+        QCOMPARE(QDir(payloadDirectory).entryList({QStringLiteral("*.png")}, QDir::Files).size(), 1);
+        QCOMPARE(screenshots.database()->screenshots().size(), 0);
+    }
+
     void clipboardHistoryRetentionPreservesPinsAndNeverDeletesReferencedOrGalleryFiles()
     {
         SettingsManager settings;
@@ -1842,6 +2147,75 @@ private slots:
         QVERIFY(QFileInfo::exists(userFile));
         QVERIFY(QFileInfo::exists(galleryImage));
         QCOMPARE(screenshots.database()->screenshots().size(), 1);
+    }
+
+    void clipboardHistoryRetentionExcludesAgeExpiredImageBytes()
+    {
+        constexpr qint64 MiB = 1024 * 1024;
+        SettingsManager settings;
+        QVERIFY(settings.setClipboardHistoryRetentionDays(1));
+        QVERIFY(settings.setClipboardHistoryRetentionCount(20));
+        QVERIFY(settings.setClipboardHistoryStorageLimitMB(16));
+        ProfileManager profiles(&settings);
+        ScreenshotManager screenshots(&profiles, &settings);
+        const QString payloadDirectory = QDir(AppDataPaths::root()).filePath(QStringLiteral("clipboard-history"));
+        QVERIFY(QDir().mkpath(payloadDirectory));
+        auto addImage = [&](const QString &id, const QString &name, qint64 bytes, const QDateTime &captured) {
+            const QString payload = QDir(payloadDirectory).filePath(name);
+            QFile file(payload);
+            if (!file.open(QIODevice::WriteOnly) || !file.resize(bytes)) return false;
+            file.close();
+            ClipboardHistoryRecord record;
+            record.id = id;
+            record.type = QStringLiteral("image");
+            record.capturedAt = captured.toUTC().toString(Qt::ISODateWithMs);
+            record.fingerprint = QStringLiteral("retention-") + id;
+            record.payloadPath = QFileInfo(payload).absoluteFilePath();
+            record.sizeBytes = bytes;
+            record.width = 1;
+            record.height = 1;
+            return screenshots.database()->saveClipboardHistory(record);
+        };
+        const QDateTime now = QDateTime::currentDateTimeUtc();
+        const QString expiredId = QStringLiteral("31234567-89ab-cdef-0123-456789abcdef");
+        const QString freshId = QStringLiteral("41234567-89ab-cdef-0123-456789abcdef");
+        QVERIFY(addImage(expiredId, expiredId + QStringLiteral(".png"), 17 * MiB, now.addDays(-3)));
+        QVERIFY(addImage(freshId, freshId + QStringLiteral(".png"), MiB, now));
+
+        ClipboardHistoryManager history(&screenshots, &settings);
+        QVERIFY(history.model()->recordById(expiredId).id.isEmpty());
+        QVERIFY(!history.model()->recordById(freshId).id.isEmpty());
+        QVERIFY(!QFileInfo::exists(QDir(payloadDirectory).filePath(expiredId + QStringLiteral(".png"))));
+        QVERIFY(QFileInfo::exists(QDir(payloadDirectory).filePath(freshId + QStringLiteral(".png"))));
+
+        const QString largeFreshId = QStringLiteral("51234567-89ab-cdef-0123-456789abcdef");
+        QVERIFY(addImage(largeFreshId, largeFreshId + QStringLiteral(".png"), 20 * MiB, now.addSecs(-7200)));
+        ClipboardHistoryRecord olderText;
+        olderText.id = QStringLiteral("61234567-89ab-cdef-0123-456789abcdef");
+        olderText.type = QStringLiteral("text");
+        olderText.capturedAt = now.addSecs(-3600).toString(Qt::ISODateWithMs);
+        olderText.fingerprint = QStringLiteral("retention-middle-text");
+        olderText.text = QStringLiteral("middle");
+        QVERIFY(screenshots.database()->saveClipboardHistory(olderText));
+        ClipboardHistoryRecord newestText = olderText;
+        newestText.id = QStringLiteral("71234567-89ab-cdef-0123-456789abcdef");
+        newestText.capturedAt = now.addSecs(-60).toString(Qt::ISODateWithMs);
+        newestText.fingerprint = QStringLiteral("retention-newest-text");
+        newestText.text = QStringLiteral("newest");
+        QVERIFY(screenshots.database()->saveClipboardHistory(newestText));
+        QVERIFY(settings.setClipboardHistoryRetentionCount(2));
+
+        const auto retained = screenshots.database()->clipboardHistory();
+        QCOMPARE(retained.size(), 2);
+        const auto containsId = [&retained](const QString &id) {
+            return std::any_of(retained.cbegin(), retained.cend(), [&id](const ClipboardHistoryRecord &record) {
+                return record.id == id;
+            });
+        };
+        QVERIFY(containsId(freshId));
+        QVERIFY(containsId(newestText.id));
+        QVERIFY(!containsId(largeFreshId));
+        QVERIFY(!containsId(olderText.id));
     }
 
     void clipboardHistoryShortcutIsConfigurableAndPersisted()
@@ -2242,6 +2616,17 @@ private slots:
     void fullShellPagesAndPreferences()
     {
         ApplicationController controller;QQmlApplicationEngine engine;engine.addImageProvider(QStringLiteral("thumbnail"),new ThumbnailProvider);engine.addImageProvider(QStringLiteral("qrpreview"),new QrImageProvider(controller.qrCode()));
+        QTemporaryDir droppedAssets(g_testData->filePath(QStringLiteral("qml-drop-assets-XXXXXX")));
+        QVERIFY(droppedAssets.isValid());
+        const QString shelfDropPath = QDir(droppedAssets.path()).filePath(QStringLiteral("café space % dropped.txt"));
+        QFile shelfDropFile(shelfDropPath);
+        QVERIFY(shelfDropFile.open(QIODevice::WriteOnly));
+        shelfDropFile.close();
+        const QString qrDropPath = QDir(droppedAssets.path()).filePath(QStringLiteral("dropped-qr.png"));
+        const QImage qrDropImage = QrCodeManager::generateImage(QStringLiteral("https://example.test/QR"), 5, 4,
+                                                                 QStringLiteral("M"));
+        QVERIFY(!qrDropImage.isNull());
+        QVERIFY(qrDropImage.save(qrDropPath));
         QVERIFY(!controller.screenshots()->createTag(QStringLiteral("QML tag check")).isEmpty());
         for(const auto &entry:QList<QPair<QString,QObject *>>{{QStringLiteral("app"),&controller},{QStringLiteral("settings"),controller.settings()},{QStringLiteral("profiles"),controller.profiles()},{QStringLiteral("screenshots"),controller.screenshots()},{QStringLiteral("clipboardHistory"),controller.clipboardHistory()},{QStringLiteral("fileShelf"),controller.fileShelf()},{QStringLiteral("qrCode"),controller.qrCode()},{QStringLiteral("hotkeys"),controller.hotkeys()},{QStringLiteral("actions"),controller.actions()},{QStringLiteral("actionRunner"),controller.actionRunner()},{QStringLiteral("windowArrangements"),controller.windowArrangements()}})engine.rootContext()->setContextProperty(entry.first,entry.second);
         QSignalSpy warnings(&engine,&QQmlEngine::warnings);engine.loadFromModule(QStringLiteral("ScreenshotHotkeyManagerTest"),QStringLiteral("Main"));QVERIFY(!engine.rootObjects().isEmpty());
@@ -2252,7 +2637,33 @@ private slots:
             if (page == QStringLiteral("QR Codes")) {
                 QVERIFY(findItem(window->contentItem(), QStringLiteral("generateQrButton")));
                 QVERIFY(findItem(window->contentItem(), QStringLiteral("qrResultsList")));
+                QQuickItem *qrPage = findItem(window->contentItem(), QStringLiteral("qrCodePage"));
+                QVERIFY(qrPage);
+                QVariant droppedResult;
+                const QVariantList droppedUrls{QVariant::fromValue(QUrl::fromLocalFile(qrDropPath))};
+                QVERIFY(QMetaObject::invokeMethod(qrPage, "handleDroppedUrls", Q_RETURN_ARG(QVariant, droppedResult),
+                                                  Q_ARG(QVariant, QVariant::fromValue(droppedUrls))));
+                QVERIFY(droppedResult.toBool());
+                QTRY_COMPARE_WITH_TIMEOUT(controller.qrCode()->results()->rowCount(), 1, 5000);
+                QVERIFY(controller.qrCode()->results()->resultAt(0).contains(QStringLiteral("https://example.test/QR")));
                 QVERIFY(window->grabWindow().save(QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("qr-code-page.png"))));
+            }
+            if (page == QStringLiteral("File Shelf")) {
+                QQuickItem *shelfPage = findItem(window->contentItem(), QStringLiteral("fileShelfPage"));
+                QVERIFY(shelfPage);
+                QVariant droppedResult;
+                const QVariantList droppedUrls{QVariant::fromValue(QUrl::fromLocalFile(shelfDropPath))};
+                QVERIFY(QMetaObject::invokeMethod(shelfPage, "handleDroppedUrls", Q_RETURN_ARG(QVariant, droppedResult),
+                                                  Q_ARG(QVariant, QVariant::fromValue(droppedUrls))));
+                QVERIFY(droppedResult.toBool());
+                QCOMPARE(controller.fileShelf()->rowCount(), 1);
+                QCOMPARE(controller.fileShelf()->data(controller.fileShelf()->index(0), FileShelfManager::PathRole).toString(),
+                         QFileInfo(shelfDropPath).absoluteFilePath());
+                const QVariantList remoteUrls{QVariant::fromValue(QUrl(QStringLiteral("https://example.test/not-local.png")))};
+                QVERIFY(QMetaObject::invokeMethod(shelfPage, "handleDroppedUrls", Q_RETURN_ARG(QVariant, droppedResult),
+                                                  Q_ARG(QVariant, QVariant::fromValue(remoteUrls))));
+                QVERIFY(!droppedResult.toBool());
+                QCOMPARE(controller.fileShelf()->rowCount(), 1);
             }
             if(page==QStringLiteral("Window Arrangements")){
                 QVERIFY(findItem(window->contentItem(),QStringLiteral("windowArrangementWindowList")));

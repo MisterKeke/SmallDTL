@@ -73,10 +73,12 @@ private:
         QImage image;
         QString capturedAt;
         qint64 reservedBytes = 0;
+        quint64 generation = 0;
     };
     struct ImageResult {
         ClipboardHistoryRecord record;
         QString error;
+        quint64 generation = 0;
     };
     void acceptSnapshot(const ClipboardSnapshot &snapshot);
     void dispatchImageWrites();
@@ -98,8 +100,10 @@ private:
     QHash<QString, QFuture<ImageResult>> m_imageJobs;
     QHash<QString, QFutureWatcher<ImageResult> *> m_imageWatchers;
     QHash<QString, qint64> m_imageReservations;
+    QHash<QString, quint64> m_imageGenerations;
     qint64 m_pendingImageBytes = 0;
     int m_activeImageJobs = 0;
+    quint64 m_captureGeneration = 1;
     bool m_paused = false;
     bool m_restorePending = false;
 };

@@ -4,6 +4,7 @@
 #include <QFutureWatcher>
 #include <QSet>
 #include <QUrl>
+#include <QVariantList>
 #include <QVector>
 
 #include "../screenshots/ScreenshotDatabase.h"
@@ -62,6 +63,7 @@ public:
 
     Q_INVOKABLE void refresh();
     Q_INVOKABLE bool addPaths(const QStringList &paths);
+    Q_INVOKABLE bool addFileUrls(const QVariantList &urls);
     Q_INVOKABLE void addFilesDialog();
     Q_INVOKABLE void addFolderDialog();
     Q_INVOKABLE void toggleSelection(const QString &id);

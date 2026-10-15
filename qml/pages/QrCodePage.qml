@@ -4,6 +4,11 @@ import QtQuick.Layouts
 
 Item {
     id: root
+    objectName: "qrCodePage"
+
+    function handleDroppedUrls(urls) {
+        return urls && urls.length > 0 ? qrCode.decodeFileUrl(urls[0]) : false
+    }
 
     Rectangle {
         anchors.fill: parent
@@ -190,11 +195,8 @@ Item {
                                 id: dropArea
                                 anchors.fill: parent
                                 onDropped: function(drop) {
-                                    if (drop.urls && drop.urls.length > 0) {
-                                        const path = drop.urls[0].toLocalFile()
-                                        qrCode.decodeFile(path, "Dropped image")
+                                    if (root.handleDroppedUrls(drop.urls))
                                         drop.acceptProposedAction()
-                                    }
                                 }
                             }
                         }

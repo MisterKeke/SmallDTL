@@ -7,6 +7,7 @@
 #include <QObject>
 #include <QSet>
 #include <QStringList>
+#include <QVariant>
 
 class ClipboardService;
 class ScreenshotManager;
@@ -78,6 +79,7 @@ public:
     Q_INVOKABLE bool decodeClipboardImage();
     Q_INVOKABLE bool chooseImageToDecode();
     Q_INVOKABLE bool decodeFile(const QString &path, const QString &source = QStringLiteral("Image file"));
+    Q_INVOKABLE bool decodeFileUrl(const QVariant &url);
     Q_INVOKABLE bool copyGeneratedImage();
     Q_INVOKABLE bool exportGeneratedImage();
     Q_INVOKABLE QString saveGeneratedToGallery(const QString &tagId = {});

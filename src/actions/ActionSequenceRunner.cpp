@@ -66,6 +66,18 @@ ActionSequenceRunner::ActionSequenceRunner(ActionManager *actions, ProfileManage
             scheduleNext();
         });
     }
+    if (m_windowArrangements) {
+        connect(m_windowArrangements, &WindowArrangementManager::layoutApplyFinished, this,
+                [this](quint64 requestId, bool success, const QString &message) {
+            if (!m_running || requestId != m_pendingWindowLayoutToken)
+                return;
+            m_pendingWindowLayoutToken = 0;
+            if (!success)
+                finish(message.isEmpty() ? QStringLiteral("Could not apply the window layout.") : message, true);
+            else
+                scheduleNext();
+        });
+    }
 }
 
 bool ActionSequenceRunner::running() const { return m_running; }
@@ -89,6 +101,7 @@ bool ActionSequenceRunner::start(const QString &sequenceId)
     m_stepIndex = 0;
     m_qrOutputs.clear();
     m_pendingQrActionToken = 0;
+    m_pendingWindowLayoutToken = 0;
     ++m_runGeneration;
     m_running = true;
     emit runningChanged();
@@ -148,6 +161,22 @@ void ActionSequenceRunner::runNext()
                 m_pendingQrIsDecode = false;
                 finish(error.isEmpty() ? QStringLiteral("Could not start the QR action.") : error, true);
             }
+            return;
+        }
+        if (type == QStringLiteral("applyWindowLayout")) {
+            if (!m_windowArrangements) {
+                finish(QStringLiteral("Window arrangements are unavailable."), true);
+                return;
+            }
+            const quint64 requestId = m_windowArrangements->requestApplyLayout(
+                step.value(QStringLiteral("layoutId")).toString());
+            if (!requestId) {
+                finish(m_windowArrangements->status().isEmpty()
+                           ? QStringLiteral("Could not start the window layout operation.")
+                           : m_windowArrangements->status(), true);
+                return;
+            }
+            m_pendingWindowLayoutToken = requestId;
             return;
         }
         QString error;
@@ -221,16 +250,6 @@ bool ActionSequenceRunner::execute(const QVariantMap &step, QString *error)
         }
         return true;
     }
-    if(type==QStringLiteral("applyWindowLayout")){
-        const QString layoutId=step.value(QStringLiteral("layoutId")).toString();
-        if(!m_windowArrangements||!m_windowArrangements->containsLayout(layoutId)){
-            *error=QStringLiteral("The saved window layout is no longer available.");return false;
-        }
-        if(!m_windowArrangements->previewLayout(layoutId)||!m_windowArrangements->applyLayout(layoutId)){
-            *error=m_windowArrangements->status().isEmpty()?QStringLiteral("Could not apply the window layout."):m_windowArrangements->status();return false;
-        }
-        return true;
-    }
     *error = QStringLiteral("This action type is not supported.");
     return false;
 }
@@ -241,6 +260,9 @@ void ActionSequenceRunner::finish(const QString &message, bool isError, bool was
         return;
     m_running = false;
     ++m_runGeneration;
+    if (m_pendingWindowLayoutToken && m_windowArrangements)
+        m_windowArrangements->cancelApplyLayout(m_pendingWindowLayoutToken);
+    m_pendingWindowLayoutToken = 0;
     m_waitTimer->stop();
     m_pendingScreenshotPath.clear();
     m_pendingQrActionToken = 0;

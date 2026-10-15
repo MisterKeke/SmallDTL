@@ -1,5 +1,6 @@
 #include "QrCodeManager.h"
 
+#include "../app/LocalFileUrl.h"
 #include "../clipboard/ClipboardService.h"
 #include "../screenshots/ScreenshotManager.h"
 
@@ -186,6 +187,16 @@ bool QrCodeManager::chooseImageToDecode()
 bool QrCodeManager::decodeFile(const QString &path, const QString &source)
 {
     return startDecodeFile(path, source);
+}
+
+bool QrCodeManager::decodeFileUrl(const QVariant &url)
+{
+    QString path, error;
+    if (!LocalFileUrl::toPath(url, &path, &error)) {
+        setStatus(error, true);
+        return false;
+    }
+    return decodeFile(path, QStringLiteral("Dropped image"));
 }
 
 bool QrCodeManager::copyGeneratedImage()
