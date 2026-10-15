@@ -1,5 +1,7 @@
 # Configuration decisions
 
+Window layout storage also accepts an optional `monitorNicknames` object. Keys use the Windows target monitor device path when available, otherwise the GDI display identifier. Values are user labels of up to 120 characters. Clearing a nickname restores the detected model/fallback label. Friendly monitor names are resolved from active Windows display paths; UI labels include full monitor resolution and primary status, independently of layout matching identifiers.
+
 The displayed application name and executable are SmallDTL and `SmallDTL.exe`. The original `SmallDTL/ScreenshotHotkeyManager` data identity, single-instance identity, and startup registry value name remain stable for compatibility. Existing configured screenshot destinations are retained; fresh settings use `Pictures/SmallDTL`.
 
 ## Atomic ownership

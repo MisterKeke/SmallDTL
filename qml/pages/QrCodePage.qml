@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "../components"
 
 Item {
     id: root
@@ -10,13 +11,25 @@ Item {
         return urls && urls.length > 0 ? qrCode.decodeFileUrl(urls[0]) : false
     }
 
-    Rectangle {
+    ScrollView {
+        id: qrScroll
         anchors.fill: parent
+        clip: true
+        contentWidth: availableWidth
+        contentHeight: qrSurface.height
+        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
+    Rectangle {
+        id: qrSurface
+        width: qrScroll.availableWidth
+        // Keep the scroll extent independent of the fill-height layouts below.
+        height: Math.max(root.height, root.width < 900 ? 1240 : 760)
         radius: 16
         color: settings.palette["#191a20"]
         border.color: settings.palette["#2d2e37"]
 
         ColumnLayout {
+            id: mainColumn
             anchors.fill: parent
             anchors.margins: 20
             spacing: 12
@@ -41,15 +54,19 @@ Item {
                 }
             }
 
-            RowLayout {
+            GridLayout {
+                columns: root.width < 900 ? 1 : 2
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                spacing: 14
+                columnSpacing: 14
+                rowSpacing: 14
 
                 Rectangle {
+                    objectName: "qrGeneratePanel"
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     Layout.minimumWidth: 280
+                    Layout.minimumHeight: 660
                     Layout.preferredWidth: 0.95
                     radius: 13
                     color: settings.palette["#202127"]
@@ -61,7 +78,7 @@ Item {
                         spacing: 10
 
                         Label { text: "Generate"; color: settings.palette["#f0eef2"]; font.pixelSize: 17; font.weight: Font.DemiBold }
-                        TextArea {
+                        InsetTextArea {
                             id: qrTextInput
                             objectName: "qrTextInput"
                             Layout.fillWidth: true
@@ -71,7 +88,6 @@ Item {
                             color: settings.palette["#f0eef2"]
                             selectedTextColor: "white"
                             selectionColor: settings.palette["#75404e"]
-                            background: Rectangle { radius: 9; color: settings.palette["#17181d"]; border.color: settings.palette["#34353e"] }
                         }
 
                         RowLayout {
@@ -158,9 +174,11 @@ Item {
                 }
 
                 Rectangle {
+                    objectName: "qrDecodePanel"
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     Layout.minimumWidth: 280
+                    Layout.minimumHeight: 480
                     Layout.preferredWidth: 1.05
                     radius: 13
                     color: settings.palette["#202127"]
@@ -236,7 +254,7 @@ Item {
                         }
 
                         Label { text: "Decoded content"; color: settings.palette["#b0b1bb"]; font.pixelSize: 10 }
-                        TextArea {
+                        InsetTextArea {
                             id: decodedContent
                             objectName: "qrDecodedContent"
                             Layout.fillWidth: true
@@ -249,11 +267,11 @@ Item {
                             color: settings.palette["#f0eef2"]
                             selectedTextColor: "white"
                             selectionColor: settings.palette["#75404e"]
-                            background: Rectangle { radius: 9; color: settings.palette["#17181d"]; border.color: settings.palette["#34353e"] }
                         }
                     }
                 }
             }
         }
+    }
     }
 }

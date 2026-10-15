@@ -2613,6 +2613,97 @@ private slots:
         QCOMPARE(warnings.count(), 0);
     }
 
+    void clipboardAndQrTextLayouts()
+    {
+        ApplicationController controller;
+        ClipboardSnapshot text;
+        text.type=QStringLiteral("text");text.text=QStringLiteral("Readable clipboard preview with enough text to wrap across lines.");
+        controller.screenshots()->clipboardService()->processContentChange(text,false);
+        QImage image(160,100,QImage::Format_ARGB32);image.fill(Qt::blue);
+        controller.screenshots()->clipboardService()->processImageChange(image,false);
+        controller.clipboardHistory()->finishPendingSaves();
+        QQmlApplicationEngine engine;
+        engine.addImageProvider(QStringLiteral("thumbnail"),new ThumbnailProvider);
+        engine.addImageProvider(QStringLiteral("qrpreview"),new QrImageProvider(controller.qrCode()));
+        for(const auto &entry:QList<QPair<QString,QObject *>>{{QStringLiteral("app"),&controller},{QStringLiteral("settings"),controller.settings()},{QStringLiteral("profiles"),controller.profiles()},{QStringLiteral("screenshots"),controller.screenshots()},{QStringLiteral("clipboardHistory"),controller.clipboardHistory()},{QStringLiteral("fileShelf"),controller.fileShelf()},{QStringLiteral("qrCode"),controller.qrCode()},{QStringLiteral("hotkeys"),controller.hotkeys()},{QStringLiteral("actions"),controller.actions()},{QStringLiteral("actionRunner"),controller.actionRunner()},{QStringLiteral("windowArrangements"),controller.windowArrangements()}})
+            engine.rootContext()->setContextProperty(entry.first,entry.second);
+        QSignalSpy warnings(&engine,&QQmlEngine::warnings);
+        engine.loadFromModule(QStringLiteral("ScreenshotHotkeyManagerTest"),QStringLiteral("Main"));
+        QVERIFY(!engine.rootObjects().isEmpty());
+        auto *window=qobject_cast<QQuickWindow *>(engine.rootObjects().first());QVERIFY(window);
+        window->show();QVERIFY(QTest::qWaitForWindowExposed(window));
+        for(const QString &theme:{QStringLiteral("dark"),QStringLiteral("light")}){
+            QVERIFY(controller.settings()->setAppearance(theme));
+            for(const QSize &size:{QSize(1040,680),QSize(1360,850)}){
+                window->resize(size);controller.setCurrentPage(QStringLiteral("Clipboard History"));QTest::qWait(100);
+                QQuickItem *list=findItem(window->contentItem(),QStringLiteral("clipboardHistoryList"));QVERIFY(list);
+                QVector<QQuickItem *> rows;
+                std::function<void(QQuickItem *)> collect=[&](QQuickItem *item){
+                    if(item->objectName()==QStringLiteral("clipboardHistoryEntry"))rows.append(item);
+                    for(auto *child:item->childItems())collect(child);
+                };collect(list);
+                QCOMPARE(rows.size(),2);
+                for(auto *row:rows){
+                    auto *actions=findItem(row,QStringLiteral("clipboardHistoryActions"));QVERIFY(actions);
+                    const QPointF bottom=actions->mapToItem(row,QPointF(actions->width(),actions->height()));
+                    QVERIFY2(bottom.y()<=row->height()+0.5,"History actions extend outside their card");
+                    auto *preview=findItem(row,QStringLiteral("clipboardHistoryPreview"));QVERIFY(preview);
+                    QCOMPARE(preview->property("color").value<QColor>(),controller.settings()->palette().value(QStringLiteral("#dedde3")).value<QColor>());
+                }
+                QVERIFY(window->grabWindow().save(QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("history-text-%1-%2.png").arg(theme).arg(size.width()))));
+                controller.setCurrentPage(QStringLiteral("QR Codes"));QTest::qWait(80);
+                auto *generatePanel=findItem(window->contentItem(),QStringLiteral("qrGeneratePanel"));
+                auto *decodePanel=findItem(window->contentItem(),QStringLiteral("qrDecodePanel"));
+                QVERIFY(generatePanel&&decodePanel);
+                const QRectF generateRect(generatePanel->position(),generatePanel->size());
+                const QRectF decodeRect(decodePanel->position(),decodePanel->size());
+                QVERIFY2(!generateRect.intersects(decodeRect),"QR panels overlap");
+                QVERIFY(generatePanel->x()>=0&&generatePanel->x()+generatePanel->width()<=generatePanel->parentItem()->width()+0.5);
+                QVERIFY(decodePanel->x()>=0&&decodePanel->x()+decodePanel->width()<=decodePanel->parentItem()->width()+0.5);
+                for(const QString &name:{QStringLiteral("qrTextInput"),QStringLiteral("qrDecodedContent")}){
+                    auto *area=findItem(window->contentItem(),name);QVERIFY(area);
+                    QVERIFY(area->property("topPadding").toReal()>=0);
+                    auto *placeholder=findItem(area,QStringLiteral("insetPlaceholder"));QVERIFY(placeholder);
+                    QVERIFY(placeholder->isVisible());QVERIFY(placeholder->y()>=0);
+                    QVERIFY(placeholder->y()+placeholder->height()<=area->height()+0.5);
+                    area->forceActiveFocus();QTest::qWait(20);QVERIFY(placeholder->y()>=0);
+                    area->setProperty("text",QStringLiteral("Example content"));QVERIFY(!placeholder->isVisible());
+                    area->setProperty("text",QString());QVERIFY(placeholder->isVisible());
+                }
+                QVERIFY(window->grabWindow().save(QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("qr-text-%1-%2.png").arg(theme).arg(size.width()))));
+            }
+        }
+        QCOMPARE(warnings.count(),0);
+    }
+
+    void monitorNamesAndNicknamesPersist()
+    {
+        SettingsManager settings;ProfileManager profiles(&settings);
+        QString device;
+        {
+            WindowArrangementManager manager(&profiles);
+            QTRY_VERIFY_WITH_TIMEOUT(!manager.busy(),5000);
+            if(manager.monitors().isEmpty())QSKIP("No monitors exposed by this environment");
+            const auto monitor=manager.monitors().first().toMap();device=monitor.value(QStringLiteral("device")).toString();
+            const QString detected=monitor.value(QStringLiteral("name")).toString();
+            qInfo().noquote()<<QStringLiteral("Detected display label:")<<detected;
+            QVERIFY(detected.contains(QStringLiteral(" × ")));
+            QVERIFY(!detected.startsWith(QStringLiteral("\\\\.\\DISPLAY")));
+            if(monitor.value(QStringLiteral("primary")).toBool())QVERIFY(detected.endsWith(QStringLiteral("Primary")));
+            QVERIFY(manager.setMonitorNickname(device,QStringLiteral("Left monitor")));
+            QVERIFY(manager.monitorLabel(device).startsWith(QStringLiteral("Left monitor · ")));
+            QVERIFY(!manager.setMonitorNickname(device,QString(121,QLatin1Char('x'))));
+            QCOMPARE(manager.monitorNickname(device),QStringLiteral("Left monitor"));
+        }
+        WindowArrangementManager restored(&profiles);
+        QTRY_VERIFY_WITH_TIMEOUT(!restored.busy(),5000);
+        QCOMPARE(restored.monitorNickname(device),QStringLiteral("Left monitor"));
+        QVERIFY(restored.setMonitorNickname(device,QString()));
+        QVERIFY(restored.monitorNickname(device).isEmpty());
+        QVERIFY(!restored.monitorLabel(device).startsWith(QStringLiteral("Left monitor")));
+        QVERIFY(!restored.setMonitorNickname(QStringLiteral("missing-display"),QStringLiteral("Wrong target")));
+    }
+
     void fullShellPagesAndPreferences()
     {
         ApplicationController controller;QQmlApplicationEngine engine;engine.addImageProvider(QStringLiteral("thumbnail"),new ThumbnailProvider);engine.addImageProvider(QStringLiteral("qrpreview"),new QrImageProvider(controller.qrCode()));

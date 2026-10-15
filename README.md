@@ -29,6 +29,8 @@ Each profile owns its sequences and assignments. Duplication creates fresh IDs a
 
 Window Arrangements operates only on eligible windows that are already open. Users can place selected windows in halves, quadrants, center, maximize, or move them to a selected monitor; saving/applying a layout is always manual, shortcut-triggered, or a user-started sequence step. The app does not launch missing matches or change profiles automatically. Preview reports missing and ambiguous matches before saved layouts are applied, with explicit selection for ambiguous windows. Previous native positions are kept in memory for the current run.
 
+Display choices show the monitor model reported by Windows, full display resolution, and a Primary marker. If Windows cannot provide a model, a numbered Display label is used. Identical names receive a display-number suffix. Optional nicknames can be saved or reset from Window Arrangements; these change SmallDTL's labels only. Nicknames use the monitor device path when available, with the Windows display identifier as fallback. Layout placement continues to use its existing Windows display identifiers.
+
 Remove shortcut assignments before deleting their sequence. Running sequences use a snapshot; editing cannot rewrite an in-progress run. Stop cancels later actions and waits. Already launched processes, opened URLs, and dispatched PNG writes cannot be recalled.
 
 ## Persistence and limits

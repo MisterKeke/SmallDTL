@@ -248,21 +248,24 @@ ApplicationWindow {
                     required property bool pinned
                     required property bool missing
                     width: ListView.view.width
-                    height: contentType === "image" ? 104 : 78
+                    height: Math.max(contentType === "image" ? 104 : 78,
+                                     popupDetails.implicitHeight + 16, popupActions.implicitHeight + 16)
                     radius: 9
                     color: popupMouse.containsMouse ? settings.palette["#22232a"] : settings.palette["#191a20"]
                     border.color: settings.palette["#2d2e37"]
                     MouseArea { id: popupMouse; anchors.fill: parent; hoverEnabled: true; onClicked: clipboardHistory.restoreEntry(popupEntry.entryId) }
                     RowLayout {
                         anchors.fill: parent; anchors.margins: 8; spacing: 9
-                        Image { visible: popupEntry.contentType === "image"; Layout.preferredWidth: 88; Layout.preferredHeight: 86; source: popupEntry.imageUrl; fillMode: Image.PreserveAspectFit; asynchronous: true; cache: false }
+                        Image { visible: popupEntry.contentType === "image"; Layout.preferredWidth: 88; Layout.preferredHeight: 86; source: popupEntry.imageUrl; sourceSize: Qt.size(176, 172); fillMode: Image.PreserveAspectFit; asynchronous: true; cache: false }
                         ColumnLayout {
+                            id: popupDetails
                             Layout.fillWidth: true; Layout.fillHeight: true; spacing: 3
                             Label { text: popupEntry.contentType === "files" ? "Files · " + popupEntry.fileCount : popupEntry.contentType === "image" ? "Image" : "Text"; color: settings.palette["#e7a0b1"]; font.pixelSize: 10; font.weight: Font.DemiBold }
-                            Label { Layout.fillWidth: true; Layout.fillHeight: true; text: popupEntry.missing ? "Missing content or file reference" : popupEntry.preview; color: popupEntry.missing ? settings.palette["#ff8d9c"] : settings.palette["#dedde2"]; font.pixelSize: 10; wrapMode: Text.WrapAnywhere; maximumLineCount: 2; elide: Text.ElideRight }
+                            Label { Layout.fillWidth: true; Layout.fillHeight: true; text: popupEntry.missing ? "Missing content or file reference" : popupEntry.preview; color: popupEntry.missing ? settings.palette["#ff8d9c"] : settings.palette["#dedde3"]; font.pixelSize: 10; wrapMode: Text.WrapAnywhere; maximumLineCount: 2; elide: Text.ElideRight }
                             Label { text: popupEntry.capturedAt + (popupEntry.pinned ? "  ·  Pinned" : ""); color: settings.palette["#898a95"]; font.pixelSize: 8 }
                         }
                         ColumnLayout {
+                            id: popupActions
                             spacing: 0
                             ToolButton { text: popupEntry.pinned ? "◆" : "◇"; Accessible.name: popupEntry.pinned ? "Unpin entry" : "Pin entry"; onClicked: clipboardHistory.setPinned(popupEntry.entryId, !popupEntry.pinned) }
                             ToolButton { text: "×"; Accessible.name: "Delete entry"; onClicked: clipboardHistory.deleteEntry(popupEntry.entryId) }

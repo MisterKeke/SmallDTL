@@ -101,6 +101,7 @@ qt_add_qml_module(ScreenshotHotkeyManager
         qml/components/Sidebar.qml
         qml/components/HotkeyRecorder.qml
         qml/components/ScreenshotEditor.qml
+        qml/components/InsetTextArea.qml
         qml/pages/DashboardPage.qml
         qml/pages/ScreenshotsPage.qml
         qml/pages/ProfilesPage.qml
@@ -188,6 +189,7 @@ if(BUILD_TESTING)
             qml/pages/DashboardPage.qml
             qml/pages/ScreenshotsPage.qml
             qml/components/ScreenshotEditor.qml
+            qml/components/InsetTextArea.qml
             qml/pages/ProfilesPage.qml
             qml/pages/HotkeysPage.qml
             qml/pages/ActionsPage.qml

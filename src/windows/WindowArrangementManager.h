@@ -51,7 +51,7 @@ class WindowArrangementManager final : public QAbstractListModel
     Q_PROPERTY(QVariantList preview READ preview NOTIFY previewChanged)
     Q_PROPERTY(QString selectedLayoutId READ selectedLayoutId WRITE setSelectedLayoutId NOTIFY selectedLayoutIdChanged)
 public:
-    enum Role { WindowIdRole=Qt::UserRole+1, TitleRole, ExecutableRole, MonitorRole, SelectedRole, MaximizeRole };
+    enum Role { WindowIdRole=Qt::UserRole+1, TitleRole, ExecutableRole, MonitorRole, SelectedRole, MaximizeRole, MonitorLabelRole };
     Q_ENUM(Role)
     explicit WindowArrangementManager(ProfileManager *profiles, QObject *parent=nullptr);
     int rowCount(const QModelIndex &parent={}) const override;
@@ -71,6 +71,9 @@ public:
     Q_INVOKABLE void clearSelection();
     Q_INVOKABLE bool arrangeSelected(const QString &placement);
     Q_INVOKABLE bool moveSelectedToMonitor(const QString &monitor);
+    Q_INVOKABLE QString monitorLabel(const QString &device) const;
+    Q_INVOKABLE QString monitorNickname(const QString &device) const;
+    Q_INVOKABLE bool setMonitorNickname(const QString &device,const QString &nickname);
     Q_INVOKABLE bool restorePreviousArrangement();
     Q_INVOKABLE QString saveSelectedLayout(const QString &name);
     Q_INVOKABLE bool renameLayout(const QString &id,const QString &name);
@@ -105,7 +108,7 @@ private:
         quint64 requestId=0;
         QHash<int,quintptr> resolutions;
     };
-    struct Monitor { QString device; QString name; QRect bounds; QRect workArea; bool primary=false; };
+    struct Monitor { QString device; QString name; QRect bounds; QRect workArea; bool primary=false; QString identity; };
     struct Snapshot { quintptr handle=0; quint32 processId=0; QString executable; QRect rect; bool maximized=false; };
     static QVector<ArrangementWindow> enumerateWindows();
     static QVector<Monitor> enumerateMonitors();
@@ -130,6 +133,7 @@ private:
     ProfileManager *m_profiles=nullptr;
     QVector<ArrangementWindow> m_windows;
     QVector<Monitor> m_monitorRecords;
+    QHash<QString,QString> m_monitorNicknames;
     QVector<WindowLayout> m_layouts;
     QVector<Snapshot> m_previous;
     QFutureWatcher<QVector<ArrangementWindow>> m_windowWatcher;

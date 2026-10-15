@@ -1,5 +1,13 @@
 # Verification record
 
+## Text layout and friendly monitor names — 2026-10-16
+
+Clipboard History now uses a valid palette entry in the page and detached popup, and row heights follow their contents so buttons and timestamps remain inside their cards. QR input/output use inset, wrapped placeholders; narrow windows stack the Generate and Decode panels in a scrolling page instead of overlapping them. Windows display choices, window rows, and layout previews show reported model names, full display resolution, and primary status. Missing model names fall back to numbered labels; identical names are disambiguated. Optional nicknames persist separately from layout device identifiers in `window-layouts.json`.
+
+The Release build and complete Release CTest run passed. Focused text/monitor checks reported **4 passes, 0 failures, 0 skips**, including initialization/cleanup. Text checks seed image and text history entries, verify action containment and palette colors, verify empty/focused/populated QR placeholders and non-overlapping panels, and capture dark/light renders at 1040×680 and 1360×850. Those renders were inspected. Monitor checks cover label fallback, nickname validation, restart persistence, and reset. The restricted display probe exposed a generic display rather than a hardware model, so it verifies fallback behavior; hardware-name availability depends on Windows exposing its active display configuration.
+
+Evidence: `build-release/text-monitor-results.txt`, `build-release/history-text-*.png`, `build-release/qr-text-*.png`, and `build-release/Testing/Temporary/LastTest.log`. The portable package is produced with the existing deployment script, including its isolated runtime/database smoke check and third-party licenses.
+
 Date: 2026-10-14, Europe/Istanbul. Host: Windows 11 x64, Qt 6.11.0, GNU/MinGW 13.1.0.
 
 The final Debug build completed and the Qt Test run reported **33 passes, 0 failures, 0 skips**, including initialization/cleanup (31 test cases/data rows). The suite includes real native Windows registration/conflict/scope checks, the QML sequence editor, failed settings/hotkey editor recovery, configuration recovery/migration, import/export, clipboard-save completion, shutdown, paste, and resource/cache checks.

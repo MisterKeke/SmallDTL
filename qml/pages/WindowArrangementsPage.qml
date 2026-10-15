@@ -52,10 +52,38 @@ Item {
                     Layout.fillWidth: true
                     ComboBox {
                         id: monitorPicker; Layout.minimumWidth: 160
+                        Layout.preferredWidth: Math.min(460, root.width * 0.6)
                         model: windowArrangements.monitors; textRole: "name"; valueRole: "device"
                         displayText: currentIndex >= 0 ? currentText : "Move to monitor…"
+                        ToolTip.visible: hovered
+                        ToolTip.text: currentText
+                        onCurrentValueChanged: if (monitorNicknameField) monitorNicknameField.syncName()
                     }
                     Button { text: "Move selected"; enabled: monitorPicker.currentValue !== undefined && monitorPicker.currentValue !== ""; onClicked: windowArrangements.moveSelectedToMonitor(monitorPicker.currentValue) }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    Label { text: "Display nickname"; color: settings.palette["#9697a3"]; font.pixelSize: 10 }
+                    TextField {
+                        id: monitorNicknameField
+                        objectName: "monitorNicknameField"
+                        Layout.preferredWidth: 230
+                        placeholderText: "Optional, e.g. Left monitor"
+                        maximumLength: 120
+                        function syncName() { text = windowArrangements.monitorNickname(monitorPicker.currentValue || "") }
+                        Component.onCompleted: syncName()
+                    }
+                    Button {
+                        text: "Save name"
+                        enabled: monitorPicker.currentIndex >= 0
+                        onClicked: if (windowArrangements.setMonitorNickname(monitorPicker.currentValue, monitorNicknameField.text)) monitorNicknameField.syncName()
+                    }
+                    Button {
+                        text: "Use detected name"
+                        enabled: monitorPicker.currentIndex >= 0
+                        onClicked: if (windowArrangements.setMonitorNickname(monitorPicker.currentValue, "")) monitorNicknameField.syncName()
+                    }
+                    Item { Layout.fillWidth: true }
                 }
                 ListView {
                     id: windowList; Layout.fillWidth: true; Layout.fillHeight: true; clip: true; spacing: 4
@@ -70,6 +98,7 @@ Item {
                         required property string title
                         required property string executable
                         required property string monitor
+                        required property string monitorLabel
                         required property bool selected
                         Layout.fillWidth: true; height: 48; radius: 8
                         color: selected ? settings.palette["#30212a"] : settings.palette["#202127"]
@@ -81,7 +110,7 @@ Item {
                                 Label { objectName: "windowArrangementWindowTitle"; text: title; color: settings.palette["#efedf1"]; font.pixelSize: 11; elide: Text.ElideRight; Layout.fillWidth: true }
                                 Label { text: executable; color: settings.palette["#858692"]; font.pixelSize: 9; elide: Text.ElideMiddle; Layout.fillWidth: true }
                             }
-                            Label { text: monitor; color: settings.palette["#aaaab4"]; font.pixelSize: 9; Layout.preferredWidth: 100; elide: Text.ElideRight }
+                            Label { text: monitorLabel; color: settings.palette["#aaaab4"]; font.pixelSize: 9; Layout.preferredWidth: Math.min(320, windowList.width * 0.3); elide: Text.ElideRight; ToolTip.visible: monitorHover.hovered; ToolTip.text: monitorLabel + "\n" + monitor; HoverHandler { id: monitorHover } }
                         }
                     MouseArea {
                             anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.bottom: parent.bottom
@@ -150,7 +179,7 @@ Item {
                             width: previewList.width
                             objectName: "windowArrangementPreviewDelegate"
                             required property int index; required property string executable; required property string titleRule
-                            required property string monitor; required property bool monitorMissing; required property string status; required property string resolvedId
+                            required property string monitor; required property string monitorLabel; required property bool monitorMissing; required property string status; required property string resolvedId
                             property int slotIndex: index
                             required property var candidates
                             Layout.fillWidth: true; height: status === "Ambiguous" || status === "Resolved" ? 70 : 53; radius: 7; color: settings.palette["#202127"]
@@ -158,7 +187,7 @@ Item {
                                 anchors.fill: parent; anchors.margins: 7; spacing: 4
                                 RowLayout {
                                     Layout.fillWidth: true
-                                    Label { text: status + (monitorMissing ? " · monitor missing" : "") + " · " + monitor; color: status === "Missing" ? settings.palette["#e7b879"] : status === "Ambiguous" ? settings.palette["#e7b879"] : settings.palette["#74d3aa"]; font.pixelSize: 9; Layout.fillWidth: true; elide: Text.ElideRight }
+                                    Label { text: status + " · " + monitorLabel; color: status === "Missing" ? settings.palette["#e7b879"] : status === "Ambiguous" ? settings.palette["#e7b879"] : settings.palette["#74d3aa"]; font.pixelSize: 9; Layout.fillWidth: true; elide: Text.ElideRight }
                                     TextField { Layout.preferredWidth: 180; placeholderText: "Optional title contains"; text: titleRule; onEditingFinished: windowArrangements.setTitleRule(windowArrangements.selectedLayoutId, slotIndex, text) }
                                 }
                                 RowLayout {

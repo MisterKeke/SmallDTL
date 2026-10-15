@@ -15,6 +15,7 @@
 #include <QSet>
 #include <cmath>
 #include <utility>
+#include <vector>
 #include <QUuid>
 #include <QtConcurrent/QtConcurrentRun>
 
@@ -28,6 +29,40 @@
 namespace {
 QString makeId(){return QUuid::createUuid().toString(QUuid::WithoutBraces);}
 QString normalizedExecutable(const QString &path){return WindowArrangementMatching::identity(path);}
+#ifdef Q_OS_WIN
+struct DisplayName { QString name; QString identity; };
+QHash<QString,DisplayName> displayNames()
+{
+    for (int attempt=0;attempt<3;++attempt) {
+        UINT32 pathCount=0,modeCount=0;
+        if (GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS,&pathCount,&modeCount)!=ERROR_SUCCESS)
+            break;
+        std::vector<DISPLAYCONFIG_PATH_INFO> paths(pathCount);
+        std::vector<DISPLAYCONFIG_MODE_INFO> modes(modeCount);
+        const LONG status=QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS,&pathCount,paths.data(),
+                                             &modeCount,modes.data(),nullptr);
+        if (status==ERROR_INSUFFICIENT_BUFFER) continue;
+        if (status!=ERROR_SUCCESS) break;
+        QHash<QString,DisplayName> names;
+        for (UINT32 i=0;i<pathCount;++i) {
+            DISPLAYCONFIG_SOURCE_DEVICE_NAME source{};
+            source.header={DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME,sizeof(source),
+                           paths[i].sourceInfo.adapterId,paths[i].sourceInfo.id};
+            DISPLAYCONFIG_TARGET_DEVICE_NAME target{};
+            target.header={DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME,sizeof(target),
+                           paths[i].targetInfo.adapterId,paths[i].targetInfo.id};
+            if (DisplayConfigGetDeviceInfo(&source.header)!=ERROR_SUCCESS ||
+                DisplayConfigGetDeviceInfo(&target.header)!=ERROR_SUCCESS) continue;
+            const QString device=QString::fromWCharArray(source.viewGdiDeviceName).toCaseFolded();
+            if (!names.contains(device))
+                names.insert(device,{QString::fromWCharArray(target.monitorFriendlyDeviceName).trimmed(),
+                                     QString::fromWCharArray(target.monitorDevicePath)});
+        }
+        return names;
+    }
+    return {};
+}
+#endif
 QVariantMap slotToMap(const WindowLayoutSlot &slot,int index){
     return {{QStringLiteral("index"),index},{QStringLiteral("executable"),slot.executable},
             {QStringLiteral("titleRule"),slot.titleRule},{QStringLiteral("monitor"),slot.monitor},
@@ -62,9 +97,9 @@ QVariant WindowArrangementManager::data(const QModelIndex &index,int role)const{
     const ArrangementWindow &w=m_windows.at(index.row());
     switch(role){case WindowIdRole:return QString::number(w.handle);case TitleRole:return w.title;
     case ExecutableRole:return w.executable;case MonitorRole:return w.monitor;case SelectedRole:return w.selected;
-    case MaximizeRole:return w.maximized;default:return{};}
+    case MaximizeRole:return w.maximized;case MonitorLabelRole:return monitorLabel(w.monitor);default:return{};}
 }
-QHash<int,QByteArray> WindowArrangementManager::roleNames()const{return{{WindowIdRole,"windowId"},{TitleRole,"title"},{ExecutableRole,"executable"},{MonitorRole,"monitor"},{SelectedRole,"selected"},{MaximizeRole,"maximized"}};}
+QHash<int,QByteArray> WindowArrangementManager::roleNames()const{return{{WindowIdRole,"windowId"},{TitleRole,"title"},{ExecutableRole,"executable"},{MonitorRole,"monitor"},{SelectedRole,"selected"},{MaximizeRole,"maximized"},{MonitorLabelRole,"monitorLabel"}};}
 QVariantList WindowArrangementManager::layouts()const{
     QVariantList result;const QString active=m_profiles->activeProfileId();
     for(const WindowLayout &layout:m_layouts)if(layout.profileId==active)
@@ -79,8 +114,41 @@ int WindowArrangementManager::layoutIndex(const QString &id)const{for(int i=0;i<
 QVector<int> WindowArrangementManager::selectedRows()const{QVector<int> rows;for(int i=0;i<m_windows.size();++i)if(m_windows.at(i).selected)rows.append(i);return rows;}
 void WindowArrangementManager::updateMonitorList(){
     m_monitorRecords=enumerateMonitors();m_monitors.clear();
-    for(const Monitor &monitor:m_monitorRecords)m_monitors.append(QVariantMap{{QStringLiteral("device"),monitor.device},{QStringLiteral("name"),monitor.name},{QStringLiteral("primary"),monitor.primary},{QStringLiteral("x"),monitor.workArea.x()},{QStringLiteral("y"),monitor.workArea.y()},{QStringLiteral("width"),monitor.workArea.width()},{QStringLiteral("height"),monitor.workArea.height()}});
+    for(const Monitor &monitor:m_monitorRecords)m_monitors.append(QVariantMap{{QStringLiteral("device"),monitor.device},{QStringLiteral("name"),monitorLabel(monitor.device)},{QStringLiteral("friendlyName"),monitor.name},{QStringLiteral("nickname"),monitorNickname(monitor.device)},{QStringLiteral("primary"),monitor.primary},{QStringLiteral("x"),monitor.workArea.x()},{QStringLiteral("y"),monitor.workArea.y()},{QStringLiteral("width"),monitor.workArea.width()},{QStringLiteral("height"),monitor.workArea.height()}});
     emit monitorsChanged();
+    if(!m_windows.isEmpty())emit dataChanged(index(0),index(m_windows.size()-1),{MonitorLabelRole});
+}
+
+QString WindowArrangementManager::monitorNickname(const QString &device)const{
+    for(const Monitor &monitor:m_monitorRecords)if(monitor.device==device)
+        return m_monitorNicknames.value(monitor.identity);
+    return {};
+}
+QString WindowArrangementManager::monitorLabel(const QString &device)const{
+    for(int i=0;i<m_monitorRecords.size();++i){
+        const Monitor &monitor=m_monitorRecords.at(i);if(monitor.device!=device)continue;
+        QString name=m_monitorNicknames.value(monitor.identity,monitor.name);
+        if(name.isEmpty())name=QStringLiteral("Display %1").arg(i+1);
+        int duplicates=0;
+        for(const Monitor &other:m_monitorRecords)
+            if(m_monitorNicknames.value(other.identity,other.name)==name)++duplicates;
+        if(duplicates>1)name+=QStringLiteral(" (Display %1)").arg(i+1);
+        return QStringLiteral("%1 · %2 × %3%4").arg(name).arg(monitor.bounds.width())
+            .arg(monitor.bounds.height()).arg(monitor.primary?QStringLiteral(" · Primary"):QString());
+    }
+    return QStringLiteral("Disconnected display");
+}
+bool WindowArrangementManager::setMonitorNickname(const QString &device,const QString &nickname){
+    const QString cleaned=nickname.trimmed();
+    if(cleaned.size()>120){setStatus(QStringLiteral("Monitor nicknames can contain at most 120 characters."),true);return false;}
+    const auto found=std::find_if(m_monitorRecords.cbegin(),m_monitorRecords.cend(),
+                                [&device](const Monitor &monitor){return monitor.device==device;});
+    if(found==m_monitorRecords.cend()){setStatus(QStringLiteral("The selected display is no longer available."),true);return false;}
+    const auto previous=m_monitorNicknames;
+    if(cleaned.isEmpty())m_monitorNicknames.remove(found->identity);
+    else m_monitorNicknames.insert(found->identity,cleaned);
+    if(!saveLayouts()){m_monitorNicknames=previous;return false;}
+    updateMonitorList();rebuildPreview();return true;
 }
 
 void WindowArrangementManager::refreshWindows(){
@@ -327,7 +395,7 @@ void WindowArrangementManager::rebuildPreview(){
         const Monitor monitor=monitorFor(slot.monitor);const bool monitorMissing=monitor.device!=slot.monitor;
         rows.append(QVariantMap{{QStringLiteral("index"),slotIndex},{QStringLiteral("executable"),slot.executable},
             {QStringLiteral("titleRule"),slot.titleRule},{QStringLiteral("monitor"),slot.monitor},
-            {QStringLiteral("monitorMissing"),monitorMissing},{QStringLiteral("status"),state},
+            {QStringLiteral("monitorMissing"),monitorMissing},{QStringLiteral("monitorLabel"),monitorLabel(slot.monitor)},{QStringLiteral("status"),state},
             {QStringLiteral("candidates"),candidates},{QStringLiteral("resolvedId"),stillCandidate?QString::number(resolved):QString()}});
     }
     m_preview=rows;emit previewChanged();
@@ -486,6 +554,15 @@ void WindowArrangementManager::loadLayouts(){
     const QString path=QDir(AppDataPaths::root()).filePath(QStringLiteral("window-layouts.json"));QFile file(path);if(!file.exists())return;
     if(!file.open(QIODevice::ReadOnly)||file.size()>8*1024*1024){m_storeInvalid=true;setStatus(QStringLiteral("Window layouts could not be read; the original file was preserved."),true);return;}
     QJsonParseError parse;const auto doc=QJsonDocument::fromJson(file.readAll(),&parse);const auto root=doc.object();if(parse.error!=QJsonParseError::NoError||!doc.isObject()||root.value(QStringLiteral("schemaVersion")).toInt()!=1||!root.value(QStringLiteral("layouts")).isArray()){m_storeInvalid=true;setStatus(QStringLiteral("Window layout storage is invalid; the original file was preserved."),true);return;}
+    const auto nicknames=root.value(QStringLiteral("monitorNicknames"));
+    if(!nicknames.isUndefined()){
+        if(!nicknames.isObject()){m_storeInvalid=true;setStatus(QStringLiteral("Saved monitor names are invalid; the original file was preserved."),true);return;}
+        const auto names=nicknames.toObject();
+        for(auto it=names.begin();it!=names.end();++it){
+            if(it.key().isEmpty()||it.key().size()>1024||!it.value().isString()||it.value().toString().trimmed().isEmpty()||it.value().toString().size()>120){m_storeInvalid=true;m_monitorNicknames.clear();setStatus(QStringLiteral("Saved monitor names are invalid; the original file was preserved."),true);return;}
+            m_monitorNicknames.insert(it.key(),it.value().toString());
+        }
+    }
     QSet<QString> ids;const auto array=root.value(QStringLiteral("layouts")).toArray();if(array.size()>500){m_storeInvalid=true;setStatus(QStringLiteral("Window layout file exceeds the supported limit."),true);return;}
     for(const auto &value:array){WindowLayout layout;if(!value.isObject()||!parseLayout(value.toObject(),&layout)||ids.contains(layout.id)){m_storeInvalid=true;m_layouts.clear();setStatus(QStringLiteral("Some saved window layouts are invalid; the original file was preserved."),true);return;}ids.insert(layout.id);m_layouts.append(layout);
     }
@@ -493,7 +570,8 @@ void WindowArrangementManager::loadLayouts(){
 bool WindowArrangementManager::saveLayouts()const{
     if(m_storeInvalid){const_cast<WindowArrangementManager*>(this)->setStatus(QStringLiteral("Window layouts cannot be changed until the invalid saved file is repaired; the original was preserved."),true);return false;}
     QJsonArray layouts;for(const auto &layout:m_layouts)layouts.append(serializeLayout(layout));
-    const QByteArray data=QJsonDocument(QJsonObject{{QStringLiteral("schemaVersion"),1},{QStringLiteral("layouts"),layouts}}).toJson(QJsonDocument::Indented);
+    QJsonObject names;for(auto it=m_monitorNicknames.cbegin();it!=m_monitorNicknames.cend();++it)names.insert(it.key(),it.value());
+    const QByteArray data=QJsonDocument(QJsonObject{{QStringLiteral("schemaVersion"),1},{QStringLiteral("layouts"),layouts},{QStringLiteral("monitorNicknames"),names}}).toJson(QJsonDocument::Indented);
     if(data.size()>8*1024*1024){const_cast<WindowArrangementManager*>(this)->setStatus(QStringLiteral("Saved window layouts exceed the 8 MiB storage limit."),true);return false;}
     QSaveFile file(QDir(AppDataPaths::root()).filePath(QStringLiteral("window-layouts.json")));if(!file.open(QIODevice::WriteOnly)||file.write(data)!=data.size()||!file.commit()){const_cast<WindowArrangementManager*>(this)->setStatus(QStringLiteral("Could not save window layouts: %1").arg(file.errorString()),true);return false;}return true;
 }
@@ -501,8 +579,9 @@ bool WindowArrangementManager::saveLayouts()const{
 QVector<WindowArrangementManager::Monitor> WindowArrangementManager::enumerateMonitors(){
     QVector<Monitor> result;
 #ifdef Q_OS_WIN
-    struct Context{QVector<Monitor>*items;};Context context{&result};
-    EnumDisplayMonitors(nullptr,nullptr,[](HMONITOR handle,HDC,LPRECT,LPARAM data)->BOOL{auto *ctx=reinterpret_cast<Context*>(data);MONITORINFOEXW info{};info.cbSize=sizeof(info);if(!GetMonitorInfoW(handle,&info))return TRUE;Monitor m;m.device=QString::fromWCharArray(info.szDevice);m.name=m.device;m.bounds=QRect(info.rcMonitor.left,info.rcMonitor.top,info.rcMonitor.right-info.rcMonitor.left,info.rcMonitor.bottom-info.rcMonitor.top);m.workArea=QRect(info.rcWork.left,info.rcWork.top,info.rcWork.right-info.rcWork.left,info.rcWork.bottom-info.rcWork.top);m.primary=(info.dwFlags&MONITORINFOF_PRIMARY)!=0;ctx->items->append(m);return TRUE;},reinterpret_cast<LPARAM>(&context));
+    const auto names=displayNames();
+    struct Context{QVector<Monitor>*items;const QHash<QString,DisplayName>*names;};Context context{&result,&names};
+    EnumDisplayMonitors(nullptr,nullptr,[](HMONITOR handle,HDC,LPRECT,LPARAM data)->BOOL{auto *ctx=reinterpret_cast<Context*>(data);MONITORINFOEXW info{};info.cbSize=sizeof(info);if(!GetMonitorInfoW(handle,&info))return TRUE;Monitor m;m.device=QString::fromWCharArray(info.szDevice);const auto name=ctx->names->value(m.device.toCaseFolded());m.name=name.name;m.identity=name.identity.isEmpty()?m.device:name.identity;m.bounds=QRect(info.rcMonitor.left,info.rcMonitor.top,info.rcMonitor.right-info.rcMonitor.left,info.rcMonitor.bottom-info.rcMonitor.top);m.workArea=QRect(info.rcWork.left,info.rcWork.top,info.rcWork.right-info.rcWork.left,info.rcWork.bottom-info.rcWork.top);m.primary=(info.dwFlags&MONITORINFOF_PRIMARY)!=0;ctx->items->append(m);return TRUE;},reinterpret_cast<LPARAM>(&context));
 #endif
     return result;
 }

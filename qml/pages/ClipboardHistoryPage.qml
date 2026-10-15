@@ -41,6 +41,7 @@ Item {
             ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
             delegate: Rectangle {
                 id: entry
+                objectName: "clipboardHistoryEntry"
                 required property string entryId
                 required property string contentType
                 required property string capturedAt
@@ -51,7 +52,10 @@ Item {
                 required property bool missing
                 required property double sizeBytes
                 width: ListView.view.width
-                implicitHeight: contentType === "image" ? 136 : 112
+                implicitHeight: Math.max(112, historyActions.implicitHeight + 22,
+                                         historyDetails.implicitHeight + 22,
+                                         historySaveActions.visible ? historySaveActions.implicitHeight + 22 : 0,
+                                         contentType === "image" ? 130 : 0)
                 radius: 12
                 color: rowMouse.containsMouse ? settings.palette["#22232a"] : settings.palette["#191a20"]
                 border.color: settings.palette["#2d2e37"]
@@ -74,6 +78,7 @@ Item {
                         Layout.preferredHeight: 108
                         fillMode: Image.PreserveAspectFit
                         source: entry.imageUrl
+                        sourceSize: Qt.size(232, 216)
                         asynchronous: true
                         cache: false
                         Rectangle { anchors.fill: parent; color: "transparent"; border.color: settings.palette["#383942"]; visible: entry.contentType === "image" }
@@ -81,6 +86,7 @@ Item {
                     }
 
                     ColumnLayout {
+                        id: historyDetails
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         spacing: 6
@@ -90,10 +96,11 @@ Item {
                             Label { Layout.fillWidth: true; text: entry.pinned ? "Pinned" : ""; color: settings.palette["#e7b879"]; font.pixelSize: 10; horizontalAlignment: Text.AlignRight }
                         }
                         Label {
+                            objectName: "clipboardHistoryPreview"
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                             text: entry.missing ? (entry.contentType === "files" ? "Some referenced files are missing" : "History image payload is missing") : entry.preview
-                            color: entry.missing ? settings.palette["#ff8d9c"] : settings.palette["#dedde2"]
+                            color: entry.missing ? settings.palette["#ff8d9c"] : settings.palette["#dedde3"]
                             font.pixelSize: 11
                             wrapMode: Text.WrapAnywhere
                             maximumLineCount: 3
@@ -103,6 +110,8 @@ Item {
                     }
 
                     ColumnLayout {
+                        id: historyActions
+                        objectName: "clipboardHistoryActions"
                         spacing: 2
                         Button { text: entry.pinned ? "Unpin" : "Pin"; onClicked: clipboardHistory.setPinned(entry.entryId, !entry.pinned) }
                         Button { text: "Copy"; onClicked: clipboardHistory.restoreEntry(entry.entryId) }
@@ -110,6 +119,7 @@ Item {
                     }
 
                     ColumnLayout {
+                        id: historySaveActions
                         visible: entry.contentType === "image"
                         spacing: 4
                         ComboBox {
