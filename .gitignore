@@ -1,0 +1,12 @@
+# Build and portable-package outputs
+/build/
+/build-*/
+/out/
+
+# Qt Creator's machine-specific settings
+/.qtcreator/
+*.user
+*.user.*
+
+# Local CMake presets (keep shared CMakePresets.json versionable)
+/CMakeUserPresets.json
