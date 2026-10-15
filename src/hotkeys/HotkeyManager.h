@@ -17,6 +17,7 @@ class HotkeyManager final : public QAbstractListModel, public QAbstractNativeEve
     Q_PROPERTY(int registeredCount READ registeredCount NOTIFY registrationStatusesChanged)
     Q_PROPERTY(bool globalScope READ globalScope WRITE setGlobalScope NOTIFY assignmentsChanged)
     Q_PROPERTY(QString clipboardHistoryStatus READ clipboardHistoryStatus NOTIFY registrationStatusesChanged)
+    Q_PROPERTY(QString fileShelfStatus READ fileShelfStatus NOTIFY registrationStatusesChanged)
 
 public:
     enum Role {
@@ -45,6 +46,7 @@ public:
     Q_INVOKABLE void setRecording(bool recording);
     Q_INVOKABLE QString activationStatus(const QString &profileId) const;
     QString clipboardHistoryStatus() const;
+    QString fileShelfStatus() const;
     bool isRegistered(const QString &id) const;
     int registeredCount() const { return m_bindingByNativeId.size(); }
     int nativeIdFor(const QString &id) const;
@@ -63,6 +65,7 @@ signals:
     void actionTriggered(const QString &actionType, const QString &targetProfileId,
                          const QString &sequenceId);
     void clipboardHistoryTriggered();
+    void fileShelfTriggered();
     void hotkeyTriggered(const QString &description);
     void registrationFailed(const QString &message);
 

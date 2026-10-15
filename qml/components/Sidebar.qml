@@ -50,6 +50,7 @@ Rectangle {
                 { name: "Dashboard", glyph: "◫" },
                 { name: "Screenshots", glyph: "▧" },
                 { name: "Clipboard History", glyph: "▤" },
+                { name: "File Shelf", glyph: "▣" },
                 { name: "Hotkeys", glyph: "⌘" },
                 { name: "Profiles", glyph: "◉" },
                 { name: "Actions", glyph: "ϟ" }

@@ -4,10 +4,11 @@ A local Windows productivity application built with C++20, Qt 6/QML, WinAPI, and
 
 ## Features
 
-- Seven pages: Dashboard, Screenshots, Clipboard History, Hotkeys, Profiles, Actions, Settings; dark/light/system appearance and a configurable accent.
+- Eight pages: Dashboard, Screenshots, Clipboard History, File Shelf, Hotkeys, Profiles, Actions, Settings; dark/light/system appearance and a configurable accent.
 - Clipboard saving from Screenshots, Ctrl+V, tray, or a configured hotkey. Text paste remains functional in editors/dialogs.
 - Optional automatic saving of images copied from other apps, with a tray pause/resume action, duplicate-content filtering, and an optional automatic tag. Manual saves remain available; app-owned clipboard copies are ignored.
 - Clipboard history for copied text, images, and file references, with a searchable page and configurable global popup shortcut. Entries can be restored to the clipboard, pinned, deleted, or explicitly saved to the screenshot gallery with an optional tag.
+- File shelf for drag-and-drop or dialog-added file/folder references, with Unicode-safe duplicate checks, availability details, selection, open/copy-path actions, native file URL dragging, and a configurable compact-panel shortcut. Copy and Move to folder run in the background and preview skip/rename/explicit replacement choices; removing shelf references never deletes source files.
 - Destination priority: session folder, active profile folder, general default. Unavailable destinations produce errors without redirection.
 - Validated filename templates, Unicode paths, and a no-replace PNG commit. Original Windows screenshots remain untouched.
 - SQLite-backed screenshot records and tags, with gallery filtering, checkboxes, Ctrl/Shift multi-selection, Select All, and transactional mixed-state bulk tagging.
@@ -36,7 +37,9 @@ Data uses Qt's application-data directory, not the executable folder: settings a
 
 Clipboard history captures text, clipboard images, and file URLs from external clipboard changes. It does not record SmallDTL's own clipboard writes. The default popup shortcut is Ctrl+Shift+V and can be changed in Settings; native registration status appears beside the recorder. Restore copies the selected content to the clipboard only, without typing or pasting into another application. File references keep their original URLs; missing local files are reported and neither copied nor deleted. Saving a history image to the gallery creates a separate PNG and gallery record. History payloads are separate from gallery files. Age, count, and image-storage limits are configurable; ordinary cleanup removes oldest unpinned entries, while pins are preserved even when they exceed configured limits. Clear History also clears pinned entries. Pause/resume applies to history capture and is available from the tray.
 
-The screenshot database uses versioned SQLite migrations (schema 5), foreign-key enforcement, stable screenshot IDs, and unique tag names and screenshot-tag pairs. Clipboard history records use unique content fingerprints and stable IDs. Renames update paths without changing IDs or tags. Removing gallery membership removes the database record and its assignments while leaving the image on disk.
+The File Shelf stores only source paths and display metadata in SQLite. Add files/folders through the buttons or by dropping them onto the shelf. The default global shortcut is Ctrl+Shift+F. Shelf selection supports checkboxes, Ctrl-click, Shift-click, and Select All. The compact popup can open items and locations, copy paths, and start a native file URL drag for compatible Windows applications. Copy/Move to folder shows destination-name collisions and applies per-item skip, rename, or explicit replacement choices on a worker thread. A successful Move updates the shelf reference while retaining its stable ID. Removing a reference or clearing the shelf never removes its source; missing references stay listed and can be removed.
+
+The screenshot database uses versioned SQLite migrations (schema 6), foreign-key enforcement, stable screenshot IDs, and unique tag names and screenshot-tag pairs. Clipboard history records use unique content fingerprints and stable IDs; file-shelf references use Unicode case-folded path keys and stable IDs. Renames update paths without changing IDs or tags. Removing gallery membership removes the database record and its assignments while leaving the image on disk.
 
 Automatic clipboard records use the source label `clipboard-auto` and retain the profile ID captured at event time. Settings, including history retention and shortcut preferences, and profiles stay in JSON. The portable package carries Qt's `sqldrivers/qsqlite.dll` alongside the executable.
 
@@ -87,6 +90,7 @@ Manual Windows checklist (not implied by unit/offscreen success):
 - Edit a screenshot at several zoom levels and monitor DPI settings; verify crop bounds and drawing line widths in the saved copy. Exercise undo/redo, reset, tag inheritance, save failure, and discard confirmation.
 - Use physical shortcuts while other apps are focused, switch profiles, and test a binding registered by another program.
 - Copy text, images, and file references from other apps; open the history popup with its shortcut; restore, pin, search, pause, and save an image to the gallery. Rename or remove a referenced file and verify the missing-reference message and ownership boundaries.
+- Add file/folder references through dialogs and Windows drag-and-drop; verify Unicode paths, duplicate detection, persistence, and missing items. Drag selected references into Explorer or another compatible application, and exercise Copy/Move conflicts, partial failures, and shelf clearing while confirming source files are preserved except for explicit successful Move operations.
 - Minimize/close/reopen via the real tray, inspect its profile menu, and exit; verify hotkey release and hidden operation.
 - Enable/disable startup in the real Windows account and sign out/in. Check the installed executable path.
 - Restart the actual app and verify restored profile, preferences, sequences, order, enabled states, and assignments.

@@ -107,6 +107,12 @@ QString HotkeyManager::clipboardHistoryStatus() const
                               {false, QStringLiteral("Not assigned")}).text;
 }
 
+QString HotkeyManager::fileShelfStatus() const
+{
+    return m_statusById.value(QStringLiteral("file-shelf"),
+                              {false, QStringLiteral("Not assigned")}).text;
+}
+
 bool HotkeyManager::isRegistered(const QString &id) const
 {
     return nativeIdFor(id)>0;
@@ -149,6 +155,9 @@ bool HotkeyManager::nativeEventFilter(const QByteArray &eventType, void *message
     if (binding.actionType == QStringLiteral("clipboardHistory")) {
         emit hotkeyTriggered(binding.description);
         emit clipboardHistoryTriggered();
+    } else if (binding.actionType == QStringLiteral("fileShelf")) {
+        emit hotkeyTriggered(binding.description);
+        emit fileShelfTriggered();
     } else if (binding.isActivation) {
         emit hotkeyTriggered(QStringLiteral("Activate %1").arg(binding.description));
         emit profileActivationRequested(binding.profileId);
@@ -190,6 +199,15 @@ void HotkeyManager::refreshRegistrations()
             desired.append(Binding{id, QStringLiteral("global"),
                                    QStringLiteral("Open clipboard history (%1)").arg(HotkeyUtils::formatShortcut(key, modifiers)),
                                    key, modifiers, false, QStringLiteral("clipboardHistory"), {}, {}});
+        const int shelfKey = m_settings->fileShelfShortcutKey();
+        const int shelfModifiers = m_settings->fileShelfShortcutModifiers();
+        const QString shelfId = QStringLiteral("file-shelf");
+        if (shelfKey == 0)
+            statuses.insert(shelfId, {false, QStringLiteral("Not assigned")});
+        else
+            desired.append(Binding{shelfId, QStringLiteral("global"),
+                                   QStringLiteral("Open file shelf (%1)").arg(HotkeyUtils::formatShortcut(shelfKey, shelfModifiers)),
+                                   shelfKey, shelfModifiers, false, QStringLiteral("fileShelf"), {}, {}});
     }
     const bool canRegister=m_hasWindow && !m_window.isNull() && !m_recording;
     // Retain unchanged native registrations, especially application-wide bindings.
@@ -206,10 +224,10 @@ void HotkeyManager::refreshRegistrations()
     for(const auto &binding:desired) {
         if(!canRegister){statuses.insert(binding.id,{false,m_recording?QStringLiteral("Paused while recording"):QStringLiteral("Waiting for application window")});continue;}
         int existing=0;for(auto it=m_bindingByNativeId.begin();it!=m_bindingByNativeId.end();++it)if(it->id==binding.id){existing=it.key();break;}
-        if(existing){statuses.insert(binding.id,{true,(binding.isActivation || binding.actionType==QStringLiteral("clipboardHistory"))?QStringLiteral("Registered globally"):QStringLiteral("Registered")});continue;}
+        if(existing){statuses.insert(binding.id,{true,(binding.isActivation || binding.actionType==QStringLiteral("clipboardHistory") || binding.actionType==QStringLiteral("fileShelf"))?QStringLiteral("Registered globally"):QStringLiteral("Registered")});continue;}
         while(m_bindingByNativeId.contains(m_nextNativeId))m_nextNativeId=m_nextNativeId%0xbfff+1;
         const int nativeId=m_nextNativeId;m_nextNativeId=m_nextNativeId%0xbfff+1;
-        if(registerBinding(binding,nativeId)){m_bindingByNativeId.insert(nativeId,binding);statuses.insert(binding.id,{true,(binding.isActivation || binding.actionType==QStringLiteral("clipboardHistory"))?QStringLiteral("Registered globally"):QStringLiteral("Registered")});}
+        if(registerBinding(binding,nativeId)){m_bindingByNativeId.insert(nativeId,binding);statuses.insert(binding.id,{true,(binding.isActivation || binding.actionType==QStringLiteral("clipboardHistory") || binding.actionType==QStringLiteral("fileShelf"))?QStringLiteral("Registered globally"):QStringLiteral("Registered")});}
         else {statuses.insert(binding.id,{false,QStringLiteral("Unavailable or conflicts with another hotkey")});if(m_statusById.value(binding.id).text!=statuses.value(binding.id).text)failures.append(binding.description);}
     }
     beginResetModel();

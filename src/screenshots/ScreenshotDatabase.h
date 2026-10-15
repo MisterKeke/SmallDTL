@@ -45,6 +45,17 @@ struct ClipboardHistoryRecord
     bool missing = false;
 };
 
+struct FileShelfRecord
+{
+    QString id;
+    QString path;
+    QString addedAt;
+    QString displayName;
+    QString sourceFolder;
+    QString itemType;
+    qint64 sizeBytes = 0;
+};
+
 class ScreenshotDatabase final : public QObject
 {
 public:
@@ -83,12 +94,20 @@ public:
     bool deleteClipboardHistory(const QString &id, ClipboardHistoryRecord *removed = nullptr);
     bool deleteClipboardHistory(const QStringList &ids, QVector<ClipboardHistoryRecord> *removed = nullptr);
 
+    QVector<FileShelfRecord> fileShelfEntries() const;
+    bool addFileShelfEntries(const QVector<FileShelfRecord> &records, int *inserted = nullptr,
+                             int *duplicates = nullptr);
+    bool removeFileShelfEntries(const QStringList &ids, int *removed = nullptr);
+    bool clearFileShelf(int *removed = nullptr);
+    bool updateFileShelfPath(const QString &id, const QString &path);
+
 private:
     bool checkThread() const;
     bool migrateSchema();
     bool importLegacyIndex(const QString &legacyIndexPath);
     bool transactionError(const QString &context, const QString &detail = {}) const;
     QString normalizedPath(const QString &path) const;
+    QString normalizedPathKey(const QString &path) const;
 
     QString m_databasePath;
     QString m_connectionName;

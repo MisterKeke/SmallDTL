@@ -65,6 +65,18 @@ Item {
                     }
                     RowLayout {
                         Layout.fillWidth: true
+                        Label { text: "File shelf shortcut"; Layout.preferredWidth: 120 }
+                        HotkeyRecorder {
+                            objectName: "fileShelfShortcutRecorder"
+                            key: settings.fileShelfShortcutKey
+                            modifiers: settings.fileShelfShortcutModifiers
+                            onRecorded: function(keyValue, modifierValue) { app.setFileShelfShortcut(keyValue, modifierValue) }
+                            onCleared: app.setFileShelfShortcut(0, 0)
+                        }
+                        Label { text: hotkeys.fileShelfStatus; color: hotkeys.fileShelfStatus === "Registered globally" ? settings.palette["#74d3aa"] : settings.palette["#e7b879"]; font.pixelSize: 10 }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
                         Label { text: "Keep unpinned entries"; Layout.preferredWidth: 170 }
                         SpinBox { objectName: "historyRetentionDays"; from: 1; to: 3650; value: settings.clipboardHistoryRetentionDays; onValueModified: settings.setClipboardHistoryRetentionDays(value) }
                         Label { text: "days" }

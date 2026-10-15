@@ -29,12 +29,13 @@ bool isReservedPasteShortcut(int key, int modifiers)
 ApplicationController::ApplicationController(QObject *parent)
     : QObject(parent), m_settings(this), m_profiles(&m_settings, this),
       m_screenshots(&m_profiles, &m_settings, this),
-      m_clipboardHistory(&m_screenshots, &m_settings, this), m_actions(&m_profiles, this),
+      m_clipboardHistory(&m_screenshots, &m_settings, this), m_fileShelf(&m_screenshots, this), m_actions(&m_profiles, this),
       m_actionRunner(&m_actions, &m_profiles, &m_screenshots, this), m_hotkeys(&m_profiles, &m_settings, this)
 {
     createTrayIcon();
     connect(&m_settings,&SettingsManager::errorOccurred,this,[this](const QString &message){setStatus(message,true,true);});
     connect(&m_hotkeys,&HotkeyManager::registrationFailed,this,[this](const QString &message){setStatus(message,true,true);});
+    connect(&m_hotkeys, &HotkeyManager::fileShelfTriggered, this, &ApplicationController::toggleFileShelfPopup);
     connect(QCoreApplication::instance(),&QCoreApplication::aboutToQuit,this,[this]{m_actionRunner.cancel();m_hotkeys.setRecording(true);m_clipboardHistory.finishPendingSaves();m_screenshots.finishPendingSaves();});
     const QStringList startup=m_settings.startupMessages()+m_profiles.startupMessages()+m_actions.startupMessages();
     if(!startup.isEmpty())QTimer::singleShot(0,this,[this,startup]{setStatus(startup.join(QLatin1Char('\n')),true,true);});
@@ -113,6 +114,7 @@ SettingsManager *ApplicationController::settings() { return &m_settings; }
 ProfileManager *ApplicationController::profiles() { return &m_profiles; }
 ScreenshotManager *ApplicationController::screenshots() { return &m_screenshots; }
 ClipboardHistoryManager *ApplicationController::clipboardHistory() { return &m_clipboardHistory; }
+FileShelfManager *ApplicationController::fileShelf() { return &m_fileShelf; }
 HotkeyManager *ApplicationController::hotkeys() { return &m_hotkeys; }
 ActionManager *ApplicationController::actions() { return &m_actions; }
 ActionSequenceRunner *ApplicationController::actionRunner() { return &m_actionRunner; }
@@ -245,6 +247,10 @@ bool ApplicationController::setClipboardHistoryShortcut(int key, int modifiers)
         setStatus(QStringLiteral("Choose a supported shortcut with at least one modifier."), true);
         return false;
     }
+    if (key != 0 && key == m_settings.fileShelfShortcutKey() && modifiers == m_settings.fileShelfShortcutModifiers()) {
+        setStatus(QStringLiteral("That shortcut is already assigned to the file shelf."), true);
+        return false;
+    }
     if (key != 0) {
         auto conflicts = [key, modifiers](const QVector<HotkeyAssignment> &assignments) {
             for (const HotkeyAssignment &assignment : assignments)
@@ -264,6 +270,51 @@ bool ApplicationController::setClipboardHistoryShortcut(int key, int modifiers)
         }
     }
     if (!m_settings.setClipboardHistoryShortcut(key, modifiers))
+        return false;
+    return true;
+}
+
+void ApplicationController::toggleFileShelfPopup()
+{
+    setFileShelfPopupVisible(!m_fileShelfPopupVisible);
+}
+
+void ApplicationController::setFileShelfPopupVisible(bool visible)
+{
+    if (m_fileShelfPopupVisible == visible)
+        return;
+    m_fileShelfPopupVisible = visible;
+    if (visible)
+        m_fileShelf.refresh();
+    emit fileShelfPopupVisibleChanged();
+}
+
+bool ApplicationController::setFileShelfShortcut(int key, int modifiers)
+{
+    if (key != 0 && !HotkeyManager::isSupportedKey(key, modifiers)) {
+        setStatus(QStringLiteral("Choose a supported shortcut with at least one modifier."), true);
+        return false;
+    }
+    if (key != 0) {
+        auto conflicts = [key, modifiers](const QVector<HotkeyAssignment> &assignments) {
+            for (const HotkeyAssignment &assignment : assignments)
+                if (assignment.enabled && assignment.key == key && assignment.modifiers == modifiers)
+                    return true;
+            return false;
+        };
+        bool conflict = (m_settings.clipboardHistoryShortcutKey() == key &&
+                         m_settings.clipboardHistoryShortcutModifiers() == modifiers) ||
+                        conflicts(m_profiles.globalProfile().hotkeys);
+        for (const Profile &profile : m_profiles.profiles())
+            conflict = conflict || (profile.activationKey == key && profile.activationModifiers == modifiers) ||
+                       conflicts(profile.hotkeys);
+        if (conflict || (m_profiles.globalProfile().activationKey == key &&
+                         m_profiles.globalProfile().activationModifiers == modifiers)) {
+            setStatus(QStringLiteral("That shortcut is already assigned. Choose a different combination."), true);
+            return false;
+        }
+    }
+    if (!m_settings.setFileShelfShortcut(key, modifiers))
         return false;
     return true;
 }
@@ -527,6 +578,8 @@ void ApplicationController::rebuildTrayMenu()
     connect(historyPauseAction, &QAction::triggered, this, [this] {
         m_clipboardHistory.setPaused(!m_clipboardHistory.paused());
     });
+    QAction *shelfAction = m_trayMenu->addAction(QStringLiteral("Open File Shelf"));
+    connect(shelfAction, &QAction::triggered, this, [this] { showPage(QStringLiteral("File Shelf")); });
     const bool autoEnabled = m_screenshots.automaticClipboardSavingEnabled();
     const bool paused = m_screenshots.automaticClipboardSavingPaused();
     QAction *autoSaveAction = m_trayMenu->addAction(
@@ -574,6 +627,9 @@ bool ApplicationController::hasBindingConflict(int key, int modifiers, const QSt
 {
     if (exceptId != QStringLiteral("clipboard-history") && m_settings.clipboardHistoryShortcutKey() == key &&
         m_settings.clipboardHistoryShortcutModifiers() == modifiers)
+        return true;
+    if (exceptId != QStringLiteral("file-shelf") && m_settings.fileShelfShortcutKey() == key &&
+        m_settings.fileShelfShortcutModifiers() == modifiers)
         return true;
     QString exceptProfileId;
     if (exceptId.startsWith(QStringLiteral("activation:")))

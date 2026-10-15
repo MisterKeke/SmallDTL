@@ -41,6 +41,7 @@ ApplicationWindow {
             app.hideToTray()
         }
     }
+    onVisibleChanged: if (!visible) app.setFileShelfPopupVisible(false)
 
     RowLayout {
         anchors.fill: parent
@@ -82,6 +83,7 @@ ApplicationWindow {
                         Label {
                             text: app.currentPage === "Screenshots" ? "Capture and organize clipboard images"
                                   : app.currentPage === "Clipboard History" ? "Find and restore copied text, images, and file references"
+                                  : app.currentPage === "File Shelf" ? "Keep reusable file and folder references together"
                                   : app.currentPage === "Profiles" ? "Keep shortcuts and destinations organized"
                                   : app.currentPage === "Hotkeys" ? (hotkeys.globalScope ? "Shortcuts available across every profile" : "Global shortcuts for the active profile")
                                   : app.currentPage === "Actions" ? "Compose ordered actions and run them from a shortcut"
@@ -165,7 +167,8 @@ ApplicationWindow {
                     Layout.fillHeight: true
                     currentIndex: app.currentPage === "Dashboard" ? 0 : app.currentPage === "Screenshots" ? 1
                                   : app.currentPage === "Profiles" ? 2 : app.currentPage === "Hotkeys" ? 3
-                                  : app.currentPage === "Actions" ? 4 : app.currentPage === "Settings" ? 5 : 6
+                                  : app.currentPage === "Actions" ? 4 : app.currentPage === "Settings" ? 5
+                                  : app.currentPage === "Clipboard History" ? 6 : 7
                     DashboardPage {}
                     ScreenshotsPage {}
                     ProfilesPage {}
@@ -173,6 +176,7 @@ ApplicationWindow {
                     ActionsPage {}
                     SettingsPage {}
                     ClipboardHistoryPage {}
+                    FileShelfPage {}
                 }
             }
         }
@@ -264,5 +268,29 @@ ApplicationWindow {
                 Label { anchors.centerIn: parent; visible: clipboardHistory.count === 0; text: clipboardHistory.paused ? "History capture is paused" : "No clipboard items"; color: settings.palette["#9697a3"]; font.pixelSize: 11 }
             }
         }
+    }
+
+    Window {
+        id: fileShelfPopup
+        objectName: "fileShelfPopup"
+        visible: app.fileShelfPopupVisible
+        width: 700
+        height: 620
+        minimumWidth: 540
+        minimumHeight: 420
+        title: "File Shelf"
+        color: settings.palette["#111216"]
+        transientParent: null
+        Material.theme: settings.darkTheme ? Material.Dark : Material.Light
+        Material.accent: settings.palette["#e96782"]
+        Material.primary: settings.palette["#39222b"]
+        Material.background: settings.palette["#191a20"]
+        Material.foreground: settings.palette["#f2f1f4"]
+        flags: Qt.Tool | Qt.WindowStaysOnTopHint
+        onVisibleChanged: if (visible) { x = Math.max(0, (Screen.width - width) / 2); y = Math.max(0, (Screen.height - height) / 3); fileShelf.refresh() }
+        onClosing: app.setFileShelfPopupVisible(false)
+
+        Shortcut { sequence: "Escape"; context: Qt.WindowShortcut; onActivated: app.setFileShelfPopupVisible(false) }
+        FileShelfPage { anchors.fill: parent; anchors.margins: 12; compact: true }
     }
 }

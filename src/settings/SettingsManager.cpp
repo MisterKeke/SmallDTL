@@ -51,6 +51,8 @@ void SettingsManager::load() {
     m_data.insert(QStringLiteral("automaticClipboardSaveTagId"), QString());
     m_data.insert(QStringLiteral("clipboardHistoryShortcutKey"), int(Qt::Key_V));
     m_data.insert(QStringLiteral("clipboardHistoryShortcutModifiers"), int(Qt::ControlModifier | Qt::ShiftModifier));
+    m_data.insert(QStringLiteral("fileShelfShortcutKey"), int(Qt::Key_F));
+    m_data.insert(QStringLiteral("fileShelfShortcutModifiers"), int(Qt::ControlModifier | Qt::ShiftModifier));
     m_data.insert(QStringLiteral("clipboardHistoryRetentionDays"), 30);
     m_data.insert(QStringLiteral("clipboardHistoryRetentionCount"), 500);
     m_data.insert(QStringLiteral("clipboardHistoryStorageLimitMB"), 512);
@@ -87,6 +89,8 @@ void SettingsManager::load() {
         (stored.value(QStringLiteral("clipboardHistoryStorageLimitMB")).toInt() < 16 || stored.value(QStringLiteral("clipboardHistoryStorageLimitMB")).toInt() > 65536)) valid = false;
     if (stored.contains(QStringLiteral("clipboardHistoryShortcutKey")) && stored.value(QStringLiteral("clipboardHistoryShortcutKey")).toInt() < 0) valid = false;
     if (stored.contains(QStringLiteral("clipboardHistoryShortcutModifiers")) && stored.value(QStringLiteral("clipboardHistoryShortcutModifiers")).toInt() < 0) valid = false;
+    if (stored.contains(QStringLiteral("fileShelfShortcutKey")) && stored.value(QStringLiteral("fileShelfShortcutKey")).toInt() < 0) valid = false;
+    if (stored.contains(QStringLiteral("fileShelfShortcutModifiers")) && stored.value(QStringLiteral("fileShelfShortcutModifiers")).toInt() < 0) valid = false;
     if (!valid) {
         m_invalid = true; report(QStringLiteral("Settings are invalid or use an unsupported schema. The original is preserved; supported data is backed up before repair."));
         QDir().mkpath(fallback);
@@ -198,6 +202,14 @@ bool SettingsManager::setClipboardHistoryShortcut(int key, int modifiers) {
     QJsonObject candidate = m_data;
     candidate.insert(QStringLiteral("clipboardHistoryShortcutKey"), key);
     candidate.insert(QStringLiteral("clipboardHistoryShortcutModifiers"), modifiers);
+    return commit(candidate);
+}
+int SettingsManager::fileShelfShortcutKey() const { return m_data.value(QStringLiteral("fileShelfShortcutKey")).toInt(Qt::Key_F); }
+int SettingsManager::fileShelfShortcutModifiers() const { return m_data.value(QStringLiteral("fileShelfShortcutModifiers")).toInt(int(Qt::ControlModifier | Qt::ShiftModifier)); }
+bool SettingsManager::setFileShelfShortcut(int key, int modifiers) {
+    QJsonObject candidate = m_data;
+    candidate.insert(QStringLiteral("fileShelfShortcutKey"), key);
+    candidate.insert(QStringLiteral("fileShelfShortcutModifiers"), modifiers);
     return commit(candidate);
 }
 int SettingsManager::clipboardHistoryRetentionDays() const { return m_data.value(QStringLiteral("clipboardHistoryRetentionDays")).toInt(30); }

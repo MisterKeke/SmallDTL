@@ -6,6 +6,7 @@
 #include "../actions/ActionManager.h"
 #include "../actions/ActionSequenceRunner.h"
 #include "../clipboard/ClipboardHistoryManager.h"
+#include "../fileshelf/FileShelfManager.h"
 #include "../hotkeys/HotkeyManager.h"
 #include "../profiles/ProfileManager.h"
 #include "../screenshots/ScreenshotManager.h"
@@ -28,6 +29,7 @@ class ApplicationController final : public QObject
     Q_PROPERTY(bool actionSequenceRunning READ actionSequenceRunning NOTIFY actionSequenceRunningChanged)
     Q_PROPERTY(QString actionSequenceStatus READ actionSequenceStatus NOTIFY actionSequenceStatusChanged)
     Q_PROPERTY(bool clipboardHistoryPopupVisible READ clipboardHistoryPopupVisible WRITE setClipboardHistoryPopupVisible NOTIFY clipboardHistoryPopupVisibleChanged)
+    Q_PROPERTY(bool fileShelfPopupVisible READ fileShelfPopupVisible WRITE setFileShelfPopupVisible NOTIFY fileShelfPopupVisibleChanged)
 
 public:
     explicit ApplicationController(QObject *parent = nullptr);
@@ -37,6 +39,7 @@ public:
     ProfileManager *profiles();
     ScreenshotManager *screenshots();
     ClipboardHistoryManager *clipboardHistory();
+    FileShelfManager *fileShelf();
     HotkeyManager *hotkeys();
     ActionManager *actions();
     ActionSequenceRunner *actionRunner();
@@ -51,6 +54,7 @@ public:
     bool actionSequenceRunning() const;
     QString actionSequenceStatus() const;
     bool clipboardHistoryPopupVisible() const { return m_clipboardHistoryPopupVisible; }
+    bool fileShelfPopupVisible() const { return m_fileShelfPopupVisible; }
 
     void initializeWindow(QWindow *window);
     void showAtStartup();
@@ -64,6 +68,9 @@ public:
     Q_INVOKABLE void toggleClipboardHistoryPopup();
     Q_INVOKABLE void setClipboardHistoryPopupVisible(bool visible);
     Q_INVOKABLE bool setClipboardHistoryShortcut(int key, int modifiers);
+    Q_INVOKABLE void toggleFileShelfPopup();
+    Q_INVOKABLE void setFileShelfPopupVisible(bool visible);
+    Q_INVOKABLE bool setFileShelfShortcut(int key, int modifiers);
     Q_INVOKABLE void chooseScreenshotDestination();
     Q_INVOKABLE void useProfileScreenshotDestination();
     Q_INVOKABLE void chooseGeneralScreenshotDirectory();
@@ -99,6 +106,7 @@ signals:
     void actionSequenceRunningChanged();
     void actionSequenceStatusChanged();
     void clipboardHistoryPopupVisibleChanged();
+    void fileShelfPopupVisibleChanged();
 
 private slots:
     void rebuildTrayMenu();
@@ -115,6 +123,7 @@ private:
     ProfileManager m_profiles;
     ScreenshotManager m_screenshots;
     ClipboardHistoryManager m_clipboardHistory;
+    FileShelfManager m_fileShelf;
     ActionManager m_actions;
     ActionSequenceRunner m_actionRunner;
     HotkeyManager m_hotkeys;
@@ -126,4 +135,5 @@ private:
     QString m_statusMessage;
     bool m_statusIsError = false;
     bool m_clipboardHistoryPopupVisible = false;
+    bool m_fileShelfPopupVisible = false;
 };
