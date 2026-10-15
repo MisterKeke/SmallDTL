@@ -9,6 +9,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QSqlDatabase>
 #include <QSqlError>
 #include <QSqlQuery>
@@ -25,6 +26,18 @@ QString timestampForPath(const QFileInfo &file)
 {
     const QDateTime modified = file.exists() ? file.lastModified() : QDateTime();
     return modified.isValid() ? modified.toUTC().toString(Qt::ISODateWithMs) : QStringLiteral("");
+}
+
+QStringList fileUrlsFromJson(const QString &json)
+{
+    QStringList urls;
+    const QJsonDocument document = QJsonDocument::fromJson(json.toUtf8());
+    if (!document.isArray())
+        return urls;
+    for (const QJsonValue &value : document.array())
+        if (value.isString())
+            urls.append(value.toString());
+    return urls;
 }
 }
 
@@ -99,10 +112,10 @@ bool ScreenshotDatabase::migrateSchema()
     if (!versionQuery.exec(QStringLiteral("PRAGMA user_version")) || !versionQuery.next())
         return transactionError(QStringLiteral("Could not read screenshot database schema version"), versionQuery.lastError().text());
     int version = versionQuery.value(0).toInt();
-    if (version > 4)
+    if (version > 5)
         return transactionError(QStringLiteral("Screenshot database was created by a newer SmallDTL version"));
 
-    while (version < 4) {
+    while (version < 5) {
         if (!m_database->transaction())
             return transactionError(QStringLiteral("Could not start screenshot database migration"), m_database->lastError().text());
         QSqlQuery query(*m_database);
@@ -147,6 +160,24 @@ bool ScreenshotDatabase::migrateSchema()
                  query.exec(QStringLiteral("PRAGMA user_version = 4"));
             if (ok)
                 version = 4;
+        } else if (version == 4) {
+            ok = query.exec(QStringLiteral("CREATE TABLE clipboard_history ("
+                                           "id TEXT PRIMARY KEY NOT NULL,"
+                                           "content_type TEXT NOT NULL CHECK(content_type IN ('text','image','files')),"
+                                           "captured_at TEXT NOT NULL,"
+                                           "fingerprint TEXT NOT NULL UNIQUE,"
+                                           "text_content TEXT NOT NULL DEFAULT '',"
+                                           "file_urls TEXT NOT NULL DEFAULT '[]',"
+                                           "payload_path TEXT NOT NULL DEFAULT '',"
+                                           "size_bytes INTEGER NOT NULL DEFAULT 0 CHECK(size_bytes >= 0),"
+                                           "width INTEGER NOT NULL DEFAULT 0 CHECK(width >= 0),"
+                                           "height INTEGER NOT NULL DEFAULT 0 CHECK(height >= 0),"
+                                           "pinned INTEGER NOT NULL DEFAULT 0 CHECK(pinned IN (0,1))"
+                                           ")")) &&
+                 query.exec(QStringLiteral("CREATE INDEX clipboard_history_captured_at_idx ON clipboard_history(captured_at DESC)")) &&
+                 query.exec(QStringLiteral("PRAGMA user_version = 5"));
+            if (ok)
+                version = 5;
         }
         if (!ok) {
             const QString detail = query.lastError().text();
@@ -625,5 +656,178 @@ bool ScreenshotDatabase::setTagForScreenshots(const QStringList &screenshotIds, 
         m_database->rollback();
         return transactionError(QStringLiteral("Bulk tag update could not be committed"), detail);
     }
+    return true;
+}
+
+QVector<ClipboardHistoryRecord> ScreenshotDatabase::clipboardHistory(const QString &search) const
+{
+    QVector<ClipboardHistoryRecord> result;
+    if (!checkThread() || !m_ready)
+        return result;
+    QSqlQuery query(*m_database);
+    query.prepare(QStringLiteral("SELECT id, content_type, captured_at, fingerprint, text_content, file_urls, payload_path, size_bytes, width, height, pinned "
+                                 "FROM clipboard_history WHERE ?='' OR text_content LIKE ? OR file_urls LIKE ? "
+                                 "ORDER BY pinned DESC, captured_at DESC, id"));
+    query.addBindValue(search);
+    query.addBindValue(QStringLiteral("%") + search + QLatin1Char('%'));
+    query.addBindValue(QStringLiteral("%") + search + QLatin1Char('%'));
+    if (!query.exec()) {
+        transactionError(QStringLiteral("Could not read clipboard history"), query.lastError().text());
+        return result;
+    }
+    while (query.next()) {
+        ClipboardHistoryRecord record;
+        record.id = query.value(0).toString();
+        record.type = query.value(1).toString();
+        record.capturedAt = query.value(2).toString();
+        record.fingerprint = query.value(3).toString();
+        record.text = query.value(4).toString();
+        record.fileUrls = fileUrlsFromJson(query.value(5).toString());
+        record.payloadPath = query.value(6).toString();
+        record.sizeBytes = query.value(7).toLongLong();
+        record.width = query.value(8).toInt();
+        record.height = query.value(9).toInt();
+        record.pinned = query.value(10).toBool();
+        result.append(record);
+    }
+    return result;
+}
+
+bool ScreenshotDatabase::saveClipboardHistory(const ClipboardHistoryRecord &record, QString *id, bool *inserted)
+{
+    if (!checkThread() || !m_ready)
+        return false;
+    if (record.fingerprint.isEmpty() ||
+        !QStringList{QStringLiteral("text"), QStringLiteral("image"), QStringLiteral("files")}.contains(record.type))
+        return transactionError(QStringLiteral("Clipboard history record is invalid"));
+    if (!m_database->transaction())
+        return transactionError(QStringLiteral("Could not start clipboard history save"), m_database->lastError().text());
+    QSqlQuery existing(*m_database);
+    existing.prepare(QStringLiteral("SELECT id FROM clipboard_history WHERE fingerprint=?"));
+    existing.addBindValue(record.fingerprint);
+    if (!existing.exec()) {
+        const QString detail = existing.lastError().text();
+        m_database->rollback();
+        return transactionError(QStringLiteral("Could not check clipboard history duplicates"), detail);
+    }
+    const bool hasExisting = existing.next();
+    const QString existingId = hasExisting ? existing.value(0).toString() : QString();
+    existing.finish();
+    if (hasExisting) {
+        QSqlQuery touch(*m_database);
+        touch.prepare(QStringLiteral("UPDATE clipboard_history SET captured_at=CASE WHEN captured_at<? THEN ? ELSE captured_at END WHERE id=?"));
+        touch.addBindValue(record.capturedAt);
+        touch.addBindValue(record.capturedAt);
+        touch.addBindValue(existingId);
+        if (!touch.exec() || !m_database->commit()) {
+            const QString detail = touch.lastError().text().isEmpty() ? m_database->lastError().text() : touch.lastError().text();
+            m_database->rollback();
+            return transactionError(QStringLiteral("Could not update duplicate clipboard history entry"), detail);
+        }
+        if (id)
+            *id = existingId;
+        if (inserted)
+            *inserted = false;
+        return true;
+    }
+    QJsonArray urls;
+    for (const QString &url : record.fileUrls)
+        urls.append(url);
+    QSqlQuery insert(*m_database);
+    insert.prepare(QStringLiteral("INSERT INTO clipboard_history(id, content_type, captured_at, fingerprint, text_content, file_urls, payload_path, size_bytes, width, height, pinned) "
+                                  "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"));
+    const QString recordId = record.id.isEmpty() ? newId() : record.id;
+    insert.addBindValue(recordId);
+    insert.addBindValue(record.type);
+    insert.addBindValue(record.capturedAt);
+    insert.addBindValue(record.fingerprint);
+    insert.addBindValue(record.text.isNull() ? QStringLiteral("") : record.text);
+    insert.addBindValue(QString::fromUtf8(QJsonDocument(urls).toJson(QJsonDocument::Compact)));
+    insert.addBindValue(record.payloadPath.isNull() ? QStringLiteral("") : record.payloadPath);
+    insert.addBindValue(qMax<qint64>(0, record.sizeBytes));
+    insert.addBindValue(qMax(0, record.width));
+    insert.addBindValue(qMax(0, record.height));
+    insert.addBindValue(record.pinned);
+    if (!insert.exec() || !m_database->commit()) {
+        const QString detail = insert.lastError().text().isEmpty() ? m_database->lastError().text() : insert.lastError().text();
+        m_database->rollback();
+        return transactionError(QStringLiteral("Could not save clipboard history entry"), detail);
+    }
+    if (id)
+        *id = recordId;
+    if (inserted)
+        *inserted = true;
+    return true;
+}
+
+bool ScreenshotDatabase::setClipboardHistoryPinned(const QString &id, bool pinned)
+{
+    if (!checkThread() || !m_ready)
+        return false;
+    QSqlQuery query(*m_database);
+    query.prepare(QStringLiteral("UPDATE clipboard_history SET pinned=? WHERE id=?"));
+    query.addBindValue(pinned);
+    query.addBindValue(id);
+    if (!query.exec() || query.numRowsAffected() != 1)
+        return transactionError(QStringLiteral("Could not update clipboard history pin"), query.lastError().text());
+    return true;
+}
+
+bool ScreenshotDatabase::deleteClipboardHistory(const QString &id, ClipboardHistoryRecord *removed)
+{
+    QVector<ClipboardHistoryRecord> records;
+    if (!deleteClipboardHistory(QStringList{id}, &records))
+        return false;
+    if (records.isEmpty())
+        return transactionError(QStringLiteral("Clipboard history entry was not found"));
+    if (removed)
+        *removed = records.first();
+    return true;
+}
+
+bool ScreenshotDatabase::deleteClipboardHistory(const QStringList &ids, QVector<ClipboardHistoryRecord> *removed)
+{
+    if (!checkThread() || !m_ready)
+        return false;
+    if (ids.isEmpty())
+        return true;
+    if (!m_database->transaction())
+        return transactionError(QStringLiteral("Could not start clipboard history removal"), m_database->lastError().text());
+    QVector<ClipboardHistoryRecord> records;
+    for (const QString &id : ids) {
+        QSqlQuery find(*m_database);
+        find.prepare(QStringLiteral("SELECT id, content_type, captured_at, fingerprint, text_content, file_urls, payload_path, size_bytes, width, height, pinned FROM clipboard_history WHERE id=?"));
+        find.addBindValue(id);
+        if (!find.exec()) {
+            const QString detail = find.lastError().text();
+            m_database->rollback();
+            return transactionError(QStringLiteral("Could not read clipboard history before removal"), detail);
+        }
+        if (!find.next())
+            continue;
+        ClipboardHistoryRecord record;
+        record.id = find.value(0).toString(); record.type = find.value(1).toString();
+        record.capturedAt = find.value(2).toString(); record.fingerprint = find.value(3).toString();
+        record.text = find.value(4).toString(); record.fileUrls = fileUrlsFromJson(find.value(5).toString());
+        record.payloadPath = find.value(6).toString(); record.sizeBytes = find.value(7).toLongLong();
+        record.width = find.value(8).toInt(); record.height = find.value(9).toInt(); record.pinned = find.value(10).toBool();
+        find.finish();
+        records.append(record);
+        QSqlQuery remove(*m_database);
+        remove.prepare(QStringLiteral("DELETE FROM clipboard_history WHERE id=?"));
+        remove.addBindValue(id);
+        if (!remove.exec()) {
+            const QString detail = remove.lastError().text();
+            m_database->rollback();
+            return transactionError(QStringLiteral("Could not remove clipboard history entry"), detail);
+        }
+    }
+    if (!m_database->commit()) {
+        const QString detail = m_database->lastError().text();
+        m_database->rollback();
+        return transactionError(QStringLiteral("Could not commit clipboard history removal"), detail);
+    }
+    if (removed)
+        *removed = records;
     return true;
 }

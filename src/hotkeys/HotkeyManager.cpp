@@ -1,6 +1,7 @@
 #include "HotkeyManager.h"
 
 #include "HotkeyUtils.h"
+#include "../settings/SettingsManager.h"
 
 #include <QCoreApplication>
 #include <QKeySequence>
@@ -14,10 +15,17 @@
 #endif
 
 HotkeyManager::HotkeyManager(ProfileManager *profiles, QObject *parent)
-    : QAbstractListModel(parent), m_profiles(profiles)
+    : HotkeyManager(profiles, nullptr, parent)
+{
+}
+
+HotkeyManager::HotkeyManager(ProfileManager *profiles, SettingsManager *settings, QObject *parent)
+    : QAbstractListModel(parent), m_profiles(profiles), m_settings(settings)
 {
     connect(m_profiles, &ProfileManager::activeProfileChanged, this, &HotkeyManager::refreshRegistrations);
     connect(m_profiles, &ProfileManager::profileDataChanged, this, &HotkeyManager::refreshRegistrations);
+    if (m_settings)
+        connect(m_settings, &SettingsManager::preferencesChanged, this, &HotkeyManager::refreshRegistrations);
     refreshRegistrations();
 }
 
@@ -93,6 +101,12 @@ QString HotkeyManager::activationStatus(const QString &profileId) const
     return status.text;
 }
 
+QString HotkeyManager::clipboardHistoryStatus() const
+{
+    return m_statusById.value(QStringLiteral("clipboard-history"),
+                              {false, QStringLiteral("Not assigned")}).text;
+}
+
 bool HotkeyManager::isRegistered(const QString &id) const
 {
     return nativeIdFor(id)>0;
@@ -132,7 +146,10 @@ bool HotkeyManager::nativeEventFilter(const QByteArray &eventType, void *message
     if (it == m_bindingByNativeId.cend())
         return false;
     const Binding binding = it.value();
-    if (binding.isActivation) {
+    if (binding.actionType == QStringLiteral("clipboardHistory")) {
+        emit hotkeyTriggered(binding.description);
+        emit clipboardHistoryTriggered();
+    } else if (binding.isActivation) {
         emit hotkeyTriggered(QStringLiteral("Activate %1").arg(binding.description));
         emit profileActivationRequested(binding.profileId);
     } else {
@@ -163,6 +180,17 @@ void HotkeyManager::refreshRegistrations()
         if(!assignment.enabled || assignment.key==0){statuses.insert(id,{false,assignment.enabled?QStringLiteral("Not assigned"):QStringLiteral("Disabled")});continue;}
         desired.append(Binding{id,profile.id,HotkeyUtils::formatShortcut(assignment.key,assignment.modifiers),assignment.key,assignment.modifiers,false,assignment.actionType,assignment.targetProfileId,assignment.sequenceId});
     }
+    if (m_settings) {
+        const int key = m_settings->clipboardHistoryShortcutKey();
+        const int modifiers = m_settings->clipboardHistoryShortcutModifiers();
+        const QString id = QStringLiteral("clipboard-history");
+        if (key == 0)
+            statuses.insert(id, {false, QStringLiteral("Not assigned")});
+        else
+            desired.append(Binding{id, QStringLiteral("global"),
+                                   QStringLiteral("Open clipboard history (%1)").arg(HotkeyUtils::formatShortcut(key, modifiers)),
+                                   key, modifiers, false, QStringLiteral("clipboardHistory"), {}, {}});
+    }
     const bool canRegister=m_hasWindow && !m_window.isNull() && !m_recording;
     // Retain unchanged native registrations, especially application-wide bindings.
     for(auto it=m_bindingByNativeId.begin();it!=m_bindingByNativeId.end();) {
@@ -178,10 +206,10 @@ void HotkeyManager::refreshRegistrations()
     for(const auto &binding:desired) {
         if(!canRegister){statuses.insert(binding.id,{false,m_recording?QStringLiteral("Paused while recording"):QStringLiteral("Waiting for application window")});continue;}
         int existing=0;for(auto it=m_bindingByNativeId.begin();it!=m_bindingByNativeId.end();++it)if(it->id==binding.id){existing=it.key();break;}
-        if(existing){statuses.insert(binding.id,{true,binding.isActivation?QStringLiteral("Registered globally"):QStringLiteral("Registered")});continue;}
+        if(existing){statuses.insert(binding.id,{true,(binding.isActivation || binding.actionType==QStringLiteral("clipboardHistory"))?QStringLiteral("Registered globally"):QStringLiteral("Registered")});continue;}
         while(m_bindingByNativeId.contains(m_nextNativeId))m_nextNativeId=m_nextNativeId%0xbfff+1;
         const int nativeId=m_nextNativeId;m_nextNativeId=m_nextNativeId%0xbfff+1;
-        if(registerBinding(binding,nativeId)){m_bindingByNativeId.insert(nativeId,binding);statuses.insert(binding.id,{true,binding.isActivation?QStringLiteral("Registered globally"):QStringLiteral("Registered")});}
+        if(registerBinding(binding,nativeId)){m_bindingByNativeId.insert(nativeId,binding);statuses.insert(binding.id,{true,(binding.isActivation || binding.actionType==QStringLiteral("clipboardHistory"))?QStringLiteral("Registered globally"):QStringLiteral("Registered")});}
         else {statuses.insert(binding.id,{false,QStringLiteral("Unavailable or conflicts with another hotkey")});if(m_statusById.value(binding.id).text!=statuses.value(binding.id).text)failures.append(binding.description);}
     }
     beginResetModel();

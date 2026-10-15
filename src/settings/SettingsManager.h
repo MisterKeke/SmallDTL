@@ -1,5 +1,6 @@
 #pragma once
 #include <QObject>
+#include <Qt>
 #include <QStringList>
 #include <QJsonObject>
 #include <QVariant>
@@ -20,6 +21,11 @@ class SettingsManager final : public QObject {
     Q_PROPERTY(QString accentColor READ accentColor WRITE setAccentColor NOTIFY preferencesChanged)
     Q_PROPERTY(bool automaticClipboardSavingEnabled READ automaticClipboardSavingEnabled WRITE setAutomaticClipboardSavingEnabled NOTIFY preferencesChanged)
     Q_PROPERTY(QString automaticClipboardSaveTagId READ automaticClipboardSaveTagId WRITE setAutomaticClipboardSaveTagId NOTIFY preferencesChanged)
+    Q_PROPERTY(int clipboardHistoryShortcutKey READ clipboardHistoryShortcutKey NOTIFY preferencesChanged)
+    Q_PROPERTY(int clipboardHistoryShortcutModifiers READ clipboardHistoryShortcutModifiers NOTIFY preferencesChanged)
+    Q_PROPERTY(int clipboardHistoryRetentionDays READ clipboardHistoryRetentionDays WRITE setClipboardHistoryRetentionDays NOTIFY preferencesChanged)
+    Q_PROPERTY(int clipboardHistoryRetentionCount READ clipboardHistoryRetentionCount WRITE setClipboardHistoryRetentionCount NOTIFY preferencesChanged)
+    Q_PROPERTY(int clipboardHistoryStorageLimitMB READ clipboardHistoryStorageLimitMB WRITE setClipboardHistoryStorageLimitMB NOTIFY preferencesChanged)
 public:
     explicit SettingsManager(QObject *parent = nullptr);
     QString generalScreenshotDirectory() const;
@@ -53,6 +59,15 @@ public slots:
     bool setAutomaticClipboardSavingEnabled(bool enabled);
     QString automaticClipboardSaveTagId() const;
     bool setAutomaticClipboardSaveTagId(const QString &tagId);
+    int clipboardHistoryShortcutKey() const;
+    int clipboardHistoryShortcutModifiers() const;
+    bool setClipboardHistoryShortcut(int key, int modifiers);
+    int clipboardHistoryRetentionDays() const;
+    bool setClipboardHistoryRetentionDays(int days);
+    int clipboardHistoryRetentionCount() const;
+    bool setClipboardHistoryRetentionCount(int count);
+    int clipboardHistoryStorageLimitMB() const;
+    bool setClipboardHistoryStorageLimitMB(int megabytes);
 signals:
     void preferencesChanged();
     void generalScreenshotDirectoryChanged();

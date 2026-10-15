@@ -29,6 +29,22 @@ struct ScreenshotTag
     QString name;
 };
 
+struct ClipboardHistoryRecord
+{
+    QString id;
+    QString type;
+    QString capturedAt;
+    QString fingerprint;
+    QString text;
+    QStringList fileUrls;
+    QString payloadPath;
+    qint64 sizeBytes = 0;
+    int width = 0;
+    int height = 0;
+    bool pinned = false;
+    bool missing = false;
+};
+
 class ScreenshotDatabase final : public QObject
 {
 public:
@@ -59,6 +75,13 @@ public:
     bool deleteTag(const QString &id);
     int tagAssignmentState(const QString &tagId, const QStringList &screenshotIds) const;
     bool setTagForScreenshots(const QStringList &screenshotIds, const QString &tagId, bool assigned);
+
+    QVector<ClipboardHistoryRecord> clipboardHistory(const QString &search = {}) const;
+    bool saveClipboardHistory(const ClipboardHistoryRecord &record, QString *id = nullptr,
+                              bool *inserted = nullptr);
+    bool setClipboardHistoryPinned(const QString &id, bool pinned);
+    bool deleteClipboardHistory(const QString &id, ClipboardHistoryRecord *removed = nullptr);
+    bool deleteClipboardHistory(const QStringList &ids, QVector<ClipboardHistoryRecord> *removed = nullptr);
 
 private:
     bool checkThread() const;

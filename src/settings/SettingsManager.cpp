@@ -49,6 +49,11 @@ void SettingsManager::load() {
     m_data.insert(QStringLiteral("accentColor"), QStringLiteral("#e96782"));
     m_data.insert(QStringLiteral("automaticClipboardSavingEnabled"), false);
     m_data.insert(QStringLiteral("automaticClipboardSaveTagId"), QString());
+    m_data.insert(QStringLiteral("clipboardHistoryShortcutKey"), int(Qt::Key_V));
+    m_data.insert(QStringLiteral("clipboardHistoryShortcutModifiers"), int(Qt::ControlModifier | Qt::ShiftModifier));
+    m_data.insert(QStringLiteral("clipboardHistoryRetentionDays"), 30);
+    m_data.insert(QStringLiteral("clipboardHistoryRetentionCount"), 500);
+    m_data.insert(QStringLiteral("clipboardHistoryStorageLimitMB"), 512);
     QFile file(settingsFilePath());
     if (!file.exists()) {
         QDir().mkpath(fallback);
@@ -74,6 +79,14 @@ void SettingsManager::load() {
     if (stored.contains(QStringLiteral("filenamePattern")) && !ScreenshotNaming::validPattern(stored.value(QStringLiteral("filenamePattern")).toString())) valid = false;
     if (stored.contains(QStringLiteral("appearance")) && !QStringList{QStringLiteral("dark"), QStringLiteral("light"), QStringLiteral("system")}.contains(stored.value(QStringLiteral("appearance")).toString())) valid = false;
     if (stored.contains(QStringLiteral("accentColor")) && !QColor::isValidColorName(stored.value(QStringLiteral("accentColor")).toString())) valid = false;
+    if (stored.contains(QStringLiteral("clipboardHistoryRetentionDays")) &&
+        (stored.value(QStringLiteral("clipboardHistoryRetentionDays")).toInt() < 1 || stored.value(QStringLiteral("clipboardHistoryRetentionDays")).toInt() > 3650)) valid = false;
+    if (stored.contains(QStringLiteral("clipboardHistoryRetentionCount")) &&
+        (stored.value(QStringLiteral("clipboardHistoryRetentionCount")).toInt() < 1 || stored.value(QStringLiteral("clipboardHistoryRetentionCount")).toInt() > 100000)) valid = false;
+    if (stored.contains(QStringLiteral("clipboardHistoryStorageLimitMB")) &&
+        (stored.value(QStringLiteral("clipboardHistoryStorageLimitMB")).toInt() < 16 || stored.value(QStringLiteral("clipboardHistoryStorageLimitMB")).toInt() > 65536)) valid = false;
+    if (stored.contains(QStringLiteral("clipboardHistoryShortcutKey")) && stored.value(QStringLiteral("clipboardHistoryShortcutKey")).toInt() < 0) valid = false;
+    if (stored.contains(QStringLiteral("clipboardHistoryShortcutModifiers")) && stored.value(QStringLiteral("clipboardHistoryShortcutModifiers")).toInt() < 0) valid = false;
     if (!valid) {
         m_invalid = true; report(QStringLiteral("Settings are invalid or use an unsupported schema. The original is preserved; supported data is backed up before repair."));
         QDir().mkpath(fallback);
@@ -179,6 +192,20 @@ QString SettingsManager::automaticClipboardSaveTagId() const { return m_data.val
 bool SettingsManager::setAutomaticClipboardSaveTagId(const QString &tagId) {
     return update(QStringLiteral("automaticClipboardSaveTagId"), tagId.trimmed());
 }
+int SettingsManager::clipboardHistoryShortcutKey() const { return m_data.value(QStringLiteral("clipboardHistoryShortcutKey")).toInt(); }
+int SettingsManager::clipboardHistoryShortcutModifiers() const { return m_data.value(QStringLiteral("clipboardHistoryShortcutModifiers")).toInt(); }
+bool SettingsManager::setClipboardHistoryShortcut(int key, int modifiers) {
+    QJsonObject candidate = m_data;
+    candidate.insert(QStringLiteral("clipboardHistoryShortcutKey"), key);
+    candidate.insert(QStringLiteral("clipboardHistoryShortcutModifiers"), modifiers);
+    return commit(candidate);
+}
+int SettingsManager::clipboardHistoryRetentionDays() const { return m_data.value(QStringLiteral("clipboardHistoryRetentionDays")).toInt(30); }
+bool SettingsManager::setClipboardHistoryRetentionDays(int days) { return days >= 1 && days <= 3650 && update(QStringLiteral("clipboardHistoryRetentionDays"), days); }
+int SettingsManager::clipboardHistoryRetentionCount() const { return m_data.value(QStringLiteral("clipboardHistoryRetentionCount")).toInt(500); }
+bool SettingsManager::setClipboardHistoryRetentionCount(int count) { return count >= 1 && count <= 100000 && update(QStringLiteral("clipboardHistoryRetentionCount"), count); }
+int SettingsManager::clipboardHistoryStorageLimitMB() const { return m_data.value(QStringLiteral("clipboardHistoryStorageLimitMB")).toInt(512); }
+bool SettingsManager::setClipboardHistoryStorageLimitMB(int megabytes) { return megabytes >= 16 && megabytes <= 65536 && update(QStringLiteral("clipboardHistoryStorageLimitMB"), megabytes); }
 
 QVariantMap SettingsManager::palette() const {
     if(!m_cachedPalette.isEmpty())return m_cachedPalette;

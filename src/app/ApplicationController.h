@@ -5,6 +5,7 @@
 
 #include "../actions/ActionManager.h"
 #include "../actions/ActionSequenceRunner.h"
+#include "../clipboard/ClipboardHistoryManager.h"
 #include "../hotkeys/HotkeyManager.h"
 #include "../profiles/ProfileManager.h"
 #include "../screenshots/ScreenshotManager.h"
@@ -26,6 +27,7 @@ class ApplicationController final : public QObject
     Q_PROPERTY(QString generalScreenshotDirectory READ generalScreenshotDirectory NOTIFY generalScreenshotDirectoryChanged)
     Q_PROPERTY(bool actionSequenceRunning READ actionSequenceRunning NOTIFY actionSequenceRunningChanged)
     Q_PROPERTY(QString actionSequenceStatus READ actionSequenceStatus NOTIFY actionSequenceStatusChanged)
+    Q_PROPERTY(bool clipboardHistoryPopupVisible READ clipboardHistoryPopupVisible WRITE setClipboardHistoryPopupVisible NOTIFY clipboardHistoryPopupVisibleChanged)
 
 public:
     explicit ApplicationController(QObject *parent = nullptr);
@@ -34,6 +36,7 @@ public:
     SettingsManager *settings();
     ProfileManager *profiles();
     ScreenshotManager *screenshots();
+    ClipboardHistoryManager *clipboardHistory();
     HotkeyManager *hotkeys();
     ActionManager *actions();
     ActionSequenceRunner *actionRunner();
@@ -47,6 +50,7 @@ public:
     QString generalScreenshotDirectory() const;
     bool actionSequenceRunning() const;
     QString actionSequenceStatus() const;
+    bool clipboardHistoryPopupVisible() const { return m_clipboardHistoryPopupVisible; }
 
     void initializeWindow(QWindow *window);
     void showAtStartup();
@@ -57,6 +61,9 @@ public:
     Q_INVOKABLE void showWindow();
     Q_INVOKABLE void exitApplication();
     Q_INVOKABLE void saveClipboardScreenshot();
+    Q_INVOKABLE void toggleClipboardHistoryPopup();
+    Q_INVOKABLE void setClipboardHistoryPopupVisible(bool visible);
+    Q_INVOKABLE bool setClipboardHistoryShortcut(int key, int modifiers);
     Q_INVOKABLE void chooseScreenshotDestination();
     Q_INVOKABLE void useProfileScreenshotDestination();
     Q_INVOKABLE void chooseGeneralScreenshotDirectory();
@@ -91,6 +98,7 @@ signals:
     void generalScreenshotDirectoryChanged();
     void actionSequenceRunningChanged();
     void actionSequenceStatusChanged();
+    void clipboardHistoryPopupVisibleChanged();
 
 private slots:
     void rebuildTrayMenu();
@@ -106,6 +114,7 @@ private:
     SettingsManager m_settings;
     ProfileManager m_profiles;
     ScreenshotManager m_screenshots;
+    ClipboardHistoryManager m_clipboardHistory;
     ActionManager m_actions;
     ActionSequenceRunner m_actionRunner;
     HotkeyManager m_hotkeys;
@@ -116,4 +125,5 @@ private:
     QString m_currentPage = QStringLiteral("Dashboard");
     QString m_statusMessage;
     bool m_statusIsError = false;
+    bool m_clipboardHistoryPopupVisible = false;
 };

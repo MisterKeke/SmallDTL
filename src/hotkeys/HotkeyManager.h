@@ -8,6 +8,7 @@
 #include "../profiles/ProfileManager.h"
 
 class QWindow;
+class SettingsManager;
 
 class HotkeyManager final : public QAbstractListModel, public QAbstractNativeEventFilter
 {
@@ -15,6 +16,7 @@ class HotkeyManager final : public QAbstractListModel, public QAbstractNativeEve
     Q_PROPERTY(int count READ rowCount NOTIFY assignmentsChanged)
     Q_PROPERTY(int registeredCount READ registeredCount NOTIFY registrationStatusesChanged)
     Q_PROPERTY(bool globalScope READ globalScope WRITE setGlobalScope NOTIFY assignmentsChanged)
+    Q_PROPERTY(QString clipboardHistoryStatus READ clipboardHistoryStatus NOTIFY registrationStatusesChanged)
 
 public:
     enum Role {
@@ -32,6 +34,7 @@ public:
     Q_ENUM(Role)
 
     explicit HotkeyManager(ProfileManager *profiles, QObject *parent = nullptr);
+    HotkeyManager(ProfileManager *profiles, SettingsManager *settings, QObject *parent);
     ~HotkeyManager() override;
 
     int rowCount(const QModelIndex &parent = QModelIndex()) const override;
@@ -41,6 +44,7 @@ public:
     void setOwnerWindow(QWindow *window);
     Q_INVOKABLE void setRecording(bool recording);
     Q_INVOKABLE QString activationStatus(const QString &profileId) const;
+    QString clipboardHistoryStatus() const;
     bool isRegistered(const QString &id) const;
     int registeredCount() const { return m_bindingByNativeId.size(); }
     int nativeIdFor(const QString &id) const;
@@ -58,6 +62,7 @@ signals:
     void profileActivationRequested(const QString &profileId);
     void actionTriggered(const QString &actionType, const QString &targetProfileId,
                          const QString &sequenceId);
+    void clipboardHistoryTriggered();
     void hotkeyTriggered(const QString &description);
     void registrationFailed(const QString &message);
 
@@ -85,6 +90,7 @@ private:
     static quint32 toWindowsModifiers(int qtModifiers);
 
     ProfileManager *m_profiles = nullptr;
+    SettingsManager *m_settings = nullptr;
     QPointer<QWindow> m_window;
     QVector<HotkeyAssignment> m_assignments;
     QHash<QString, Status> m_statusById;

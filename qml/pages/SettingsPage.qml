@@ -47,6 +47,37 @@ Item {
                     Preference { title: "Minimize to tray"; description: "Hide the taskbar window when you minimize it."; value: settings.minimizeToTray; apply: function(value) { settings.setMinimizeToTray(value) } }
                     Preference { title: "Success notifications"; description: "Show nonessential tray notifications. Errors are always reported."; value: settings.notificationsEnabled; apply: function(value) { settings.setNotificationsEnabled(value) } }
                     Preference { title: "Automatically save clipboard images"; description: "Save images copied from other apps without opening SmallDTL. Pause temporarily from the tray menu."; value: settings.automaticClipboardSavingEnabled; apply: function(value) { settings.setAutomaticClipboardSavingEnabled(value) } }
+                    Label { text: "Clipboard history"; font.pixelSize: 14; font.weight: Font.DemiBold; Layout.topMargin: 5 }
+                    Label { text: "History keeps text, image copies, and file references locally. Its shortcut opens a compact popup even when the main window is hidden."; color: settings.palette["#9697a3"]; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Label { text: "Popup shortcut"; Layout.preferredWidth: 120 }
+                        HotkeyRecorder {
+                            objectName: "clipboardHistoryShortcutRecorder"
+                            key: settings.clipboardHistoryShortcutKey
+                            modifiers: settings.clipboardHistoryShortcutModifiers
+                            onRecorded: function(keyValue, modifierValue) {
+                                app.setClipboardHistoryShortcut(keyValue, modifierValue)
+                            }
+                            onCleared: app.setClipboardHistoryShortcut(0, 0)
+                        }
+                        Label { text: hotkeys.clipboardHistoryStatus; color: hotkeys.clipboardHistoryStatus === "Registered globally" ? settings.palette["#74d3aa"] : settings.palette["#e7b879"]; font.pixelSize: 10 }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Label { text: "Keep unpinned entries"; Layout.preferredWidth: 170 }
+                        SpinBox { objectName: "historyRetentionDays"; from: 1; to: 3650; value: settings.clipboardHistoryRetentionDays; onValueModified: settings.setClipboardHistoryRetentionDays(value) }
+                        Label { text: "days" }
+                        SpinBox { objectName: "historyRetentionCount"; from: 1; to: 100000; value: settings.clipboardHistoryRetentionCount; onValueModified: settings.setClipboardHistoryRetentionCount(value) }
+                        Label { text: "items" }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Label { text: "History image storage"; Layout.preferredWidth: 170 }
+                        SpinBox { objectName: "historyStorageLimit"; from: 16; to: 65536; value: settings.clipboardHistoryStorageLimitMB; onValueModified: settings.setClipboardHistoryStorageLimitMB(value) }
+                        Label { text: "MiB" }
+                    }
+                    Label { text: "Pinned entries are kept during ordinary cleanup. File references point to their original locations; SmallDTL never copies or deletes those files."; color: settings.palette["#9697a3"]; font.pixelSize: 10; wrapMode: Text.WordWrap; Layout.fillWidth: true }
                 }
             }
             Rectangle {

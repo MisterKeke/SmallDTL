@@ -29,6 +29,8 @@ qt_add_executable(ScreenshotHotkeyManager WIN32
     src/app/ApplicationController.cpp
     src/clipboard/ClipboardService.h
     src/clipboard/ClipboardService.cpp
+    src/clipboard/ClipboardHistoryManager.h
+    src/clipboard/ClipboardHistoryManager.cpp
     src/settings/SettingsManager.h
     src/settings/SettingsManager.cpp
     src/profiles/ProfileManager.h
@@ -64,6 +66,7 @@ qt_add_qml_module(ScreenshotHotkeyManager
         qml/pages/HotkeysPage.qml
         qml/pages/ActionsPage.qml
         qml/pages/SettingsPage.qml
+        qml/pages/ClipboardHistoryPage.qml
 )
 
 target_link_libraries(ScreenshotHotkeyManager PRIVATE
@@ -94,6 +97,8 @@ if(BUILD_TESTING)
         src/app/ApplicationController.cpp
         src/clipboard/ClipboardService.h
         src/clipboard/ClipboardService.cpp
+        src/clipboard/ClipboardHistoryManager.h
+        src/clipboard/ClipboardHistoryManager.cpp
         src/hotkeys/HotkeyManager.h
         src/hotkeys/HotkeyManager.cpp
         src/app/AppDataPaths.h
@@ -131,6 +136,7 @@ if(BUILD_TESTING)
             qml/pages/HotkeysPage.qml
             qml/pages/ActionsPage.qml
             qml/pages/SettingsPage.qml
+            qml/pages/ClipboardHistoryPage.qml
     )
     target_compile_definitions(ScreenshotHotkeyManagerTests PRIVATE
         QT_NO_CAST_FROM_ASCII

@@ -321,6 +321,35 @@ private slots:
         QVERIFY(QFileInfo::exists(secondPath));
     }
 
+    void clipboardHistoryDatabaseUpgradesVersionFour()
+    {
+        QTemporaryDir temporary(g_testData->filePath(QStringLiteral("history-v4-upgrade-XXXXXX")));
+        QVERIFY(temporary.isValid());
+        const QString databasePath = QDir(temporary.path()).filePath(QStringLiteral("screenshots.db"));
+        const QString connectionName = QStringLiteral("history-v4-fixture");
+        {
+            QSqlDatabase fixture = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connectionName);
+            fixture.setDatabaseName(databasePath);
+            QVERIFY(fixture.open());
+            QSqlQuery query(fixture);
+            QVERIFY(query.exec(QStringLiteral("CREATE TABLE migration_state (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)")));
+            QVERIFY(query.exec(QStringLiteral("PRAGMA user_version=4")));
+            fixture.close();
+        }
+        QSqlDatabase::removeDatabase(connectionName);
+        ScreenshotDatabase database(databasePath);
+        QVERIFY2(database.initialize(), qPrintable(database.lastError()));
+        QVERIFY(database.isReady());
+        ClipboardHistoryRecord record;
+        record.id = QStringLiteral("31234567-89ab-cdef-0123-456789abcdef");
+        record.type = QStringLiteral("text");
+        record.capturedAt = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
+        record.fingerprint = QStringLiteral("migrated-schema-five");
+        record.text = QStringLiteral("v4 to v5");
+        QVERIFY2(database.saveClipboardHistory(record), qPrintable(database.lastError()));
+        QCOMPARE(database.clipboardHistory().size(), 1);
+    }
+
     void screenshotEditorCoordinatesCropAndDrawingUseSourcePixels()
     {
         const QSize sourceSize(100, 50);
@@ -1084,6 +1113,228 @@ private slots:
         QCOMPARE(external.first().first().value<QImage>(), image);
     }
 
+    void clipboardHistoryPersistsAndDeduplicatesTextAndFiles()
+    {
+        QTemporaryDir referenceDirectory(g_testData->filePath(QStringLiteral("history-file-refs-XXXXXX")));
+        QVERIFY(referenceDirectory.isValid());
+        const QString referencedFile = QDir(referenceDirectory.path()).filePath(QStringLiteral("kept.txt"));
+        QFile source(referencedFile);
+        QVERIFY(source.open(QIODevice::WriteOnly));
+        source.write(QByteArrayLiteral("keep this user file"));
+        source.close();
+
+        QString textId;
+        QString filesId;
+        QString imageId;
+        {
+            SettingsManager settings;
+            ProfileManager profiles(&settings);
+            ScreenshotManager screenshots(&profiles, &settings);
+            ClipboardHistoryManager history(&screenshots, &settings);
+            ClipboardSnapshot text;
+            text.type = QStringLiteral("text");
+            text.text = QStringLiteral("persisted note");
+            screenshots.clipboardService()->processContentChange(text, false);
+            QVERIFY2(history.count() == 1, qPrintable(screenshots.database()->lastError()));
+            textId = history.model()->recordAt(0).id;
+            screenshots.clipboardService()->processContentChange(text, false);
+            QCOMPARE(history.count(), 1);
+            QCOMPARE(history.model()->recordAt(0).id, textId);
+
+            ClipboardSnapshot files;
+            files.type = QStringLiteral("files");
+            files.urls.append(QUrl::fromLocalFile(referencedFile));
+            screenshots.clipboardService()->processContentChange(files, false);
+            QCOMPARE(history.count(), 2);
+            filesId = history.model()->recordAt(0).id;
+            screenshots.clipboardService()->processContentChange(files, false);
+            QCOMPARE(history.count(), 2);
+            QCOMPARE(history.model()->recordAt(0).id, filesId);
+            QVERIFY(history.restoreEntry(filesId));
+            QVERIFY(QGuiApplication::clipboard()->mimeData()->hasUrls());
+            QCOMPARE(QGuiApplication::clipboard()->mimeData()->urls().first().toLocalFile(), referencedFile);
+
+            ClipboardSnapshot image;
+            image.type = QStringLiteral("image");
+            image.image = QImage(13, 9, QImage::Format_ARGB32);
+            image.image.fill(QColor(QStringLiteral("#6090d0")));
+            screenshots.clipboardService()->processContentChange(image, false);
+            screenshots.clipboardService()->processContentChange(image, false);
+            QTRY_COMPARE_WITH_TIMEOUT(history.count(), 3, 5000);
+            history.finishPendingSaves();
+            imageId = history.model()->recordAt(0).id;
+            QVERIFY(QFileInfo::exists(history.model()->recordAt(0).payloadPath));
+
+            ClipboardSnapshot pausedText;
+            pausedText.type = QStringLiteral("text");
+            pausedText.text = QStringLiteral("paused content");
+            history.setPaused(true);
+            screenshots.clipboardService()->processContentChange(pausedText, false);
+            QCOMPARE(history.count(), 3);
+            history.setPaused(false);
+            screenshots.clipboardService()->processContentChange(pausedText, false);
+            QCOMPARE(history.count(), 4);
+        }
+
+        {
+            SettingsManager settings;
+            ProfileManager profiles(&settings);
+            ScreenshotManager screenshots(&profiles, &settings);
+            ClipboardHistoryManager history(&screenshots, &settings);
+            QCOMPARE(history.count(), 4);
+            QCOMPARE(history.model()->recordById(textId).text, QStringLiteral("persisted note"));
+            QCOMPARE(history.model()->recordById(filesId).fileUrls.size(), 1);
+            QVERIFY(QFileInfo::exists(history.model()->recordById(imageId).payloadPath));
+            QVERIFY(QFileInfo::exists(referencedFile));
+            QSignalSpy messages(&history, &ClipboardHistoryManager::messageChanged);
+            QVERIFY(QFile::remove(referencedFile));
+            history.refresh();
+            QVERIFY(history.model()->recordById(filesId).missing);
+            QVERIFY(!history.restoreEntry(filesId));
+            QVERIFY(messages.last().first().toString().contains(QStringLiteral("missing"), Qt::CaseInsensitive));
+        }
+    }
+
+    void clipboardHistoryImagesAreOwnedAndRestoringDoesNotTriggerAutomaticSave()
+    {
+        QClipboard *clipboard = QGuiApplication::clipboard();
+        auto previous = std::make_unique<QMimeData>();
+        if (const auto *mime = clipboard->mimeData())
+            for (const auto &format : mime->formats()) previous->setData(format, mime->data(format));
+        const auto restore = qScopeGuard([&] { clipboard->setMimeData(previous.release()); });
+
+        SettingsManager settings;
+        QVERIFY(settings.setAutomaticClipboardSavingEnabled(true));
+        ProfileManager profiles(&settings);
+        ScreenshotManager screenshots(&profiles, &settings);
+        ClipboardHistoryManager history(&screenshots, &settings);
+        QImage image(48, 32, QImage::Format_ARGB32);
+        image.fill(QColor(QStringLiteral("#d65078")));
+        ClipboardSnapshot snapshot;
+        snapshot.type = QStringLiteral("image");
+        snapshot.image = image;
+        screenshots.clipboardService()->processContentChange(snapshot, false);
+        screenshots.clipboardService()->processContentChange(snapshot, false);
+        QTRY_COMPARE_WITH_TIMEOUT(history.count(), 1, 5000);
+        history.finishPendingSaves();
+        screenshots.finishPendingSaves();
+        QVERIFY2(history.count() == 1, qPrintable(screenshots.database()->lastError()));
+        QCOMPARE(screenshots.database()->screenshots().size(), 1);
+        const ClipboardHistoryRecord record = history.model()->recordAt(0);
+        QVERIFY(QFileInfo::exists(record.payloadPath));
+        QVERIFY(QFileInfo(record.payloadPath).absolutePath().endsWith(QStringLiteral("clipboard-history")));
+        QCOMPARE(QImage(record.payloadPath).convertToFormat(QImage::Format_RGBA8888), image.convertToFormat(QImage::Format_RGBA8888));
+
+        const QSignalSpy external(screenshots.clipboardService(), &ClipboardService::externalContentAvailable);
+        QVERIFY(history.restoreEntry(record.id));
+        QTRY_VERIFY_WITH_TIMEOUT(clipboard->mimeData()->hasImage(), 5000);
+        QTest::qWait(150);
+        screenshots.finishPendingSaves();
+        QCOMPARE(external.count(), 0);
+        QCOMPARE(history.count(), 1);
+        QCOMPARE(screenshots.database()->screenshots().size(), 1);
+
+        const QString tagId = screenshots.createTag(QStringLiteral("History export"));
+        QVERIFY(!tagId.isEmpty());
+        QVERIFY(history.saveToGallery(record.id, tagId));
+        screenshots.finishPendingSaves();
+        const auto galleryRecords = screenshots.database()->screenshots();
+        QCOMPARE(galleryRecords.size(), 2);
+        bool foundHistoryCopy = false;
+        QString galleryCopyPath;
+        for (const ScreenshotRecord &galleryRecord : galleryRecords) {
+            if (galleryRecord.source == QStringLiteral("clipboard-history")) {
+                foundHistoryCopy = true;
+                galleryCopyPath = galleryRecord.path;
+                QCOMPARE(galleryRecord.tags, QStringList{QStringLiteral("History export")});
+            }
+        }
+        QVERIFY(foundHistoryCopy);
+        QVERIFY(history.clearHistory());
+        QVERIFY(!QFileInfo::exists(record.payloadPath));
+        QVERIFY(QFileInfo::exists(galleryCopyPath));
+    }
+
+    void clipboardHistoryRetentionPreservesPinsAndNeverDeletesReferencedOrGalleryFiles()
+    {
+        SettingsManager settings;
+        QVERIFY(settings.setClipboardHistoryRetentionDays(1));
+        QVERIFY(settings.setClipboardHistoryRetentionCount(2));
+        ProfileManager profiles(&settings);
+        ScreenshotManager screenshots(&profiles, &settings);
+
+        ClipboardHistoryRecord stale;
+        stale.id = QStringLiteral("01234567-89ab-cdef-0123-456789abcdef");
+        stale.type = QStringLiteral("text");
+        stale.capturedAt = QDateTime::currentDateTimeUtc().addDays(-4).toString(Qt::ISODateWithMs);
+        stale.fingerprint = QStringLiteral("stale-unpinned");
+        stale.text = QStringLiteral("expired");
+        QVERIFY2(screenshots.database()->saveClipboardHistory(stale), qPrintable(screenshots.database()->lastError()));
+        ClipboardHistoryRecord pinnedStale = stale;
+        pinnedStale.id = QStringLiteral("11234567-89ab-cdef-0123-456789abcdef");
+        pinnedStale.fingerprint = QStringLiteral("stale-pinned");
+        pinnedStale.pinned = true;
+        QVERIFY(screenshots.database()->saveClipboardHistory(pinnedStale));
+        ClipboardHistoryManager history(&screenshots, &settings);
+        QVERIFY(history.model()->recordById(stale.id).id.isEmpty());
+        QVERIFY(!history.model()->recordById(pinnedStale.id).id.isEmpty());
+
+        QTemporaryDir references(g_testData->filePath(QStringLiteral("history-ownership-XXXXXX")));
+        QVERIFY(references.isValid());
+        const QString userFile = QDir(references.path()).filePath(QStringLiteral("user-owned.txt"));
+        QFile file(userFile);
+        QVERIFY(file.open(QIODevice::WriteOnly)); file.write(QByteArrayLiteral("user")); file.close();
+        ClipboardSnapshot fileSnapshot;
+        fileSnapshot.type = QStringLiteral("files");
+        fileSnapshot.urls.append(QUrl::fromLocalFile(userFile));
+        screenshots.clipboardService()->processContentChange(fileSnapshot, false);
+        QCOMPARE(history.count(), 2); // The pinned stale entry plus this reference.
+
+        const QString externalPayload = QDir(references.path()).filePath(QStringLiteral("external.png"));
+        QImage sourceImage(9, 7, QImage::Format_ARGB32); sourceImage.fill(Qt::blue); QVERIFY(sourceImage.save(externalPayload));
+        ClipboardHistoryRecord externalRecord;
+        externalRecord.id = QStringLiteral("21234567-89ab-cdef-0123-456789abcdef");
+        externalRecord.type = QStringLiteral("image");
+        externalRecord.capturedAt = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
+        externalRecord.fingerprint = QStringLiteral("external-path-record");
+        externalRecord.payloadPath = externalPayload;
+        externalRecord.width = 9; externalRecord.height = 7; externalRecord.sizeBytes = QFileInfo(externalPayload).size();
+        QVERIFY(screenshots.database()->saveClipboardHistory(externalRecord));
+        const QString galleryImage = QDir(references.path()).filePath(QStringLiteral("gallery.png"));
+        QVERIFY(sourceImage.save(galleryImage));
+        QVERIFY(screenshots.database()->addScreenshot(galleryImage, sourceImage.size(), QFileInfo(galleryImage).size(), QStringLiteral("clipboard")));
+        history.refresh();
+        QVERIFY(history.deleteEntry(externalRecord.id));
+        QVERIFY(QFileInfo::exists(externalPayload));
+        QVERIFY(history.clearHistory());
+        QVERIFY(QFileInfo::exists(userFile));
+        QVERIFY(QFileInfo::exists(galleryImage));
+        QCOMPARE(screenshots.database()->screenshots().size(), 1);
+    }
+
+    void clipboardHistoryShortcutIsConfigurableAndPersisted()
+    {
+        const int modifiers = int(Qt::ControlModifier | Qt::ShiftModifier);
+        {
+            ApplicationController controller;
+            QVERIFY(controller.addHotkey(Qt::Key_F18, modifiers, QStringLiteral("saveScreenshot"), QString(), QString()));
+            QVERIFY(!controller.setClipboardHistoryShortcut(Qt::Key_F18, modifiers));
+            QVERIFY(controller.setClipboardHistoryShortcut(Qt::Key_F19, modifiers));
+            QVERIFY(controller.settings()->setClipboardHistoryRetentionDays(14));
+            QVERIFY(controller.settings()->setClipboardHistoryRetentionCount(750));
+            QVERIFY(controller.settings()->setClipboardHistoryStorageLimitMB(768));
+            QCOMPARE(controller.settings()->clipboardHistoryShortcutKey(), int(Qt::Key_F19));
+            QCOMPARE(controller.settings()->clipboardHistoryShortcutModifiers(), modifiers);
+            QVERIFY(controller.hotkeys()->clipboardHistoryStatus().contains(QStringLiteral("window"), Qt::CaseInsensitive));
+        }
+        SettingsManager restored;
+        QCOMPARE(restored.clipboardHistoryShortcutKey(), int(Qt::Key_F19));
+        QCOMPARE(restored.clipboardHistoryShortcutModifiers(), modifiers);
+        QCOMPARE(restored.clipboardHistoryRetentionDays(), 14);
+        QCOMPARE(restored.clipboardHistoryRetentionCount(), 750);
+        QCOMPARE(restored.clipboardHistoryStorageLimitMB(), 768);
+    }
+
     void automaticClipboardSavesDeduplicateAndKeepManualSaves()
     {
         QTemporaryDir destination(g_testData->filePath(QStringLiteral("auto-save-destination-XXXXXX")));
@@ -1271,12 +1522,17 @@ private slots:
     void globalHotkeysScopeAndNativeRegistration()
     {
 #ifdef Q_OS_WIN
-        SettingsManager settings;ProfileManager profiles(&settings);HotkeyManager manager(&profiles);QWindow owner;manager.setOwnerWindow(&owner);
+        SettingsManager settings;QVERIFY(settings.setClipboardHistoryShortcut(Qt::Key_F19,Qt::ControlModifier|Qt::AltModifier|Qt::ShiftModifier));ProfileManager profiles(&settings);HotkeyManager manager(&profiles,&settings,nullptr);QWindow owner;manager.setOwnerWindow(&owner);
         const QString original=profiles.activeProfileId();const QString second=profiles.createProfile(QStringLiteral("Other"));
         HotkeyAssignment global;global.id=QStringLiteral("global-action");global.key=Qt::Key_F20;global.modifiers=Qt::ControlModifier|Qt::AltModifier|Qt::ShiftModifier;
         QVERIFY(profiles.addHotkey(QStringLiteral("global"),global));
         if (!manager.isRegistered(global.id))
             QSKIP("Windows denied native hotkey registration in this execution environment.");
+        QVERIFY(manager.isRegistered(QStringLiteral("clipboard-history")));
+        QCOMPARE(manager.clipboardHistoryStatus(), QStringLiteral("Registered globally"));
+        const int historyNativeId=manager.nativeIdFor(QStringLiteral("clipboard-history"));
+        QSignalSpy historyTriggered(&manager,&HotkeyManager::clipboardHistoryTriggered);
+        QVERIFY(PostThreadMessageW(GetCurrentThreadId(),WM_HOTKEY,WPARAM(historyNativeId),0));QTRY_COMPARE(historyTriggered.count(),1);
         const int globalNativeId=manager.nativeIdFor(global.id);
         QVERIFY(profiles.setActivationShortcut(second,Qt::Key_F21,Qt::ControlModifier|Qt::AltModifier|Qt::ShiftModifier));const QString activation=QStringLiteral("activation:")+second;QVERIFY(manager.isRegistered(activation));const int activationNativeId=manager.nativeIdFor(activation);
         HotkeyAssignment active=global;active.id=QStringLiteral("profile-action");active.key=Qt::Key_F22;QVERIFY(profiles.addHotkey(original,active));QVERIFY(manager.isRegistered(active.id));
@@ -1372,6 +1628,7 @@ private slots:
         for (const auto &entry : QList<QPair<QString, QObject *>>{
                  {QStringLiteral("app"), &controller}, {QStringLiteral("settings"), controller.settings()},
                  {QStringLiteral("profiles"), controller.profiles()}, {QStringLiteral("screenshots"), controller.screenshots()},
+                 {QStringLiteral("clipboardHistory"), controller.clipboardHistory()},
                  {QStringLiteral("hotkeys"), controller.hotkeys()}, {QStringLiteral("actions"), controller.actions()},
                  {QStringLiteral("actionRunner"), controller.actionRunner()}})
             engine.rootContext()->setContextProperty(entry.first, entry.second);
@@ -1439,10 +1696,29 @@ private slots:
     {
         ApplicationController controller;QQmlApplicationEngine engine;engine.addImageProvider(QStringLiteral("thumbnail"),new ThumbnailProvider);
         QVERIFY(!controller.screenshots()->createTag(QStringLiteral("QML tag check")).isEmpty());
-        for(const auto &entry:QList<QPair<QString,QObject *>>{{QStringLiteral("app"),&controller},{QStringLiteral("settings"),controller.settings()},{QStringLiteral("profiles"),controller.profiles()},{QStringLiteral("screenshots"),controller.screenshots()},{QStringLiteral("hotkeys"),controller.hotkeys()},{QStringLiteral("actions"),controller.actions()},{QStringLiteral("actionRunner"),controller.actionRunner()}})engine.rootContext()->setContextProperty(entry.first,entry.second);
+        for(const auto &entry:QList<QPair<QString,QObject *>>{{QStringLiteral("app"),&controller},{QStringLiteral("settings"),controller.settings()},{QStringLiteral("profiles"),controller.profiles()},{QStringLiteral("screenshots"),controller.screenshots()},{QStringLiteral("clipboardHistory"),controller.clipboardHistory()},{QStringLiteral("hotkeys"),controller.hotkeys()},{QStringLiteral("actions"),controller.actions()},{QStringLiteral("actionRunner"),controller.actionRunner()}})engine.rootContext()->setContextProperty(entry.first,entry.second);
         QSignalSpy warnings(&engine,&QQmlEngine::warnings);engine.loadFromModule(QStringLiteral("ScreenshotHotkeyManagerTest"),QStringLiteral("Main"));QVERIFY(!engine.rootObjects().isEmpty());
         auto *window=qobject_cast<QQuickWindow *>(engine.rootObjects().first());QVERIFY(window);window->show();QVERIFY(QTest::qWaitForWindowExposed(window));
-        for(const QString &page:{QStringLiteral("Dashboard"),QStringLiteral("Screenshots"),QStringLiteral("Hotkeys"),QStringLiteral("Profiles"),QStringLiteral("Actions"),QStringLiteral("Settings")}){controller.setCurrentPage(page);QTest::qWait(40);}
+        for(const QString &page:{QStringLiteral("Dashboard"),QStringLiteral("Screenshots"),QStringLiteral("Clipboard History"),QStringLiteral("Hotkeys"),QStringLiteral("Profiles"),QStringLiteral("Actions"),QStringLiteral("Settings")}){controller.setCurrentPage(page);QTest::qWait(40);}
+        window->hide();
+        controller.setClipboardHistoryPopupVisible(true);
+        QObject *historyPopup = window->findChild<QObject *>(QStringLiteral("clipboardHistoryPopup"));
+        QVERIFY(historyPopup);
+        QTRY_VERIFY(historyPopup->property("visible").toBool());
+        auto *popupWindow = qobject_cast<QQuickWindow *>(historyPopup);
+        QVERIFY(popupWindow);
+        auto *popupSearch = findItem(popupWindow->contentItem(), QStringLiteral("clipboardHistoryPopupSearch"));
+        auto *popupList = findItem(popupWindow->contentItem(), QStringLiteral("clipboardHistoryPopupList"));
+        QVERIFY(popupSearch);
+        QVERIFY(popupList);
+        QVERIFY(popupSearch->width() > 400);
+        QVERIFY(popupList->height() > 300);
+        QVERIFY(!window->isVisible());
+        popupWindow->grabWindow().save(QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("clipboard-history-popup.png")));
+        controller.setClipboardHistoryPopupVisible(false);
+        QTRY_VERIFY(!historyPopup->property("visible").toBool());
+        window->show();
+        QVERIFY(QTest::qWaitForWindowExposed(window));
         QVERIFY(controller.settings()->setAppearance(QStringLiteral("light")));QTest::qWait(80);window->grabWindow().save(QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("settings-light.png")));
         QVERIFY(controller.settings()->setAppearance(QStringLiteral("dark")));QTest::qWait(80);window->grabWindow().save(QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("settings-dark.png")));
         const QString settingsFile=QDir(AppDataPaths::root()).filePath(QStringLiteral("settings.json"));
@@ -1482,7 +1758,7 @@ private slots:
         QVERIFY(controller.addHotkey(Qt::Key_F19,Qt::ControlModifier,QStringLiteral("saveScreenshot"),QString(),QString()));
         controller.setCurrentPage(QStringLiteral("Hotkeys"));
         QQmlApplicationEngine engine;engine.addImageProvider(QStringLiteral("thumbnail"),new ThumbnailProvider);
-        for(const auto &entry:QList<QPair<QString,QObject *>>{{QStringLiteral("app"),&controller},{QStringLiteral("settings"),controller.settings()},{QStringLiteral("profiles"),controller.profiles()},{QStringLiteral("screenshots"),controller.screenshots()},{QStringLiteral("hotkeys"),controller.hotkeys()},{QStringLiteral("actions"),controller.actions()},{QStringLiteral("actionRunner"),controller.actionRunner()}})engine.rootContext()->setContextProperty(entry.first,entry.second);
+        for(const auto &entry:QList<QPair<QString,QObject *>>{{QStringLiteral("app"),&controller},{QStringLiteral("settings"),controller.settings()},{QStringLiteral("profiles"),controller.profiles()},{QStringLiteral("screenshots"),controller.screenshots()},{QStringLiteral("clipboardHistory"),controller.clipboardHistory()},{QStringLiteral("hotkeys"),controller.hotkeys()},{QStringLiteral("actions"),controller.actions()},{QStringLiteral("actionRunner"),controller.actionRunner()}})engine.rootContext()->setContextProperty(entry.first,entry.second);
         QSignalSpy warnings(&engine,&QQmlEngine::warnings);engine.loadFromModule(QStringLiteral("ScreenshotHotkeyManagerTest"),QStringLiteral("Main"));QVERIFY(!engine.rootObjects().isEmpty());
         auto *window=qobject_cast<QQuickWindow *>(engine.rootObjects().first());QVERIFY(window);window->show();QVERIFY(QTest::qWaitForWindowExposed(window));QTest::qWait(80);
         auto *picker=findItem(window->contentItem(),QStringLiteral("hotkeyActionTypePicker"));QVERIFY(picker);

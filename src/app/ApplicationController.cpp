@@ -28,19 +28,26 @@ bool isReservedPasteShortcut(int key, int modifiers)
 
 ApplicationController::ApplicationController(QObject *parent)
     : QObject(parent), m_settings(this), m_profiles(&m_settings, this),
-      m_screenshots(&m_profiles, &m_settings, this), m_actions(&m_profiles, this),
-      m_actionRunner(&m_actions, &m_profiles, &m_screenshots, this), m_hotkeys(&m_profiles, this)
+      m_screenshots(&m_profiles, &m_settings, this),
+      m_clipboardHistory(&m_screenshots, &m_settings, this), m_actions(&m_profiles, this),
+      m_actionRunner(&m_actions, &m_profiles, &m_screenshots, this), m_hotkeys(&m_profiles, &m_settings, this)
 {
     createTrayIcon();
     connect(&m_settings,&SettingsManager::errorOccurred,this,[this](const QString &message){setStatus(message,true,true);});
     connect(&m_hotkeys,&HotkeyManager::registrationFailed,this,[this](const QString &message){setStatus(message,true,true);});
-    connect(QCoreApplication::instance(),&QCoreApplication::aboutToQuit,this,[this]{m_actionRunner.cancel();m_hotkeys.setRecording(true);m_screenshots.finishPendingSaves();});
+    connect(QCoreApplication::instance(),&QCoreApplication::aboutToQuit,this,[this]{m_actionRunner.cancel();m_hotkeys.setRecording(true);m_clipboardHistory.finishPendingSaves();m_screenshots.finishPendingSaves();});
     const QStringList startup=m_settings.startupMessages()+m_profiles.startupMessages()+m_actions.startupMessages();
     if(!startup.isEmpty())QTimer::singleShot(0,this,[this,startup]{setStatus(startup.join(QLatin1Char('\n')),true,true);});
     connect(&m_screenshots, &ScreenshotManager::messageChanged,
             this, &ApplicationController::onScreenshotMessage);
     connect(&m_screenshots, &ScreenshotManager::automaticClipboardSavingChanged,
             this, &ApplicationController::rebuildTrayMenu);
+    connect(&m_clipboardHistory, &ClipboardHistoryManager::messageChanged, this,
+            [this](const QString &message, bool isError) { setStatus(message, isError, true); });
+    connect(&m_clipboardHistory, &ClipboardHistoryManager::pausedChanged,
+            this, &ApplicationController::rebuildTrayMenu);
+    connect(&m_hotkeys, &HotkeyManager::clipboardHistoryTriggered,
+            this, &ApplicationController::toggleClipboardHistoryPopup);
     connect(&m_profiles, &ProfileManager::errorOccurred, this, [this](const QString &message) {
         setStatus(message, true, true);
     });
@@ -105,6 +112,7 @@ ApplicationController::~ApplicationController()
 SettingsManager *ApplicationController::settings() { return &m_settings; }
 ProfileManager *ApplicationController::profiles() { return &m_profiles; }
 ScreenshotManager *ApplicationController::screenshots() { return &m_screenshots; }
+ClipboardHistoryManager *ApplicationController::clipboardHistory() { return &m_clipboardHistory; }
 HotkeyManager *ApplicationController::hotkeys() { return &m_hotkeys; }
 ActionManager *ApplicationController::actions() { return &m_actions; }
 ActionSequenceRunner *ApplicationController::actionRunner() { return &m_actionRunner; }
@@ -210,6 +218,54 @@ void ApplicationController::exitApplication()
 void ApplicationController::saveClipboardScreenshot()
 {
     m_screenshots.saveClipboardImage();
+}
+
+void ApplicationController::toggleClipboardHistoryPopup()
+{
+    setClipboardHistoryPopupVisible(!m_clipboardHistoryPopupVisible);
+}
+
+void ApplicationController::setClipboardHistoryPopupVisible(bool visible)
+{
+    if (m_clipboardHistoryPopupVisible == visible)
+        return;
+    m_clipboardHistoryPopupVisible = visible;
+    if (visible)
+        m_clipboardHistory.refresh();
+    emit clipboardHistoryPopupVisibleChanged();
+}
+
+bool ApplicationController::setClipboardHistoryShortcut(int key, int modifiers)
+{
+    if (key != 0 && isReservedPasteShortcut(key, modifiers)) {
+        setStatus(QStringLiteral("Ctrl+V is reserved for screenshot paste while the Screenshots page is open."), true);
+        return false;
+    }
+    if (key != 0 && !HotkeyManager::isSupportedKey(key, modifiers)) {
+        setStatus(QStringLiteral("Choose a supported shortcut with at least one modifier."), true);
+        return false;
+    }
+    if (key != 0) {
+        auto conflicts = [key, modifiers](const QVector<HotkeyAssignment> &assignments) {
+            for (const HotkeyAssignment &assignment : assignments)
+                if (assignment.enabled && assignment.key == key && assignment.modifiers == modifiers)
+                    return true;
+            return false;
+        };
+        bool conflict = conflicts(m_profiles.globalProfile().hotkeys);
+        for (const Profile &profile : m_profiles.profiles()) {
+            conflict = conflict || (profile.activationKey == key && profile.activationModifiers == modifiers) || conflicts(profile.hotkeys);
+        }
+        conflict = conflict || (m_profiles.globalProfile().activationKey == key &&
+                                m_profiles.globalProfile().activationModifiers == modifiers);
+        if (conflict) {
+            setStatus(QStringLiteral("That shortcut is already assigned. Choose a different combination."), true);
+            return false;
+        }
+    }
+    if (!m_settings.setClipboardHistoryShortcut(key, modifiers))
+        return false;
+    return true;
 }
 
 void ApplicationController::chooseScreenshotDestination()
@@ -464,6 +520,13 @@ void ApplicationController::rebuildTrayMenu()
     connect(openAction, &QAction::triggered, this, &ApplicationController::showWindow);
     QAction *saveAction = m_trayMenu->addAction(QStringLiteral("Save Clipboard Screenshot"));
     connect(saveAction, &QAction::triggered, this, &ApplicationController::saveClipboardScreenshot);
+    QAction *historyAction = m_trayMenu->addAction(QStringLiteral("Open Clipboard History"));
+    connect(historyAction, &QAction::triggered, this, [this] { showPage(QStringLiteral("Clipboard History")); });
+    QAction *historyPauseAction = m_trayMenu->addAction(
+        m_clipboardHistory.paused() ? QStringLiteral("Resume Clipboard History") : QStringLiteral("Pause Clipboard History"));
+    connect(historyPauseAction, &QAction::triggered, this, [this] {
+        m_clipboardHistory.setPaused(!m_clipboardHistory.paused());
+    });
     const bool autoEnabled = m_screenshots.automaticClipboardSavingEnabled();
     const bool paused = m_screenshots.automaticClipboardSavingPaused();
     QAction *autoSaveAction = m_trayMenu->addAction(
@@ -509,6 +572,9 @@ void ApplicationController::setStatus(const QString &message, bool isError, bool
 
 bool ApplicationController::hasBindingConflict(int key, int modifiers, const QString &exceptId) const
 {
+    if (exceptId != QStringLiteral("clipboard-history") && m_settings.clipboardHistoryShortcutKey() == key &&
+        m_settings.clipboardHistoryShortcutModifiers() == modifiers)
+        return true;
     QString exceptProfileId;
     if (exceptId.startsWith(QStringLiteral("activation:")))
         exceptProfileId = exceptId.mid(QStringLiteral("activation:").size());

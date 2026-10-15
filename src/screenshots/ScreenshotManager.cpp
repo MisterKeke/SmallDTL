@@ -291,6 +291,82 @@ QString ScreenshotManager::saveClipboardImage()
     return path;
 }
 
+bool ScreenshotManager::saveHistoryImage(const QString &payloadPath, const QString &tagId)
+{
+    m_lastSaveError.clear();
+    if (!m_databaseReady) {
+        m_lastSaveError = m_database.lastError().isEmpty() ? QStringLiteral("Screenshot database is unavailable.") : m_database.lastError();
+        emit messageChanged(m_lastSaveError, true);
+        return false;
+    }
+    const QFileInfo payload(payloadPath);
+    if (!payload.exists() || !payload.isFile()) {
+        m_lastSaveError = QStringLiteral("The clipboard history image payload is missing.");
+        emit messageChanged(m_lastSaveError, true);
+        return false;
+    }
+    QImageReader reader(payload.absoluteFilePath());
+    const QSize dimensions = reader.size();
+    constexpr qint64 maximumBytes = 256LL * 1024 * 1024;
+    if (!dimensions.isValid() || qint64(dimensions.width()) * dimensions.height() > 64LL * 1024 * 1024 ||
+        qint64(dimensions.width()) * dimensions.height() * 4 > maximumBytes) {
+        m_lastSaveError = QStringLiteral("Image exceeds the 64 megapixel / 256 MiB limit.");
+        emit messageChanged(m_lastSaveError, true);
+        return false;
+    }
+    if (!tagId.isEmpty()) {
+        bool found = false;
+        for (const ScreenshotTag &tag : m_database.tags())
+            found = found || tag.id == tagId;
+        if (!found) {
+            m_lastSaveError = QStringLiteral("The selected screenshot tag is unavailable.");
+            emit messageChanged(m_lastSaveError, true);
+            return false;
+        }
+    }
+    const QString directoryPath = resolvedDestination();
+    if (!QFileInfo(directoryPath).isDir()) {
+        m_lastSaveError = QStringLiteral("Screenshot destination is unavailable: %1").arg(directoryPath);
+        emit messageChanged(m_lastSaveError, true);
+        return false;
+    }
+    qint64 queuedBytes = m_fingerprintBytes;
+    for (const qint64 bytes : m_pendingBytes)
+        queuedBytes += bytes;
+    const qint64 reservedBytes = qint64(dimensions.width()) * dimensions.height() * 4;
+    if (queuedBytes + reservedBytes > 512LL * 1024 * 1024 || m_pendingPaths.size() + m_fingerprintJobs.size() >= 2) {
+        m_lastSaveError = QStringLiteral("Two screenshot saves are already pending. Try again when a save finishes.");
+        emit messageChanged(m_lastSaveError, true);
+        return false;
+    }
+    const QString targetPath = nextFilePath(directoryPath);
+    SaveMetadata metadata;
+    metadata.source = QStringLiteral("clipboard-history");
+    metadata.tagId = tagId;
+    m_pendingPaths.insert(targetPath);
+    m_pendingBytes.insert(targetPath, reservedBytes);
+    m_saveMetadata.insert(targetPath, metadata);
+    auto *watcher = new QFutureWatcher<SaveResult>(this);
+    connect(watcher, &QFutureWatcher<SaveResult>::finished, this, [this, watcher, targetPath] {
+        const SaveResult result = watcher->result();
+        watcher->deleteLater();
+        completeSave(targetPath, result);
+    });
+    const QString sourcePath = payload.absoluteFilePath();
+    const QFuture<SaveResult> future = QtConcurrent::run([sourcePath, targetPath] {
+        QImageReader sourceReader(sourcePath);
+        const QImage image = sourceReader.read();
+        if (image.isNull())
+            return SaveResult{false, sourceReader.errorString()};
+        if (qint64(image.width()) * image.height() > 64LL * 1024 * 1024 || image.sizeInBytes() > 256LL * 1024 * 1024)
+            return SaveResult{false, QStringLiteral("Image exceeds the 64 megapixel / 256 MiB limit.")};
+        return writeImage(image, targetPath);
+    });
+    m_jobs.insert(targetPath, future);
+    watcher->setFuture(future);
+    return true;
+}
+
 void ScreenshotManager::queueImageWrite(const QImage &image, const QString &path, const SaveMetadata &metadata)
 {
     m_pendingPaths.insert(path);
@@ -323,7 +399,7 @@ void ScreenshotManager::completeSave(const QString &path,const SaveResult &resul
         }
         if (!addToCollection(path, metadata.sourceScreenshotId, metadata.inheritTags,
                              metadata.captureProfileId, metadata.tagId, metadata.source)) {
-            if (isEdited)
+            if (isEdited || metadata.source == QStringLiteral("clipboard-history"))
                 QFile::remove(path);
             if (metadata.automatic)
                 m_inFlightAutomaticFingerprints.remove(metadata.automaticFingerprint);

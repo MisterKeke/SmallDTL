@@ -49,6 +49,7 @@ Rectangle {
             model: [
                 { name: "Dashboard", glyph: "◫" },
                 { name: "Screenshots", glyph: "▧" },
+                { name: "Clipboard History", glyph: "▤" },
                 { name: "Hotkeys", glyph: "⌘" },
                 { name: "Profiles", glyph: "◉" },
                 { name: "Actions", glyph: "ϟ" }

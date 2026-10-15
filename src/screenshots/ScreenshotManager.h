@@ -114,6 +114,8 @@ public:
     bool automaticClipboardSavingPaused() const { return m_automaticClipboardSavingPaused; }
     bool databaseReady() const { return m_databaseReady; }
     QString databaseError() const { return m_database.lastError(); }
+    ScreenshotDatabase *database() { return &m_database; }
+    ClipboardService *clipboardService() { return &m_clipboardService; }
     QString profileDestination(const QString &profileId) const;
     QString generalDestination() const;
 
@@ -122,6 +124,7 @@ public:
     Q_INVOKABLE void selectDestination(const QString &directory);
 
     Q_INVOKABLE QString saveClipboardImage();
+    Q_INVOKABLE bool saveHistoryImage(const QString &payloadPath, const QString &tagId = {});
     Q_INVOKABLE bool openImage(const QString &path) const;
     Q_INVOKABLE bool openContainingFolder(const QString &path) const;
     Q_INVOKABLE bool copyImageToClipboard(const QString &path);

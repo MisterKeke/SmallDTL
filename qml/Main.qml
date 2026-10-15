@@ -81,6 +81,7 @@ ApplicationWindow {
                         }
                         Label {
                             text: app.currentPage === "Screenshots" ? "Capture and organize clipboard images"
+                                  : app.currentPage === "Clipboard History" ? "Find and restore copied text, images, and file references"
                                   : app.currentPage === "Profiles" ? "Keep shortcuts and destinations organized"
                                   : app.currentPage === "Hotkeys" ? (hotkeys.globalScope ? "Shortcuts available across every profile" : "Global shortcuts for the active profile")
                                   : app.currentPage === "Actions" ? "Compose ordered actions and run them from a shortcut"
@@ -164,14 +165,103 @@ ApplicationWindow {
                     Layout.fillHeight: true
                     currentIndex: app.currentPage === "Dashboard" ? 0 : app.currentPage === "Screenshots" ? 1
                                   : app.currentPage === "Profiles" ? 2 : app.currentPage === "Hotkeys" ? 3
-                                  : app.currentPage === "Actions" ? 4 : 5
+                                  : app.currentPage === "Actions" ? 4 : app.currentPage === "Settings" ? 5 : 6
                     DashboardPage {}
                     ScreenshotsPage {}
                     ProfilesPage {}
                     HotkeysPage {}
                     ActionsPage {}
                     SettingsPage {}
+                    ClipboardHistoryPage {}
                 }
+            }
+        }
+    }
+
+    Window {
+        id: clipboardHistoryPopup
+        objectName: "clipboardHistoryPopup"
+        visible: app.clipboardHistoryPopupVisible
+        width: 510
+        height: 650
+        minimumWidth: 440
+        minimumHeight: 420
+        title: "Clipboard History"
+        color: settings.palette["#111216"]
+        transientParent: null
+        Material.theme: settings.darkTheme ? Material.Dark : Material.Light
+        Material.accent: settings.palette["#e96782"]
+        Material.primary: settings.palette["#39222b"]
+        Material.background: settings.palette["#191a20"]
+        Material.foreground: settings.palette["#f2f1f4"]
+        flags: Qt.Tool | Qt.WindowStaysOnTopHint
+        onVisibleChanged: if (visible) { x = Math.max(0, (Screen.width - width) / 2); y = Math.max(0, (Screen.height - height) / 3); popupSearch.forceActiveFocus() }
+        onClosing: app.setClipboardHistoryPopupVisible(false)
+
+        Shortcut { sequence: "Escape"; context: Qt.WindowShortcut; onActivated: app.setClipboardHistoryPopupVisible(false) }
+
+        ColumnLayout {
+            x: 14
+            y: 14
+            width: clipboardHistoryPopup.width - 28
+            height: clipboardHistoryPopup.height - 28
+            spacing: 10
+            RowLayout {
+                Layout.fillWidth: true
+                Label { text: "Clipboard History"; font.pixelSize: 18; font.weight: Font.DemiBold; Layout.fillWidth: true }
+                ToolButton { text: clipboardHistory.paused ? "▶" : "Ⅱ"; Accessible.name: clipboardHistory.paused ? "Resume clipboard history" : "Pause clipboard history"; onClicked: clipboardHistory.setPaused(!clipboardHistory.paused) }
+                ToolButton { text: "×"; Accessible.name: "Clear clipboard history"; enabled: clipboardHistory.count > 0; onClicked: clipboardHistory.clearHistory() }
+            }
+            TextField {
+                id: popupSearch
+                objectName: "clipboardHistoryPopupSearch"
+                Layout.fillWidth: true
+                placeholderText: "Search clipboard history"
+                text: clipboardHistory.search
+                onTextEdited: clipboardHistory.setSearch(text)
+            }
+            Label { Layout.fillWidth: true; text: clipboardHistory.paused ? "Capture paused" : "Select an item to copy it to the clipboard"; color: settings.palette["#9697a3"]; font.pixelSize: 10 }
+            ListView {
+                objectName: "clipboardHistoryPopupList"
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                spacing: 6
+                model: clipboardHistory.model
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                delegate: Rectangle {
+                    id: popupEntry
+                    required property string entryId
+                    required property string contentType
+                    required property string capturedAt
+                    required property string preview
+                    required property url imageUrl
+                    required property int fileCount
+                    required property bool pinned
+                    required property bool missing
+                    width: ListView.view.width
+                    height: contentType === "image" ? 104 : 78
+                    radius: 9
+                    color: popupMouse.containsMouse ? settings.palette["#22232a"] : settings.palette["#191a20"]
+                    border.color: settings.palette["#2d2e37"]
+                    MouseArea { id: popupMouse; anchors.fill: parent; hoverEnabled: true; onClicked: clipboardHistory.restoreEntry(popupEntry.entryId) }
+                    RowLayout {
+                        anchors.fill: parent; anchors.margins: 8; spacing: 9
+                        Image { visible: popupEntry.contentType === "image"; Layout.preferredWidth: 88; Layout.preferredHeight: 86; source: popupEntry.imageUrl; fillMode: Image.PreserveAspectFit; asynchronous: true; cache: false }
+                        ColumnLayout {
+                            Layout.fillWidth: true; Layout.fillHeight: true; spacing: 3
+                            Label { text: popupEntry.contentType === "files" ? "Files · " + popupEntry.fileCount : popupEntry.contentType === "image" ? "Image" : "Text"; color: settings.palette["#e7a0b1"]; font.pixelSize: 10; font.weight: Font.DemiBold }
+                            Label { Layout.fillWidth: true; Layout.fillHeight: true; text: popupEntry.missing ? "Missing content or file reference" : popupEntry.preview; color: popupEntry.missing ? settings.palette["#ff8d9c"] : settings.palette["#dedde2"]; font.pixelSize: 10; wrapMode: Text.WrapAnywhere; maximumLineCount: 2; elide: Text.ElideRight }
+                            Label { text: popupEntry.capturedAt + (popupEntry.pinned ? "  ·  Pinned" : ""); color: settings.palette["#898a95"]; font.pixelSize: 8 }
+                        }
+                        ColumnLayout {
+                            spacing: 0
+                            ToolButton { text: popupEntry.pinned ? "◆" : "◇"; Accessible.name: popupEntry.pinned ? "Unpin entry" : "Pin entry"; onClicked: clipboardHistory.setPinned(popupEntry.entryId, !popupEntry.pinned) }
+                            ToolButton { text: "×"; Accessible.name: "Delete entry"; onClicked: clipboardHistory.deleteEntry(popupEntry.entryId) }
+                        }
+                    }
+                }
+                Label { anchors.centerIn: parent; visible: clipboardHistory.count === 0; text: clipboardHistory.paused ? "History capture is paused" : "No clipboard items"; color: settings.palette["#9697a3"]; font.pixelSize: 11 }
             }
         }
     }
