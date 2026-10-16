@@ -3,6 +3,7 @@
 #include <QRect>
 #include <QString>
 #include <algorithm>
+#include <cmath>
 
 namespace WindowArrangementGeometry {
 
@@ -14,20 +15,23 @@ struct NormalizedRect { double x=0, y=0, width=1, height=1; };
 inline NormalizedRect normalize(const QRect &rect, const QRect &workArea)
 {
     if (workArea.width() <= 0 || workArea.height() <= 0) return {};
-    return {double(rect.x()-workArea.x())/workArea.width(),
-            double(rect.y()-workArea.y())/workArea.height(),
+    return {(double(rect.x())-workArea.x())/workArea.width(),
+            (double(rect.y())-workArea.y())/workArea.height(),
             double(rect.width())/workArea.width(),
             double(rect.height())/workArea.height()};
 }
 
 inline QRect denormalize(const NormalizedRect &rect, const QRect &workArea)
 {
-    if (workArea.width() <= 0 || workArea.height() <= 0) return {};
-    const int width=std::clamp(qRound(rect.width*workArea.width()),1,workArea.width());
-    const int height=std::clamp(qRound(rect.height*workArea.height()),1,workArea.height());
-    const int x=workArea.x()+qRound(rect.x*workArea.width());
-    const int y=workArea.y()+qRound(rect.y*workArea.height());
-    return QRect(x,y,width,height).intersected(workArea);
+    if (workArea.width() <= 0 || workArea.height() <= 0 ||
+        !std::isfinite(rect.x) || !std::isfinite(rect.y) ||
+        !std::isfinite(rect.width) || !std::isfinite(rect.height) ||
+        rect.width <= 0 || rect.height <= 0) return {};
+    const int width=qRound(std::clamp(rect.width*workArea.width(),1.0,double(workArea.width())));
+    const int height=qRound(std::clamp(rect.height*workArea.height(),1.0,double(workArea.height())));
+    const int x=workArea.x()+qRound(std::clamp(rect.x*workArea.width(),0.0,double(workArea.width()-width)));
+    const int y=workArea.y()+qRound(std::clamp(rect.y*workArea.height(),0.0,double(workArea.height()-height)));
+    return QRect(x,y,width,height);
 }
 
 inline NormalizedRect placement(const QString &kind)

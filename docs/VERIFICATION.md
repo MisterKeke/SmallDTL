@@ -1,5 +1,13 @@
 # Verification record
 
+## Minimized-window layout persistence and recovery — 2026-10-16
+
+The previous build could save a minimized window's tiny rectangle at `(-32000,-32000)`, then reject its own normalized coordinates on restart. Saving now reads live restored bounds without restoring the window, retains whether a minimized window should return maximized, constrains placement to the work area, and validates serialized layouts before committing. Applying a placement sets restored bounds and show state in one asynchronous native operation, including when the target was minimized from maximized state.
+
+Recognizable legacy minimized-window records are recovered only if the remaining file validates. Recovery keeps layout IDs, profile references, rules, and monitor nicknames, centers the affected placement, and preserves the original bytes in a uniquely named backup before the atomic write. Unrelated invalid data stays unchanged and write-protected.
+
+Focused Release checks reported **7 passes, 0 failures, 0 skips**, including initialization/cleanup. They cover recovery and a second restart, byte-identical backups, retained monitor nicknames, rejection of unrelated invalid data, off-screen placement bounds, and saving/applying a real native helper window minimized both from normal and maximized states. The helper is the only window manipulated by these checks. Evidence: `build-release/layout-recovery-results.txt`. User configuration was inspected read-only during development; recovery happens when the updated application starts.
+
 ## Text layout and friendly monitor names — 2026-10-16
 
 Clipboard History now uses a valid palette entry in the page and detached popup, and row heights follow their contents so buttons and timestamps remain inside their cards. QR input/output use inset, wrapped placeholders; narrow windows stack the Generate and Decode panels in a scrolling page instead of overlapping them. Windows display choices, window rows, and layout previews show reported model names, full display resolution, and primary status. Missing model names fall back to numbered labels; identical names are disambiguated. Optional nicknames persist separately from layout device identifiers in `window-layouts.json`.

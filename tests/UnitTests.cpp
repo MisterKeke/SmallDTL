@@ -126,6 +126,11 @@ private slots:
         QVERIFY(moved.x()>=changedDpiArea.x());
         QVERIFY(moved.y()>=changedDpiArea.y());
         QVERIFY(changedDpiArea.contains(moved));
+        // A partly or wholly off-screen saved window must remain usable, with
+        // its size preserved rather than being clipped to an empty rectangle.
+        QCOMPARE(WindowArrangementGeometry::denormalize({-4,-4,0.5,0.5},workArea),QRect(-1920,80,960,500));
+        QCOMPARE(WindowArrangementGeometry::denormalize({4,4,0.5,0.5},workArea),QRect(-960,580,960,500));
+        QCOMPARE(WindowArrangementGeometry::denormalize({0,0,4,4},workArea),workArea);
     }
 
     void windowArrangementMatchingReportsAmbiguityAndFiltersTitles()
@@ -150,6 +155,57 @@ private slots:
         {WindowArrangementManager restarted(&profiles);QCOMPARE(restarted.layoutOptions().size(),1);QCOMPARE(restarted.layoutInfo(layout.id).value(QStringLiteral("name")).toString(),layout.name);QTRY_VERIFY_WITH_TIMEOUT(!restarted.busy(),5000);}
     }
 
+    void windowArrangementRecoversMinimizedLayout_data()
+    {
+        QTest::addColumn<bool>("otherInvalidData");
+        QTest::newRow("recover-minimized-position")<<false;
+        QTest::newRow("preserve-unrelated-invalid-data")<<true;
+    }
+
+    void windowArrangementRecoversMinimizedLayout()
+    {
+        QFETCH(bool,otherInvalidData);
+        SettingsManager settings;ProfileManager profiles(&settings);
+        WindowLayout layout;layout.id=QStringLiteral("existing-layout");layout.name=QStringLiteral("Testing");layout.profileId=profiles.activeProfileId();
+        layout.rules.append({QStringLiteral("C:/Apps/Chrome.exe"),QString(),QStringLiteral("\\\\.\\DISPLAY5"),
+                             {-17.094017094017094,-29.62962962962963,0.08547008547008547,0.025925925925925925},false});
+        auto object=WindowArrangementManager::serializeLayout(layout);
+        if(otherInvalidData)object.insert(QStringLiteral("name"),42);
+        const QJsonObject names{{QStringLiteral("monitor-device-path"),QStringLiteral("BigMonitor")}};
+        const QByteArray original=QJsonDocument(QJsonObject{{QStringLiteral("schemaVersion"),1},
+            {QStringLiteral("layouts"),QJsonArray{object}},{QStringLiteral("monitorNicknames"),names}}).toJson();
+        QVERIFY(QDir().mkpath(AppDataPaths::root()));
+        const QString path=QDir(AppDataPaths::root()).filePath(QStringLiteral("window-layouts.json"));
+        QFile file(path);QVERIFY(file.open(QIODevice::WriteOnly));QCOMPARE(file.write(original),qint64(original.size()));file.close();
+        {
+            WindowArrangementManager manager(&profiles);QTRY_VERIFY_WITH_TIMEOUT(!manager.busy(),5000);
+            QCOMPARE(manager.containsLayout(layout.id),!otherInvalidData);
+            if(!otherInvalidData){
+                QCOMPARE(manager.layouts().size(),1);
+                QVERIFY(manager.status().contains(QStringLiteral("Recovered saved layouts")));
+                QCOMPARE(manager.layoutSlots(layout.id).first().toMap().value(QStringLiteral("width")).toDouble(),0.6);
+                QVERIFY(manager.renameLayout(layout.id,QStringLiteral("Recovered testing")));
+            }else if(!manager.monitors().isEmpty()){
+                QVERIFY(!manager.setMonitorNickname(manager.monitors().first().toMap().value(QStringLiteral("device")).toString(),QStringLiteral("Do not write")));
+            }
+        }
+        const QStringList backups=QDir(AppDataPaths::root()).entryList({QStringLiteral("window-layouts.json.before-minimized-recovery-*.bak")},QDir::Files);
+        QCOMPARE(backups.size(),otherInvalidData?0:1);
+        QVERIFY(file.open(QIODevice::ReadOnly));const QByteArray current=file.readAll();file.close();
+        if(otherInvalidData){QCOMPARE(current,original);return;}
+        QFile backup(QDir(AppDataPaths::root()).filePath(backups.first()));QVERIFY(backup.open(QIODevice::ReadOnly));QCOMPARE(backup.readAll(),original);
+        const auto root=QJsonDocument::fromJson(current).object();
+        QCOMPARE(root.value(QStringLiteral("monitorNicknames")).toObject(),names);
+        WindowLayout restored;QVERIFY(WindowArrangementManager::parseLayout(root.value(QStringLiteral("layouts")).toArray().first().toObject(),&restored));
+        QCOMPARE(restored.id,layout.id);QCOMPARE(restored.profileId,layout.profileId);QCOMPARE(restored.rules.first().executable,layout.rules.first().executable);
+        {
+            WindowArrangementManager restarted(&profiles);QTRY_VERIFY_WITH_TIMEOUT(!restarted.busy(),5000);
+            QCOMPARE(restarted.layoutInfo(layout.id).value(QStringLiteral("name")).toString(),QStringLiteral("Recovered testing"));
+            QVERIFY(restarted.renameLayout(layout.id,QStringLiteral("Still writable")));
+        }
+        QCOMPARE(QDir(AppDataPaths::root()).entryList({QStringLiteral("*.bak")},QDir::Files).size(),1);
+    }
+
     void windowLayoutHotkeyAndSequenceReferencesPersist()
     {
         SettingsManager settings;ProfileManager profiles(&settings);const QString profileId=profiles.activeProfileId();
@@ -165,6 +221,56 @@ private slots:
     }
 
 #ifdef Q_OS_WIN
+    void windowLayoutSavesRestoredGeometryForMinimizedWindow()
+    {
+        QProcess helperProcess;
+        const auto closeHelper=qScopeGuard([&]{helperProcess.kill();helperProcess.waitForFinished(3000);});
+        helperProcess.start(QString::fromUtf8(SMALLDTL_TEST_WINDOW_HELPER));
+        QVERIFY(helperProcess.waitForStarted());
+        HWND helper=nullptr;
+        QTRY_VERIFY_WITH_TIMEOUT((helper=FindWindowW(nullptr,L"SmallDTL Test Arrangement Window"))!=nullptr,5000);
+        SettingsManager settings;ProfileManager profiles(&settings);
+        QString minimizedId,maximizedId;
+        QRect expectedApplied;
+        {
+            WindowArrangementManager manager(&profiles);QTRY_VERIFY_WITH_TIMEOUT(!manager.busy(),5000);
+            const QString windowId=QString::number(reinterpret_cast<quintptr>(helper));
+            manager.setWindowSelected(windowId,true);
+            // Change bounds after enumeration to verify save reads live geometry.
+            QVERIFY(SetWindowPos(helper,nullptr,100,120,640,480,SWP_NOZORDER|SWP_NOACTIVATE));
+            WINDOWPLACEMENT placement{};placement.length=sizeof(placement);QVERIFY(GetWindowPlacement(helper,&placement));
+            MONITORINFO info{};info.cbSize=sizeof(info);QVERIFY(GetMonitorInfoW(MonitorFromWindow(helper,MONITOR_DEFAULTTONEAREST),&info));
+            const QRect workArea(info.rcWork.left,info.rcWork.top,info.rcWork.right-info.rcWork.left,info.rcWork.bottom-info.rcWork.top);
+            RECT restoredRect=placement.rcNormalPosition;
+            OffsetRect(&restoredRect,info.rcWork.left-info.rcMonitor.left,info.rcWork.top-info.rcMonitor.top);
+            const QRect expected(restoredRect.left,restoredRect.top,restoredRect.right-restoredRect.left,restoredRect.bottom-restoredRect.top);
+            expectedApplied=WindowArrangementGeometry::denormalize(WindowArrangementGeometry::normalize(expected,workArea),workArea);
+            QVERIFY(ShowWindowAsync(helper,SW_MINIMIZE));QTRY_VERIFY_WITH_TIMEOUT(IsIconic(helper),5000);
+            minimizedId=manager.saveSelectedLayout(QStringLiteral("Minimized"));QVERIFY2(!minimizedId.isEmpty(),qPrintable(manager.status()));
+            QVERIFY(IsIconic(helper));
+            const auto saved=manager.layoutSlots(minimizedId).first().toMap();
+            const WindowArrangementGeometry::NormalizedRect rect{saved.value(QStringLiteral("x")).toDouble(),saved.value(QStringLiteral("y")).toDouble(),saved.value(QStringLiteral("width")).toDouble(),saved.value(QStringLiteral("height")).toDouble()};
+            QCOMPARE(WindowArrangementGeometry::denormalize(rect,workArea),WindowArrangementGeometry::denormalize(WindowArrangementGeometry::normalize(expected,workArea),workArea));
+            QVERIFY(!saved.value(QStringLiteral("maximized")).toBool());
+            manager.refreshWindows();QTRY_VERIFY_WITH_TIMEOUT(!manager.busy(),5000);
+            QVERIFY(!manager.saveSelectedLayout(QStringLiteral("Enumerated while minimized")).isEmpty());
+            QVERIFY(ShowWindowAsync(helper,SW_MAXIMIZE));QTRY_VERIFY_WITH_TIMEOUT(IsZoomed(helper),5000);
+            QVERIFY(ShowWindowAsync(helper,SW_MINIMIZE));QTRY_VERIFY_WITH_TIMEOUT(IsIconic(helper),5000);
+            maximizedId=manager.saveSelectedLayout(QStringLiteral("Minimized from maximized"));QVERIFY(!maximizedId.isEmpty());
+            QVERIFY(manager.layoutSlots(maximizedId).first().toMap().value(QStringLiteral("maximized")).toBool());
+        }
+        WindowArrangementManager restarted(&profiles);QTRY_VERIFY_WITH_TIMEOUT(!restarted.busy(),5000);
+        QCOMPARE(restarted.layouts().size(),3);QVERIFY(restarted.containsLayout(minimizedId));QVERIFY(restarted.containsLayout(maximizedId));
+        QVERIFY(restarted.renameLayout(minimizedId,QStringLiteral("Survives restart")));
+        QSignalSpy applied(&restarted,&WindowArrangementManager::layoutApplyFinished);
+        QVERIFY(restarted.applyLayout(minimizedId));QTRY_COMPARE_WITH_TIMEOUT(applied.count(),1,5000);
+        QVERIFY(applied.first().at(1).toBool());QTRY_VERIFY_WITH_TIMEOUT(!IsIconic(helper)&&!IsZoomed(helper),5000);
+        QTRY_VERIFY_WITH_TIMEOUT([&]{
+            RECT actual{};if(!GetWindowRect(helper,&actual))return false;
+            return QRect(actual.left,actual.top,actual.right-actual.left,actual.bottom-actual.top)==expectedApplied;
+        }(),5000);
+    }
+
     void windowLayoutSequenceRefreshesNewlyLaunchedWindows()
     {
         const QString helperPath = QString::fromUtf8(SMALLDTL_TEST_WINDOW_HELPER);

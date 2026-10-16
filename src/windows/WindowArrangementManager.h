@@ -148,6 +148,7 @@ private:
     QString m_selectedLayoutId;
     QString m_previewLayoutId;
     QString m_status;
+    QString m_startupNotice;
     bool m_busy=false;
     bool m_storeInvalid=false;
 };

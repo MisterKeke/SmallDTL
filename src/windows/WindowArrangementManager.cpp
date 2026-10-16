@@ -30,6 +30,28 @@ namespace {
 QString makeId(){return QUuid::createUuid().toString(QUuid::WithoutBraces);}
 QString normalizedExecutable(const QString &path){return WindowArrangementMatching::identity(path);}
 #ifdef Q_OS_WIN
+// Minimized GetWindowRect coordinates describe the iconic window, not its
+// restored position. WINDOWPLACEMENT uses workspace coordinates for app windows.
+bool readWindowGeometry(HWND hwnd,ArrangementWindow *window)
+{
+    WINDOWPLACEMENT placement{};placement.length=sizeof(placement);
+    MONITORINFOEXW info{};info.cbSize=sizeof(info);
+    if(!GetWindowPlacement(hwnd,&placement)||
+       !GetMonitorInfoW(MonitorFromWindow(hwnd,MONITOR_DEFAULTTONEAREST),&info))return false;
+    const bool minimized=IsIconic(hwnd)!=FALSE;
+    window->maximized=IsZoomed(hwnd)!=FALSE ||
+        (minimized&&(placement.flags&WPF_RESTORETOMAXIMIZED)!=0);
+    RECT rect{};
+    if(minimized||window->maximized){
+        rect=placement.rcNormalPosition;
+        if((GetWindowLongPtrW(hwnd,GWL_EXSTYLE)&WS_EX_TOOLWINDOW)==0)
+            OffsetRect(&rect,info.rcWork.left-info.rcMonitor.left,info.rcWork.top-info.rcMonitor.top);
+    }else if(!GetWindowRect(hwnd,&rect))return false;
+    window->rect=QRect(rect.left,rect.top,rect.right-rect.left,rect.bottom-rect.top);
+    window->monitor=QString::fromWCharArray(info.szDevice);
+    window->workArea=QRect(info.rcWork.left,info.rcWork.top,info.rcWork.right-info.rcWork.left,info.rcWork.bottom-info.rcWork.top);
+    return !window->rect.isEmpty()&&!window->workArea.isEmpty();
+}
 struct DisplayName { QString name; QString identity; };
 QHash<QString,DisplayName> displayNames()
 {
@@ -63,6 +85,28 @@ QHash<QString,DisplayName> displayNames()
     return {};
 }
 #endif
+// Older builds persisted the tiny iconic rectangle at (-32000,-32000).
+// Only recover that recognizable shape; all other fields must still validate.
+bool recoverMinimizedLayout(QJsonObject object,WindowLayout *layout)
+{
+    if(!object.value(QStringLiteral("slots")).isArray())return false;
+    auto entries=object.value(QStringLiteral("slots")).toArray();bool repaired=false;
+    for(int i=0;i<entries.size();++i){
+        auto slot=entries.at(i).toObject();
+        const auto x=slot.value(QStringLiteral("x")),y=slot.value(QStringLiteral("y"));
+        const auto width=slot.value(QStringLiteral("width")),height=slot.value(QStringLiteral("height"));
+        if(!x.isDouble()||!y.isDouble()||!width.isDouble()||!height.isDouble())continue;
+        if(!std::isfinite(x.toDouble())||!std::isfinite(y.toDouble())||
+           x.toDouble()>=-4||y.toDouble()>=-4||width.toDouble()<=0||width.toDouble()>=0.5||
+           height.toDouble()<=0||height.toDouble()>=0.1)continue;
+        const auto center=WindowArrangementGeometry::placement(QStringLiteral("center"));
+        slot.insert(QStringLiteral("x"),center.x);slot.insert(QStringLiteral("y"),center.y);
+        slot.insert(QStringLiteral("width"),center.width);slot.insert(QStringLiteral("height"),center.height);
+        entries[i]=slot;repaired=true;
+    }
+    object.insert(QStringLiteral("slots"),entries);
+    return repaired&&WindowArrangementManager::parseLayout(object,layout);
+}
 QVariantMap slotToMap(const WindowLayoutSlot &slot,int index){
     return {{QStringLiteral("index"),index},{QStringLiteral("executable"),slot.executable},
             {QStringLiteral("titleRule"),slot.titleRule},{QStringLiteral("monitor"),slot.monitor},
@@ -216,7 +260,9 @@ void WindowArrangementManager::finishWindowJob(const QVector<ArrangementWindow> 
 
     if (job.kind == WindowJobKind::Refresh) {
         rebuildPreview();
-        setStatus(QStringLiteral("Found %1 eligible open window(s). Select windows to arrange.").arg(m_windows.size()));
+        if(!m_startupNotice.isEmpty()){
+            setStatus(m_startupNotice);m_startupNotice.clear();
+        }else setStatus(QStringLiteral("Found %1 eligible open window(s). Select windows to arrange.").arg(m_windows.size()));
     } else if (job.kind == WindowJobKind::Preview) {
         if (m_selectedLayoutId == job.layoutId) {
             m_previewLayoutId = job.layoutId;
@@ -268,7 +314,7 @@ WindowArrangementManager::Monitor WindowArrangementManager::monitorFor(const QSt
 void WindowArrangementManager::capturePrevious(const QVector<quintptr> &handles){
     QVector<Snapshot> snapshot;
 #ifdef Q_OS_WIN
-    for(quintptr value:handles){const int row=windowIndex(value);if(row<0)continue;const ArrangementWindow &window=m_windows.at(row);HWND hwnd=reinterpret_cast<HWND>(value);RECT rect{};if(windowIdentityIsCurrent(window)&&GetWindowRect(hwnd,&rect))snapshot.append({value,window.processId,window.executable,QRect(rect.left,rect.top,rect.right-rect.left,rect.bottom-rect.top),IsZoomed(hwnd)!=FALSE});}
+    for(quintptr value:handles){const int row=windowIndex(value);if(row<0)continue;ArrangementWindow window=m_windows.at(row);if(windowIdentityIsCurrent(window)&&readWindowGeometry(reinterpret_cast<HWND>(value),&window))snapshot.append({value,window.processId,window.executable,window.rect,window.maximized});}
 #else
     Q_UNUSED(handles)
 #endif
@@ -294,13 +340,21 @@ bool WindowArrangementManager::windowIdentityIsCurrent(const ArrangementWindow &
 }
 bool WindowArrangementManager::placeWindow(const ArrangementWindow &window,const QRect &rect,bool maximize,const QString &titleRule)const{
 #ifdef Q_OS_WIN
-    if(!windowIdentityIsCurrent(window,titleRule))return false;
+    if(rect.isEmpty()||!windowIdentityIsCurrent(window,titleRule))return false;
     HWND hwnd=reinterpret_cast<HWND>(window.handle);
-    ShowWindowAsync(hwnd,SW_RESTORE);
-    const bool positioned=SetWindowPos(hwnd,nullptr,rect.x(),rect.y(),rect.width(),rect.height(),
-                                       SWP_NOACTIVATE|SWP_NOZORDER|SWP_SHOWWINDOW|SWP_ASYNCWINDOWPOS)!=FALSE;
-    if(maximize)ShowWindowAsync(hwnd,SW_MAXIMIZE);
-    return positioned;
+    WINDOWPLACEMENT placement{};placement.length=sizeof(placement);
+    if(!GetWindowPlacement(hwnd,&placement))return false;
+    RECT target{rect.x(),rect.y(),rect.x()+rect.width(),rect.y()+rect.height()};
+    MONITORINFO info{};info.cbSize=sizeof(info);
+    if(!GetMonitorInfoW(MonitorFromRect(&target,MONITOR_DEFAULTTONEAREST),&info))return false;
+    if((GetWindowLongPtrW(hwnd,GWL_EXSTYLE)&WS_EX_TOOLWINDOW)==0)
+        OffsetRect(&target,info.rcMonitor.left-info.rcWork.left,info.rcMonitor.top-info.rcWork.top);
+    // Set restored bounds and show state together, clearing any previous
+    // restore-to-maximized flag. Posting avoids blocking on an unresponsive app.
+    placement.rcNormalPosition=target;
+    placement.flags=WPF_ASYNCWINDOWPLACEMENT;
+    placement.showCmd=maximize?SW_SHOWMAXIMIZED:SW_SHOWNOACTIVATE;
+    return SetWindowPlacement(hwnd,&placement)!=FALSE;
 #else
     Q_UNUSED(window) Q_UNUSED(rect) Q_UNUSED(maximize) Q_UNUSED(titleRule) return false;
 #endif
@@ -337,9 +391,19 @@ QString WindowArrangementManager::saveSelectedLayout(const QString &name){
     if(normalized.isEmpty()||normalized.size()>120||rows.isEmpty()){setStatus(rows.isEmpty()?QStringLiteral("Select windows before saving a layout."):QStringLiteral("Enter a layout name of 1–120 characters."),true);return{};}
     if(m_layouts.size()>=500||rows.size()>100){setStatus(m_layouts.size()>=500?QStringLiteral("The maximum of 500 saved layouts has been reached."):QStringLiteral("A layout can contain at most 100 window rules."),true);return{};}
     WindowLayout layout;layout.id=makeId();layout.name=normalized;layout.profileId=m_profiles->activeProfileId();
-    for(int row:rows){const auto &window=m_windows.at(row);if(window.executable.isEmpty())continue;const Monitor monitor=monitorFor(window.monitor);if(monitor.workArea.isEmpty())continue;
-        layout.rules.append({window.executable,QString(),monitor.device,WindowArrangementGeometry::normalize(window.rect,monitor.workArea),window.maximized});}
-    if(layout.rules.isEmpty()){setStatus(QStringLiteral("Selected windows do not expose an executable identity."),true);return{};}
+    for(int row:rows){auto window=m_windows.at(row);
+#ifdef Q_OS_WIN
+        if(!windowIdentityIsCurrent(window)||!readWindowGeometry(reinterpret_cast<HWND>(window.handle),&window)){
+            setStatus(QStringLiteral("A selected window is no longer available. Refresh and select the windows again."),true);return{};
+        }
+#endif
+        if(window.executable.isEmpty()||window.workArea.isEmpty()){
+            setStatus(QStringLiteral("A selected window has no usable identity or display geometry."),true);return{};
+        }
+        // Keep saved values within the same bounds enforced when loading them.
+        const auto rect=WindowArrangementGeometry::normalize(
+            WindowArrangementGeometry::denormalize(WindowArrangementGeometry::normalize(window.rect,window.workArea),window.workArea),window.workArea);
+        layout.rules.append({window.executable,QString(),window.monitor,rect,window.maximized});}
     m_layouts.append(layout);if(!saveLayouts()){m_layouts.removeLast();return{};}setSelectedLayoutId(layout.id);emit layoutsChanged();setStatus(QStringLiteral("Saved layout %1 with %2 window rule(s).").arg(layout.name).arg(layout.rules.size()));return layout.id;
 }
 bool WindowArrangementManager::renameLayout(const QString &id,const QString &name){const int row=layoutIndex(id);const QString normalized=name.trimmed();if(row<0||normalized.isEmpty()||normalized.size()>120)return false;const QString old=m_layouts[row].name;m_layouts[row].name=normalized;if(!saveLayouts()){m_layouts[row].name=old;return false;}emit layoutsChanged();return true;}
@@ -553,7 +617,7 @@ void WindowArrangementManager::loadLayouts(){
     QDir().mkpath(AppDataPaths::root());
     const QString path=QDir(AppDataPaths::root()).filePath(QStringLiteral("window-layouts.json"));QFile file(path);if(!file.exists())return;
     if(!file.open(QIODevice::ReadOnly)||file.size()>8*1024*1024){m_storeInvalid=true;setStatus(QStringLiteral("Window layouts could not be read; the original file was preserved."),true);return;}
-    QJsonParseError parse;const auto doc=QJsonDocument::fromJson(file.readAll(),&parse);const auto root=doc.object();if(parse.error!=QJsonParseError::NoError||!doc.isObject()||root.value(QStringLiteral("schemaVersion")).toInt()!=1||!root.value(QStringLiteral("layouts")).isArray()){m_storeInvalid=true;setStatus(QStringLiteral("Window layout storage is invalid; the original file was preserved."),true);return;}
+    QJsonParseError parse;const auto doc=QJsonDocument::fromJson(file.readAll(),&parse);file.close();const auto root=doc.object();if(parse.error!=QJsonParseError::NoError||!doc.isObject()||root.value(QStringLiteral("schemaVersion")).toInt()!=1||!root.value(QStringLiteral("layouts")).isArray()){m_storeInvalid=true;setStatus(QStringLiteral("Window layout storage is invalid; the original file was preserved."),true);return;}
     const auto nicknames=root.value(QStringLiteral("monitorNicknames"));
     if(!nicknames.isUndefined()){
         if(!nicknames.isObject()){m_storeInvalid=true;setStatus(QStringLiteral("Saved monitor names are invalid; the original file was preserved."),true);return;}
@@ -564,12 +628,29 @@ void WindowArrangementManager::loadLayouts(){
         }
     }
     QSet<QString> ids;const auto array=root.value(QStringLiteral("layouts")).toArray();if(array.size()>500){m_storeInvalid=true;setStatus(QStringLiteral("Window layout file exceeds the supported limit."),true);return;}
-    for(const auto &value:array){WindowLayout layout;if(!value.isObject()||!parseLayout(value.toObject(),&layout)||ids.contains(layout.id)){m_storeInvalid=true;m_layouts.clear();setStatus(QStringLiteral("Some saved window layouts are invalid; the original file was preserved."),true);return;}ids.insert(layout.id);m_layouts.append(layout);
+    bool recovered=false;
+    for(const auto &value:array){WindowLayout layout;bool valid=value.isObject()&&parseLayout(value.toObject(),&layout);
+        if(!valid&&value.isObject()){valid=recoverMinimizedLayout(value.toObject(),&layout);recovered|=valid;}
+        if(!valid||ids.contains(layout.id)){m_storeInvalid=true;m_layouts.clear();setStatus(QStringLiteral("Some saved window layouts are invalid; the original file was preserved."),true);return;}ids.insert(layout.id);m_layouts.append(layout);
+    }
+    if(recovered){
+        const QString backup=path+QStringLiteral(".before-minimized-recovery-")+makeId()+QStringLiteral(".bak");
+        if(!QFile::copy(path,backup)||!saveLayouts()){
+            m_storeInvalid=true;m_layouts.clear();
+            setStatus(QStringLiteral("Could not safely recover minimized-window layouts; the original file was preserved."),true);return;
+        }
+        m_startupNotice=QStringLiteral("Recovered saved layouts with invalid minimized-window positions. Affected windows will be centered. Original backup: %1").arg(backup);
     }
 }
 bool WindowArrangementManager::saveLayouts()const{
     if(m_storeInvalid){const_cast<WindowArrangementManager*>(this)->setStatus(QStringLiteral("Window layouts cannot be changed until the invalid saved file is repaired; the original was preserved."),true);return false;}
-    QJsonArray layouts;for(const auto &layout:m_layouts)layouts.append(serializeLayout(layout));
+    QJsonArray layouts;for(const auto &layout:m_layouts){
+        const auto object=serializeLayout(layout);WindowLayout validated;
+        if(!parseLayout(object,&validated)){
+            const_cast<WindowArrangementManager*>(this)->setStatus(QStringLiteral("A window layout contains invalid data and could not be saved. Existing saved layouts were preserved."),true);return false;
+        }
+        layouts.append(object);
+    }
     QJsonObject names;for(auto it=m_monitorNicknames.cbegin();it!=m_monitorNicknames.cend();++it)names.insert(it.key(),it.value());
     const QByteArray data=QJsonDocument(QJsonObject{{QStringLiteral("schemaVersion"),1},{QStringLiteral("layouts"),layouts},{QStringLiteral("monitorNicknames"),names}}).toJson(QJsonDocument::Indented);
     if(data.size()>8*1024*1024){const_cast<WindowArrangementManager*>(this)->setStatus(QStringLiteral("Saved window layouts exceed the 8 MiB storage limit."),true);return false;}
@@ -593,8 +674,8 @@ QVector<ArrangementWindow> WindowArrangementManager::enumerateWindows(){
     EnumWindows([](HWND hwnd,LPARAM data)->BOOL{auto *ctx=reinterpret_cast<Context*>(data);if(!IsWindowVisible(hwnd)||(GetWindowLongPtrW(hwnd,GWL_EXSTYLE)&WS_EX_TOOLWINDOW)!=0)return TRUE;DWORD pid=0;GetWindowThreadProcessId(hwnd,&pid);if(!pid||pid==ctx->ownPid)return TRUE;
         wchar_t title[1024]{};const int len=GetWindowTextW(hwnd,title,1024);if(len<=0)return TRUE;
         HANDLE process=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,FALSE,pid);QString executable;if(process){wchar_t path[32768]{};DWORD size=DWORD(std::size(path));if(QueryFullProcessImageNameW(process,0,path,&size))executable=QString::fromWCharArray(path,int(size));CloseHandle(process);}if(executable.isEmpty())return TRUE;
-        RECT rect{};if(!GetWindowRect(hwnd,&rect))return TRUE;ArrangementWindow w;w.handle=reinterpret_cast<quintptr>(hwnd);w.processId=pid;w.title=QString::fromWCharArray(title,len);w.executable=executable;w.rect=QRect(rect.left,rect.top,rect.right-rect.left,rect.bottom-rect.top);w.maximized=IsZoomed(hwnd)!=FALSE;
-        HMONITOR monitor=MonitorFromWindow(hwnd,MONITOR_DEFAULTTONEAREST);MONITORINFOEXW info{};info.cbSize=sizeof(info);if(GetMonitorInfoW(monitor,&info)){w.monitor=QString::fromWCharArray(info.szDevice);w.workArea=QRect(info.rcWork.left,info.rcWork.top,info.rcWork.right-info.rcWork.left,info.rcWork.bottom-info.rcWork.top);}ctx->items->append(w);return TRUE;
+        ArrangementWindow w;w.handle=reinterpret_cast<quintptr>(hwnd);w.processId=pid;w.title=QString::fromWCharArray(title,len);w.executable=executable;
+        if(readWindowGeometry(hwnd,&w))ctx->items->append(w);return TRUE;
     },reinterpret_cast<LPARAM>(&context));
 #endif
     return result;
