@@ -1,0 +1,39 @@
+name: Windows build, tests, and portable package
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Qt and MinGW
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          arch: win64_mingw
+          tools: 'tools_mingw1310'
+          cache: true
+      - name: Build, test, deploy, and smoke-test
+        shell: pwsh
+        run: |
+          $compiler = Join-Path (Split-Path (Split-Path $env:QT_ROOT_DIR)) 'Tools/mingw1310_64/bin'
+          ./tools/package-windows.ps1 -QtRoot $env:QT_ROOT_DIR -CompilerBin $compiler -CMakePath (Get-Command cmake).Source -OutputDirectory "$env:GITHUB_WORKSPACE/out/SmallDTL-ci"
+      - name: Upload package and verification evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: SmallDTL-windows
+          path: |
+            out/SmallDTL-ci.zip
+            out/SmallDTL-ci/build-manifest.json
+            out/SmallDTL-ci/smoke-result.json
+            build-release/Testing/Temporary/LastTest.log
+          if-no-files-found: warn

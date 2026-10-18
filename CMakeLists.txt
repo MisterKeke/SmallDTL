@@ -72,8 +72,13 @@ qt_add_executable(ScreenshotHotkeyManager WIN32
     src/profiles/ProfileManager.cpp
     src/screenshots/ScreenshotManager.h
     src/screenshots/ScreenshotManager.cpp
-    src/screenshots/ScreenshotDatabase.h
-    src/screenshots/ScreenshotDatabase.cpp
+    src/storage/ApplicationDatabase.h
+    src/storage/ApplicationDatabase.cpp
+    src/storage/StorageMaintenance.cpp
+    src/storage/ClipboardRepository.cpp
+    src/storage/FileShelfRepository.cpp
+    src/storage/ThumbnailCache.cpp
+    src/storage/ThumbnailCache.h
     src/screenshots/ScreenshotEditorImage.h
     src/screenshots/ScreenshotEditorImage.cpp
     src/qrcode/QrCodeManager.h
@@ -100,6 +105,7 @@ qt_add_qml_module(ScreenshotHotkeyManager
         qml/Main.qml
         qml/components/Sidebar.qml
         qml/components/HotkeyRecorder.qml
+        qml/components/HistoryClearDialog.qml
         qml/components/ScreenshotEditor.qml
         qml/components/InsetTextArea.qml
         qml/pages/DashboardPage.qml
@@ -143,6 +149,16 @@ if(BUILD_TESTING)
     endif()
     qt_add_executable(ScreenshotHotkeyManagerTests
         tests/UnitTests.cpp
+        tests/MaintenanceTests.cpp
+        tests/UnitTests.h
+        tests/TestSupport.h
+        tests/TestLifecycle.cpp
+        tests/ProfileActionTests.cpp
+        tests/WindowArrangementTests.cpp
+        tests/FileShelfTests.cpp
+        tests/UiTests.cpp
+        tests/ScreenshotTests.cpp
+        tests/ClipboardTests.cpp
         src/app/ApplicationController.h
         src/app/ApplicationController.cpp
         src/clipboard/ClipboardService.h
@@ -165,8 +181,13 @@ if(BUILD_TESTING)
         src/profiles/ProfileManager.cpp
         src/screenshots/ScreenshotManager.h
         src/screenshots/ScreenshotManager.cpp
-        src/screenshots/ScreenshotDatabase.h
-        src/screenshots/ScreenshotDatabase.cpp
+        src/storage/ApplicationDatabase.h
+        src/storage/ApplicationDatabase.cpp
+        src/storage/StorageMaintenance.cpp
+        src/storage/ClipboardRepository.cpp
+        src/storage/FileShelfRepository.cpp
+        src/storage/ThumbnailCache.cpp
+        src/storage/ThumbnailCache.h
         src/screenshots/ScreenshotEditorImage.h
         src/screenshots/ScreenshotEditorImage.cpp
         src/qrcode/QrCodeManager.h
@@ -186,6 +207,7 @@ if(BUILD_TESTING)
             qml/Main.qml
             qml/components/Sidebar.qml
             qml/components/HotkeyRecorder.qml
+        qml/components/HistoryClearDialog.qml
             qml/pages/DashboardPage.qml
             qml/pages/ScreenshotsPage.qml
             qml/components/ScreenshotEditor.qml
@@ -213,7 +235,8 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME ScreenshotHotkeyManager.UnitTests COMMAND ScreenshotHotkeyManagerTests)
     set_tests_properties(ScreenshotHotkeyManager.UnitTests PROPERTIES
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
+        TIMEOUT 300
     )
 endif()
 

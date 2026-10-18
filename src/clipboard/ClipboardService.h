@@ -14,6 +14,8 @@ struct ClipboardSnapshot
     QImage image;
     QString text;
     QList<QUrl> urls;
+    QString sourceApplication;
+    bool sensitive = false;
     bool isEmpty() const {
         return type.isEmpty() || (type == QStringLiteral("image") && image.isNull()) ||
                (type == QStringLiteral("files") && urls.isEmpty());
@@ -41,6 +43,7 @@ public:
     // relying on platform-specific clipboard ownership semantics.
     void processImageChange(const QImage &image, bool appOwned);
     void processContentChange(const ClipboardSnapshot &snapshot, bool appOwned);
+    static bool isSensitiveMimeData(const QMimeData *mime);
 
 signals:
     void hasImageChanged();

@@ -15,7 +15,7 @@
 #include <QVariantMap>
 
 #include "../profiles/ProfileManager.h"
-#include "ScreenshotDatabase.h"
+#include "../storage/ApplicationDatabase.h"
 #include "../clipboard/ClipboardService.h"
 
 class SettingsManager;
@@ -114,7 +114,7 @@ public:
     bool automaticClipboardSavingPaused() const { return m_automaticClipboardSavingPaused; }
     bool databaseReady() const { return m_databaseReady; }
     QString databaseError() const { return m_database.lastError(); }
-    ScreenshotDatabase *database() { return &m_database; }
+    ApplicationDatabase *database() { return &m_database; }
     ClipboardService *clipboardService() { return &m_clipboardService; }
     QString profileDestination(const QString &profileId) const;
     QString generalDestination() const;
@@ -198,7 +198,7 @@ private:
     SettingsManager *m_settings = nullptr;
     QClipboard *m_clipboard = nullptr;
     ClipboardService m_clipboardService;
-    ScreenshotDatabase m_database;
+    ApplicationDatabase m_database;
     ScreenshotGalleryModel m_gallery;
     QString m_destinationOverride;
     QSet<QString> m_pendingPaths;

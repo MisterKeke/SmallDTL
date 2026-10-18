@@ -56,6 +56,10 @@ void SettingsManager::load() {
     m_data.insert(QStringLiteral("clipboardHistoryRetentionDays"), 30);
     m_data.insert(QStringLiteral("clipboardHistoryRetentionCount"), 500);
     m_data.insert(QStringLiteral("clipboardHistoryStorageLimitMB"), 512);
+    m_data.insert(QStringLiteral("clipboardHistoryEnabled"), true);
+    m_data.insert(QStringLiteral("clipboardHistorySessionOnly"), false);
+    m_data.insert(QStringLiteral("clipboardHistoryExcludedApplications"), QJsonArray{});
+    m_data.insert(QStringLiteral("thumbnailCacheLimitMB"), 128);
     QFile file(settingsFilePath());
     if (!file.exists()) {
         QDir().mkpath(fallback);
@@ -91,6 +95,11 @@ void SettingsManager::load() {
     if (stored.contains(QStringLiteral("clipboardHistoryShortcutModifiers")) && stored.value(QStringLiteral("clipboardHistoryShortcutModifiers")).toInt() < 0) valid = false;
     if (stored.contains(QStringLiteral("fileShelfShortcutKey")) && stored.value(QStringLiteral("fileShelfShortcutKey")).toInt() < 0) valid = false;
     if (stored.contains(QStringLiteral("fileShelfShortcutModifiers")) && stored.value(QStringLiteral("fileShelfShortcutModifiers")).toInt() < 0) valid = false;
+    if (stored.contains(QStringLiteral("thumbnailCacheLimitMB")) &&
+        (stored.value(QStringLiteral("thumbnailCacheLimitMB")).toInt() < 16 || stored.value(QStringLiteral("thumbnailCacheLimitMB")).toInt() > 4096)) valid = false;
+    if (stored.value(QStringLiteral("clipboardHistoryExcludedApplications")).toArray().size() > 256) valid = false;
+    for (const auto &entry : stored.value(QStringLiteral("clipboardHistoryExcludedApplications")).toArray())
+        if (!entry.isString() || entry.toString().size() > 32768) valid = false;
     if (!valid) {
         m_invalid = true; report(QStringLiteral("Settings are invalid or use an unsupported schema. The original is preserved; supported data is backed up before repair."));
         QDir().mkpath(fallback);
@@ -243,3 +252,31 @@ QVariantMap SettingsManager::palette() const {
     }
     m_cachedPalette=result;return result;
 }
+
+bool SettingsManager::clipboardHistoryEnabled() const { return m_data.value(QStringLiteral("clipboardHistoryEnabled")).toBool(); }
+bool SettingsManager::setClipboardHistoryEnabled(bool value) { return update(QStringLiteral("clipboardHistoryEnabled"), value); }
+
+bool SettingsManager::clipboardHistorySessionOnly() const { return m_data.value(QStringLiteral("clipboardHistorySessionOnly")).toBool(); }
+bool SettingsManager::setClipboardHistorySessionOnly(bool value) { return update(QStringLiteral("clipboardHistorySessionOnly"), value); }
+
+QStringList SettingsManager::clipboardHistoryExcludedApplications() const {
+    QStringList result;
+    for (const auto &value : m_data.value(QStringLiteral("clipboardHistoryExcludedApplications")).toArray())
+        result.append(QDir::fromNativeSeparators(value.toString().trimmed()).toCaseFolded());
+    return result;
+}
+bool SettingsManager::setClipboardHistoryExcludedApplications(const QStringList &value) {
+    QStringList normalized;
+    qsizetype total = 0;
+    for (const QString &entry : value) {
+        const QString app = QDir::fromNativeSeparators(entry.trimmed()).toCaseFolded();
+        total += app.size();
+        if (app.size() > 32768 || total > 512 * 1024) return false;
+        if (!app.isEmpty() && !normalized.contains(app)) normalized.append(app);
+    }
+    if (normalized.size() > 256) return false;
+    return update(QStringLiteral("clipboardHistoryExcludedApplications"), QJsonArray::fromStringList(normalized));
+}
+
+int SettingsManager::thumbnailCacheLimitMB() const { return m_data.value(QStringLiteral("thumbnailCacheLimitMB")).toInt(); }
+bool SettingsManager::setThumbnailCacheLimitMB(int value) { if (value < 16 || value > 4096) return false; return update(QStringLiteral("thumbnailCacheLimitMB"), value); }

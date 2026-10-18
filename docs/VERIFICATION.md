@@ -1,5 +1,21 @@
 # Verification record
 
+## Storage, privacy, transfer, and maintainability fixes — 2026-10-18
+
+Implemented the review's cleanup error reporting/retry and orphan reconciliation, storage usage/compaction controls, persisted capture enablement and application exclusions, supported sensitive clipboard markers, clear-on-exit behavior, confirmed clearing with optional pins, five-minute idle retention, asynchronous bounded history queries and filesystem checks, incremental history rows, transfer progress/cancellation and shutdown cancellation, and bounded/expiring thumbnail storage. The shared SQLite service is now `ApplicationDatabase`, its domain SQL is split, tests are organized by subsystem, and Windows CI builds/tests/packages with an isolated smoke check. Existing data identity, database filename, and schema remain unchanged. Behavior and limitations are detailed in `MAINTENANCE.md`.
+
+The Release application and test targets built with Qt 6.11.0/MinGW. The full offscreen Qt Test run reported **85 passed, 0 failed, 2 skipped**. Skips were native Windows registration and temporary junction creation denied by the sandbox. Both focused native tests then passed outside the sandbox: **4 passed, 0 failed, 0 skipped**, including init/cleanup. The native registration fixture now assigns an isolated shelf shortcut because another application on this desktop owns the default. Its deliberately competing binding still verifies conflict reporting.
+
+New checks cover persisted pause/exclusions, sensitive flags, invalidating in-flight captures when paused, clear-on-exit/restart, clearing search-hidden entries with/without pins, locked image deletion and retry, owned orphan cleanup, compaction preserving tags, paged text previews with full restoration, idle age cleanup, thumbnail byte/age eviction, cancellation during a 256-MiB replacement move, source/destination preservation, shutdown cancellation, and both clear confirmation dialogs. The final focused UI/privacy/cache run passed **5 checks, 0 failed**. The QML-engine warning count was zero; native registration denial messages in the restricted run were expected.
+
+Rendered `build-maintenance/history-clear-confirmation.png`, `maintenance-settings.png`, and `maintenance-storage.png` were inspected. The clear dialog has an opaque body and readable pin/count/scope text; the storage panel's usage, cache cap, and maintenance buttons fit. These are offscreen checks on this host, not physical mixed-DPI validation.
+
+Evidence: `build-maintenance/maintenance-tests.txt`, `maintenance-ui-checked.txt`, `native-maintenance-tests.txt`, and build logs. Portable packaging records its own CTest/deployment/startup outcomes in `build-manifest.json` and `smoke-result.json`. The new remote CI workflow has not been dispatched from this local task.
+
+Verified portable artifacts: `out/SmallDTL-maintenance-20261018/SmallDTL.exe` and `out/SmallDTL-maintenance-20261018.zip`. Packaging reran Release CTest successfully (**1/1 test executable passed**) and its isolated startup check reported **loaded=true, 0 QML warnings** with development search paths removed. SQLite's driver and the QR dependency license are bundled.
+
+Physical Explorer/third-party drops and key presses, real password-manager interoperability, cross-volume/network-share behavior, protected windows, and mixed-DPI/disconnected displays still require interactive hardware checks. `tools/verify-windows-interactive.ps1` records pass/fail/not-run and evidence for those checks; it was not run here. Normal filesystem calls can delay cancellation until the current call returns. Clear-on-exit stores data locally until cleanup and does not claim RAM-only storage or secure erasure.
+
 ## Minimized-window layout persistence and recovery — 2026-10-16
 
 The previous build could save a minimized window's tiny rectangle at `(-32000,-32000)`, then reject its own normalized coordinates on restart. Saving now reads live restored bounds without restoring the window, retains whether a minimized window should return maximized, constrains placement to the work area, and validates serialized layouts before committing. Applying a placement sets restored bounds and show state in one asynchronous native operation, including when the target was minimized from maximized state.

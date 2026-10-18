@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Controls.Material
 import QtQuick.Layouts
 import QtQuick.Window
+import "components"
 
 ApplicationWindow {
     id: window
@@ -218,8 +219,10 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 Label { text: "Clipboard History"; font.pixelSize: 18; font.weight: Font.DemiBold; Layout.fillWidth: true }
                 ToolButton { text: clipboardHistory.paused ? "▶" : "Ⅱ"; Accessible.name: clipboardHistory.paused ? "Resume clipboard history" : "Pause clipboard history"; onClicked: clipboardHistory.setPaused(!clipboardHistory.paused) }
-                ToolButton { text: "×"; Accessible.name: "Clear clipboard history"; enabled: clipboardHistory.count > 0; onClicked: clipboardHistory.clearHistory() }
+                ToolButton { objectName: "popupClearHistoryButton"; text: "×"; Accessible.name: "Clear clipboard history"; enabled: clipboardHistory.totalCount > 0; onClicked: popupClearDialog.open() }
             }
+            HistoryClearDialog { id: popupClearDialog; objectName: "popupHistoryClearDialog"; parent: Overlay.overlay }
+            Button { text: "Load more"; visible: clipboardHistory.hasMore; enabled: !clipboardHistory.loading; onClicked: clipboardHistory.loadMore() }
             TextField {
                 id: popupSearch
                 objectName: "clipboardHistoryPopupSearch"

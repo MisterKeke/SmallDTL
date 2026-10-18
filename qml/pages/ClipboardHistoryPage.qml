@@ -1,10 +1,12 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "../components"
 
 Item {
     id: root
     property string selectedTagId: ""
+    HistoryClearDialog { id: clearHistoryDialog; objectName: "pageHistoryClearDialog"; parent: Overlay.overlay }
 
     ColumnLayout {
         anchors.fill: parent
@@ -20,7 +22,7 @@ Item {
                 onTextEdited: clipboardHistory.setSearch(text)
             }
             Button { text: clipboardHistory.paused ? "Resume history" : "Pause history"; onClicked: clipboardHistory.setPaused(!clipboardHistory.paused) }
-            Button { text: "Clear history"; enabled: clipboardHistory.count > 0; onClicked: clipboardHistory.clearHistory() }
+            Button { objectName: "clearHistoryButton"; text: "Clear history"; enabled: clipboardHistory.totalCount > 0; onClicked: clearHistoryDialog.open() }
         }
 
         Label {
@@ -142,6 +144,12 @@ Item {
                 color: settings.palette["#9697a3"]
                 font.pixelSize: 12
             }
+        }
+        RowLayout {
+            Layout.fillWidth: true
+            BusyIndicator { running: clipboardHistory.loading; visible: running; implicitWidth: 24; implicitHeight: 24 }
+            Label { text: clipboardHistory.count + " shown · " + clipboardHistory.totalCount + " total" }
+            Button { text: "Load more"; visible: clipboardHistory.hasMore; enabled: !clipboardHistory.loading; onClicked: clipboardHistory.loadMore() }
         }
     }
 }

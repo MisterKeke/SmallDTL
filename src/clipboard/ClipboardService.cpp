@@ -3,6 +3,29 @@
 #include <QClipboard>
 #include <QMimeData>
 #include <QTimer>
+#include <QFileInfo>
+#include <QtEndian>
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
+
+bool ClipboardService::isSensitiveMimeData(const QMimeData *mime)
+{
+    if (!mime) return false;
+    for (const QString &format : mime->formats()) {
+        if (format.contains(QStringLiteral("ExcludeClipboardContentFromMonitorProcessing"), Qt::CaseInsensitive) ||
+            format.contains(QStringLiteral("Clipboard Viewer Ignore"), Qt::CaseInsensitive) ||
+            format == QStringLiteral("application/x-nspasteboard-concealed-type"))
+            return true;
+        if (format.contains(QStringLiteral("CanIncludeInClipboardHistory"), Qt::CaseInsensitive)) {
+            const QByteArray value = mime->data(format);
+            if (value.size() < 4 || qFromLittleEndian<quint32>(value.constData()) == 0) return true;
+        }
+        if (format == QStringLiteral("x-kde-passwordManagerHint") && mime->data(format) == QByteArrayLiteral("secret"))
+            return true;
+    }
+    return false;
+}
 
 ClipboardService::ClipboardService(QClipboard *clipboard, QObject *parent)
     : QObject(parent), m_clipboard(clipboard), m_ownWriteTimeout(new QTimer(this))
@@ -77,6 +100,23 @@ void ClipboardService::readClipboardChange()
     }
     const QMimeData *mime = m_clipboard->mimeData();
     ClipboardSnapshot snapshot;
+    // Check before decoding images or requesting text from a delayed owner.
+    snapshot.sensitive = isSensitiveMimeData(mime);
+#ifdef Q_OS_WIN
+    DWORD processId = 0;
+    GetWindowThreadProcessId(GetClipboardOwner(), &processId);
+    if (HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId)) {
+        wchar_t path[32768];
+        DWORD length = 32768;
+        if (QueryFullProcessImageNameW(process, 0, path, &length))
+            snapshot.sourceApplication = QString::fromWCharArray(path, length);
+        CloseHandle(process);
+    }
+#endif
+    if (snapshot.sensitive) {
+        processContentChange(snapshot, false);
+        return;
+    }
     if (mime->hasImage()) {
         snapshot.type = QStringLiteral("image");
         snapshot.image = qvariant_cast<QImage>(mime->imageData());
@@ -141,7 +181,7 @@ void ClipboardService::processContentChange(const ClipboardSnapshot &snapshot, b
         m_hasImage = nowHasImage;
         emit hasImageChanged();
     }
-    if (appOwned || snapshot.isEmpty())
+    if (appOwned || snapshot.sensitive || snapshot.isEmpty())
         return;
     if (nowHasImage)
         emit externalImageAvailable(snapshot.image);

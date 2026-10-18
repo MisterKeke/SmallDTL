@@ -5,6 +5,7 @@
 #include <QSize>
 #include <QStringList>
 #include <QVector>
+#include <QVariantMap>
 
 class QSqlDatabase;
 class QThread;
@@ -37,6 +38,7 @@ struct ClipboardHistoryRecord
     QString fingerprint;
     QString text;
     QStringList fileUrls;
+    int fileCount = -1;
     QString payloadPath;
     qint64 sizeBytes = 0;
     int width = 0;
@@ -56,11 +58,11 @@ struct FileShelfRecord
     qint64 sizeBytes = 0;
 };
 
-class ScreenshotDatabase final : public QObject
+class ApplicationDatabase final : public QObject
 {
 public:
-    explicit ScreenshotDatabase(const QString &databasePath = {}, QObject *parent = nullptr);
-    ~ScreenshotDatabase() override;
+    explicit ApplicationDatabase(const QString &databasePath = {}, QObject *parent = nullptr);
+    ~ApplicationDatabase() override;
 
     bool initialize(const QString &legacyIndexPath = {});
     bool isReady() const { return m_ready; }
@@ -87,7 +89,12 @@ public:
     int tagAssignmentState(const QString &tagId, const QStringList &screenshotIds) const;
     bool setTagForScreenshots(const QStringList &screenshotIds, const QString &tagId, bool assigned);
 
-    QVector<ClipboardHistoryRecord> clipboardHistory(const QString &search = {}) const;
+    QVector<ClipboardHistoryRecord> clipboardHistory(const QString &search = {}, int limit = -1,
+                                                   bool previewsOnly = false, const QString &id = {}) const;
+    QVector<ClipboardHistoryRecord> clipboardHistoryMetadata() const;
+    int clipboardHistoryCount(bool includePinned = true) const;
+    bool clipboardHistoryFilesMissing(const QString &id) const;
+    bool compact();
     bool saveClipboardHistory(const ClipboardHistoryRecord &record, QString *id = nullptr,
                               bool *inserted = nullptr);
     bool setClipboardHistoryPinned(const QString &id, bool pinned);

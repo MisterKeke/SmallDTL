@@ -25,7 +25,7 @@ Item {
     Connections {
         target: fileShelf
         function onOperationFinished(succeeded, skipped, failed, details) {
-            if (failed > 0) {
+            if (failed > 0 || details.length > 0) {
                 root.operationDetails = details.join("\n")
                 operationResultDialog.open()
             }
@@ -246,7 +246,18 @@ Item {
                 }
             }
         }
-        BusyIndicator { Layout.alignment: Qt.AlignHCenter; running: fileShelf.busy; visible: running; implicitWidth: 28; implicitHeight: 28 }
+        RowLayout {
+            Layout.fillWidth: true
+            visible: fileShelf.busy
+            ProgressBar {
+                Layout.fillWidth: true
+                from: 0; to: Math.max(1, fileShelf.totalBytes)
+                value: fileShelf.bytesCopied
+                indeterminate: fileShelf.totalBytes <= 0
+            }
+            Label { text: root.formatSize(fileShelf.bytesCopied) + " / " + root.formatSize(fileShelf.totalBytes) + " · " + fileShelf.completedItems + "/" + fileShelf.totalItems }
+            Button { text: fileShelf.cancellationRequested ? "Cancelling…" : "Cancel"; enabled: !fileShelf.cancellationRequested; onClicked: fileShelf.cancelTransfer() }
+        }
     }
 
     Dialog {
@@ -288,7 +299,7 @@ Item {
 
     Dialog {
         id: operationResultDialog
-        title: "Some file operations failed"
+        title: "File operation details"
         modal: true
         anchors.centerIn: parent
         width: Math.max(360, Math.min(root.width - 32, 700))

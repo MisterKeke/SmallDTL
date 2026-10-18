@@ -8,6 +8,7 @@
 #include <QImageWriter>
 #include <QDateTime>
 #include "../app/AppDataPaths.h"
+#include "../storage/ThumbnailCache.h"
 
 // QML requests only visible thumbnails. Qt runs these requests on its image
 // loading thread; full-size preview URLs remain separate.
@@ -21,9 +22,11 @@ public:
         const QSize bounds(requested.width()>0?qBound(16,requested.width(),512):240,requested.height()>0?qBound(16,requested.height(),512):160);
         const QByteArray signature=(path+QLatin1Char('\n')+QString::number(file.lastModified().toMSecsSinceEpoch())+QLatin1Char('\n')+QString::number(file.size())+QLatin1Char('\n')+QString::number(bounds.width())+QLatin1Char('x')+QString::number(bounds.height())).toUtf8();
         const QString directory=m_cacheRoot;
+        if (QFileInfo(directory).isSymLink() || QFileInfo(directory).isJunction()) return {};
         QDir().mkpath(directory);
         const QString cached=QDir(directory).filePath(QString::fromLatin1(QCryptographicHash::hash(signature,QCryptographicHash::Sha256).toHex())+QStringLiteral(".png"));
         QImage image(cached);
+        const bool generated = image.isNull();
         if(image.isNull()) {
             QImageReader reader(path);
             const QSize original=reader.size();
@@ -34,6 +37,7 @@ public:
             QSaveFile output(cached);
             if(output.open(QIODevice::WriteOnly)){QImageWriter writer(&output,"png");if(writer.write(image))output.commit();else output.cancelWriting();}
         }
+        if (generated) ThumbnailCache::trim(directory);
         if(size)*size=image.size();return image;
     }
 private:

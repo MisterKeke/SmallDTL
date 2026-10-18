@@ -1,6 +1,7 @@
 #include "ApplicationController.h"
 
 #include "../hotkeys/HotkeyUtils.h"
+#include "../storage/ThumbnailCache.h"
 
 #include <QAction>
 #include <QApplication>
@@ -30,7 +31,7 @@ ApplicationController::ApplicationController(QObject *parent)
     : QObject(parent), m_settings(this), m_profiles(&m_settings, this),
       m_screenshots(&m_profiles, &m_settings, this),
       m_qrCode(&m_screenshots, this),
-      m_clipboardHistory(&m_screenshots, &m_settings, this), m_fileShelf(&m_screenshots, this), m_actions(&m_profiles, this),
+      m_clipboardHistory(m_screenshots.database(), m_screenshots.clipboardService(), &m_settings, &m_screenshots, this), m_fileShelf(m_screenshots.database(), m_screenshots.clipboardService(), this), m_actions(&m_profiles, this),
       m_windowArrangements(&m_profiles,this),
       m_actionRunner(&m_actions, &m_profiles, &m_screenshots, &m_qrCode, &m_windowArrangements, this), m_hotkeys(&m_profiles, &m_settings, this)
 {
@@ -38,7 +39,7 @@ ApplicationController::ApplicationController(QObject *parent)
     connect(&m_settings,&SettingsManager::errorOccurred,this,[this](const QString &message){setStatus(message,true,true);});
     connect(&m_hotkeys,&HotkeyManager::registrationFailed,this,[this](const QString &message){setStatus(message,true,true);});
     connect(&m_hotkeys, &HotkeyManager::fileShelfTriggered, this, &ApplicationController::toggleFileShelfPopup);
-    connect(QCoreApplication::instance(),&QCoreApplication::aboutToQuit,this,[this]{m_actionRunner.cancel();m_hotkeys.setRecording(true);m_clipboardHistory.finishPendingSaves();m_screenshots.finishPendingSaves();});
+    connect(QCoreApplication::instance(),&QCoreApplication::aboutToQuit,this,[this]{m_actionRunner.cancel();m_hotkeys.setRecording(true);m_fileShelf.finishTransfer();m_clipboardHistory.shutdown();m_screenshots.finishPendingSaves();});
     const QStringList startup=m_settings.startupMessages()+m_profiles.startupMessages()+m_actions.startupMessages();
     if(!startup.isEmpty())QTimer::singleShot(0,this,[this,startup]{setStatus(startup.join(QLatin1Char('\n')),true,true);});
     connect(&m_screenshots, &ScreenshotManager::messageChanged,

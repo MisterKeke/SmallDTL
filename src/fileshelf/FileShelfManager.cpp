@@ -2,7 +2,7 @@
 
 #include "../clipboard/ClipboardService.h"
 #include "../app/LocalFileUrl.h"
-#include "../screenshots/ScreenshotManager.h"
+
 
 #include <QDir>
 #include <QDirIterator>
@@ -14,6 +14,7 @@
 #include <QMimeData>
 #include <QDesktopServices>
 #include <QSaveFile>
+#include <QScopeGuard>
 #include <QTemporaryFile>
 #include <QUuid>
 #include <QWindow>
@@ -133,10 +134,11 @@ bool rejectUnsafeFolderDestination(const QString &source, const QString &target,
     return false;
 }
 
-bool copyStream(QIODevice *input, QIODevice *output, QString *error)
+bool copyStream(QIODevice *input, QIODevice *output, QString *error, FileShelfManager::TransferControl *control)
 {
     QByteArray buffer(1024 * 1024, Qt::Uninitialized);
     while (true) {
+        if (control->cancel.load()) { if (error) *error = QStringLiteral("Cancelled; source preserved."); return false; }
         const qint64 count = input->read(buffer.data(), buffer.size());
         if (count < 0) {
             if (error) *error = input->errorString();
@@ -148,10 +150,11 @@ bool copyStream(QIODevice *input, QIODevice *output, QString *error)
             if (error) *error = output->errorString();
             return false;
         }
+        control->bytes.fetch_add(count);
     }
 }
 
-bool copyFileSafely(const QString &source, const QString &target, bool replace, QString *error)
+bool copyFileSafely(const QString &source, const QString &target, bool replace, QString *error, FileShelfManager::TransferControl *control)
 {
     if (sameLocation(source, target)) {
         if (error) *error = QStringLiteral("Source and destination resolve to the same filesystem location; the operation was rejected.");
@@ -173,7 +176,7 @@ bool copyFileSafely(const QString &source, const QString &target, bool replace, 
             if (error) *error = output.errorString();
             return false;
         }
-        if (!copyStream(&input, &output, error) || !output.commit()) {
+        if (!copyStream(&input, &output, error, control) || (control->cancel.load() || !output.commit())) {
             if (error && error->isEmpty()) *error = output.errorString();
             output.cancelWriting();
             return false;
@@ -190,11 +193,12 @@ bool copyFileSafely(const QString &source, const QString &target, bool replace, 
             return false;
         }
         stagedPath = output.fileName();
-        if (!copyStream(&input, &output, error))
+        if (!copyStream(&input, &output, error, control))
             return false;
         output.setAutoRemove(false);
         output.close();
     }
+    if (control->cancel.load()) { QFile::remove(stagedPath); if (error) *error = QStringLiteral("Cancelled; source preserved."); return false; }
     if (QFileInfo::exists(target)) {
         QFile::remove(stagedPath);
         if (error) *error = QStringLiteral("The destination appeared after preview; no existing file was replaced.");
@@ -210,7 +214,7 @@ bool copyFileSafely(const QString &source, const QString &target, bool replace, 
     return true;
 }
 
-bool copyDirectoryContents(const QString &source, const QString &target, QString *error)
+bool copyDirectoryContents(const QString &source, const QString &target, QString *error, FileShelfManager::TransferControl *control)
 {
     if (!QDir().mkpath(target)) {
         if (error) *error = QStringLiteral("Could not create destination folder.");
@@ -220,6 +224,7 @@ bool copyDirectoryContents(const QString &source, const QString &target, QString
     QDirIterator it(source, QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System,
                     QDirIterator::Subdirectories);
     while (it.hasNext()) {
+        if (control->cancel.load()) { if (error) *error = QStringLiteral("Cancelled; source preserved."); return false; }
         const QString from = it.next();
         const QFileInfo info = it.fileInfo();
         if (info.isSymLink()) {
@@ -233,7 +238,7 @@ bool copyDirectoryContents(const QString &source, const QString &target, QString
                 if (error) *error = QStringLiteral("Could not create folder: %1").arg(to);
                 return false;
             }
-        } else if (!copyFileSafely(from, to, false, error)) {
+        } else if (!copyFileSafely(from, to, false, error, control)) {
             return false;
         }
     }
@@ -266,17 +271,18 @@ QString availableRename(const QString &target)
     return {};
 }
 
-bool copyDirectorySafely(const QString &source, const QString &target, bool replace, QString *error)
+bool copyDirectorySafely(const QString &source, const QString &target, bool replace, QString *error, FileShelfManager::TransferControl *control)
 {
     if (rejectUnsafeFolderDestination(source, target, error))
         return false;
     const QString parent = QFileInfo(target).absolutePath();
     const QString stage = QDir(parent).filePath(QStringLiteral(".smalldtl-folder-%1")
                                                     .arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
-    if (!copyDirectoryContents(source, stage, error)) {
+    if (!copyDirectoryContents(source, stage, error, control)) {
         QDir(stage).removeRecursively();
         return false;
     }
+    if (control->cancel.load()) { QDir(stage).removeRecursively(); if (error) *error = QStringLiteral("Cancelled; source preserved."); return false; }
     QString backup;
     if (QFileInfo::exists(target)) {
         if (!replace) {
@@ -320,10 +326,24 @@ bool removeSource(const QString &path, bool directory)
 }
 
 FileShelfManager::TransferSummary executeTransfers(const QVector<FileShelfManager::TransferItem> &items,
-                                                   const QString &destination, bool move)
+                                                   const QString &destination, bool move, const std::shared_ptr<FileShelfManager::TransferControl> &control)
 {
     FileShelfManager::TransferSummary result;
+    // Count on the worker; never walk a large folder on the GUI thread.
     for (const auto &item : items) {
+        if (control->cancel.load()) break;
+        if (!item.directory) control->total.fetch_add(QFileInfo(item.source).size());
+        else {
+            QDirIterator entries(item.source, QDir::Files | QDir::Hidden | QDir::System, QDirIterator::Subdirectories);
+            while (entries.hasNext() && !control->cancel.load()) {
+                entries.next();
+                if (!entries.fileInfo().isSymLink()) control->total.fetch_add(entries.fileInfo().size());
+            }
+        }
+    }
+    for (const auto &item : items) {
+        if (control->cancel.load()) { result.cancelled = true; break; }
+        const auto completed = qScopeGuard([&] { control->completed.fetch_add(1); });
         const QFileInfo sourceInfo(item.source);
         if (!sourceInfo.exists() || (item.directory ? !sourceInfo.isDir() : !sourceInfo.isFile())) {
             ++result.failed;
@@ -385,12 +405,18 @@ FileShelfManager::TransferSummary executeTransfers(const QVector<FileShelfManage
             continue;
         }
         const bool copied = item.directory
-            ? copyDirectorySafely(item.source, target, replace, &error)
-            : copyFileSafely(item.source, target, replace, &error);
+            ? copyDirectorySafely(item.source, target, replace, &error, control.get())
+            : copyFileSafely(item.source, target, replace, &error, control.get());
         if (!copied) {
+            if (control->cancel.load()) { result.cancelled = true; result.details.append(QStringLiteral("Cancelled; uncommitted source files were preserved.")); break; }
             ++result.failed;
             result.details.append(QStringLiteral("%1: %2").arg(item.source, error));
             continue;
+        }
+        if (move && control->cancel.load()) {
+            result.cancelled = true;
+            result.details.append(QStringLiteral("%1: copy completed at %2; move cancelled and source preserved.").arg(item.source, target));
+            break;
         }
         if (move && (item.directory ? rejectUnsafeFolderDestination(item.source, target, &error)
                                     : pathIsSame(item.source, target))) {
@@ -408,26 +434,40 @@ FileShelfManager::TransferSummary executeTransfers(const QVector<FileShelfManage
             result.movedPaths.append(qMakePair(item.id, target));
         ++result.succeeded;
     }
+    result.cancelled |= control->cancel.load();
     return result;
 }
 }
 
-FileShelfManager::FileShelfManager(ScreenshotManager *screenshots, QObject *parent)
-    : QAbstractListModel(parent), m_screenshots(screenshots)
+FileShelfManager::FileShelfManager(ApplicationDatabase *database, ClipboardService *clipboard, QObject *parent)
+    : QAbstractListModel(parent), m_database(database), m_clipboard(clipboard)
 {
+    m_progressTimer.setInterval(100);
+    connect(&m_progressTimer, &QTimer::timeout, this, &FileShelfManager::progressChanged);
+    connect(&m_metadataWatcher, &QFutureWatcher<MetadataResult>::finished, this, [this] {
+        const auto result = m_metadataWatcher.result();
+        m_metadataBusy = false;
+        if (result.revision != m_metadataRevision) { refreshMetadata(); return; }
+        m_availability = result.values;
+        if (!m_records.isEmpty()) emit dataChanged(index(0), index(m_records.size()-1), {SizeBytesRole, AvailableRole});
+    });
     connect(&m_transferWatcher, &QFutureWatcher<TransferSummary>::finished, this, [this] {
+        if (!m_busy) return; // Shutdown may already have applied the result.
         TransferSummary result = m_transferWatcher.result();
         for (const auto &entry : result.movedPaths) {
-            if (!m_screenshots->database()->updateFileShelfPath(entry.first, entry.second)) {
+            if (!m_database->updateFileShelfPath(entry.first, entry.second)) {
                 --result.succeeded;
                 ++result.failed;
                 result.details.append(QStringLiteral("%1: moved successfully but its shelf reference could not be updated: %2")
-                                          .arg(entry.second, m_screenshots->database()->lastError()));
+                                          .arg(entry.second, m_database->lastError()));
             }
         }
+        m_progressTimer.stop();
+        emit progressChanged();
         setBusy(false);
         QString summary = QStringLiteral("Completed: %1, skipped: %2, failed: %3.")
                               .arg(result.succeeded).arg(result.skipped).arg(result.failed);
+        if (result.cancelled) summary.prepend(QStringLiteral("Cancelled. "));
         setMessage(summary, result.failed > 0);
         if (!result.details.isEmpty())
             summary += QLatin1Char('\n') + result.details.join(QLatin1Char('\n'));
@@ -439,13 +479,45 @@ FileShelfManager::FileShelfManager(ScreenshotManager *screenshots, QObject *pare
 
 FileShelfManager::~FileShelfManager()
 {
-    if (m_transferWatcher.isRunning())
-        m_transferWatcher.waitForFinished();
-    if (m_busy && m_screenshots) {
-        const TransferSummary result = m_transferWatcher.result();
-        for (const auto &entry : result.movedPaths)
-            m_screenshots->database()->updateFileShelfPath(entry.first, entry.second);
+    finishTransfer();
+    m_metadataWatcher.waitForFinished();
+}
+
+void FileShelfManager::cancelTransfer()
+{
+    if (m_transfer && busy()) {
+        m_transfer->cancel.store(true);
+        setMessage(QStringLiteral("Cancelling after the current filesystem operation; source files will be preserved where copying has not committed."));
+        emit progressChanged();
     }
+}
+
+void FileShelfManager::finishTransfer()
+{
+    cancelTransfer();
+    if (m_transferWatcher.isRunning()) m_transferWatcher.waitForFinished();
+    if (m_busy && m_database) {
+        for (const auto &entry : m_transferWatcher.result().movedPaths)
+            m_database->updateFileShelfPath(entry.first, entry.second);
+        m_progressTimer.stop();
+        setBusy(false);
+    }
+}
+
+void FileShelfManager::refreshMetadata()
+{
+    const auto records = m_records;
+    const auto revision = m_metadataRevision;
+    m_metadataBusy = true;
+    m_metadataWatcher.setFuture(QtConcurrent::run([records, revision] {
+        MetadataResult result;
+        result.revision = revision;
+        for (const auto &record : records) {
+            const QFileInfo file(record.path);
+            result.values.insert(record.id, {file.exists(), file.isFile() ? file.size() : record.sizeBytes});
+        }
+        return result;
+    }));
 }
 
 int FileShelfManager::rowCount(const QModelIndex &parent) const
@@ -458,7 +530,7 @@ QVariant FileShelfManager::data(const QModelIndex &index, int role) const
     if (!index.isValid() || index.row() < 0 || index.row() >= m_records.size())
         return {};
     const FileShelfRecord &record = m_records.at(index.row());
-    const QFileInfo info(record.path);
+    const auto metadata = m_availability.value(record.id, {false, record.sizeBytes});
     switch (role) {
     case IdRole: return record.id;
     case PathRole: return record.path;
@@ -467,11 +539,11 @@ QVariant FileShelfManager::data(const QModelIndex &index, int role) const
     case ItemTypeRole: return record.itemType;
     case FileTypeRole: {
         if (record.itemType == QStringLiteral("folder")) return QStringLiteral("Folder");
-        const QString suffix = info.suffix();
+        const QString suffix = QFileInfo(record.path).suffix();
         return suffix.isEmpty() ? QStringLiteral("File") : suffix.toUpper() + QStringLiteral(" file");
     }
-    case SizeBytesRole: return info.exists() && info.isFile() ? info.size() : record.sizeBytes;
-    case AvailableRole: return info.exists();
+    case SizeBytesRole: return metadata.size;
+    case AvailableRole: return metadata.available;
     default: return {};
     }
 }
@@ -485,10 +557,10 @@ QHash<int, QByteArray> FileShelfManager::roleNames() const
 
 void FileShelfManager::refresh()
 {
-    if (!m_screenshots || !m_screenshots->database()->isReady())
+    if (!m_database || !m_database->isReady())
         return;
     beginResetModel();
-    m_records = m_screenshots->database()->fileShelfEntries();
+    m_records = m_database->fileShelfEntries();
     QSet<QString> currentIds;
     for (const FileShelfRecord &record : m_records)
         currentIds.insert(record.id);
@@ -500,11 +572,13 @@ void FileShelfManager::refresh()
     endResetModel();
     emit countChanged();
     emit selectionChanged();
+    ++m_metadataRevision;
+    if (!m_metadataBusy) refreshMetadata();
 }
 
 bool FileShelfManager::addPaths(const QStringList &paths)
 {
-    if (!m_screenshots || !m_screenshots->database()->isReady()) {
+    if (!m_database || !m_database->isReady()) {
         setMessage(QStringLiteral("The file shelf database is unavailable."), true);
         return false;
     }
@@ -531,8 +605,8 @@ bool FileShelfManager::addPaths(const QStringList &paths)
     }
     int inserted = 0;
     int duplicates = 0;
-    if (!m_screenshots->database()->addFileShelfEntries(records, &inserted, &duplicates)) {
-        setMessage(m_screenshots->database()->lastError(), true);
+    if (!m_database->addFileShelfEntries(records, &inserted, &duplicates)) {
+        setMessage(m_database->lastError(), true);
         return false;
     }
     refresh();
@@ -637,8 +711,8 @@ void FileShelfManager::clearSelection()
 bool FileShelfManager::removeSelected()
 {
     const QStringList ids = selectedIds();
-    if (!m_screenshots->database()->removeFileShelfEntries(ids)) {
-        setMessage(m_screenshots->database()->lastError(), true);
+    if (!m_database->removeFileShelfEntries(ids)) {
+        setMessage(m_database->lastError(), true);
         return false;
     }
     clearSelection();
@@ -650,8 +724,8 @@ bool FileShelfManager::removeSelected()
 bool FileShelfManager::removeEntry(const QString &id)
 {
     int removed = 0;
-    if (!m_screenshots->database()->removeFileShelfEntries({id}, &removed)) {
-        setMessage(m_screenshots->database()->lastError(), true);
+    if (!m_database->removeFileShelfEntries({id}, &removed)) {
+        setMessage(m_database->lastError(), true);
         return false;
     }
     refresh();
@@ -662,8 +736,8 @@ bool FileShelfManager::removeEntry(const QString &id)
 bool FileShelfManager::clearShelf()
 {
     int removed = 0;
-    if (!m_screenshots->database()->clearFileShelf(&removed)) {
-        setMessage(m_screenshots->database()->lastError(), true);
+    if (!m_database->clearFileShelf(&removed)) {
+        setMessage(m_database->lastError(), true);
         return false;
     }
     clearSelection();
@@ -708,7 +782,7 @@ bool FileShelfManager::copyPath(const QString &id)
 {
     const int row = rowForId(id);
     if (row < 0) return false;
-    m_screenshots->clipboardService()->writeText(m_records.at(row).path);
+    m_clipboard->writeText(m_records.at(row).path);
     setMessage(QStringLiteral("Copied the path to the clipboard."));
     return true;
 }
@@ -720,7 +794,7 @@ bool FileShelfManager::copySelectedPaths()
         if (m_selected.contains(record.id))
             paths.append(record.path);
     if (paths.isEmpty()) return false;
-    m_screenshots->clipboardService()->writeText(paths.join(QLatin1Char('\n')));
+    m_clipboard->writeText(paths.join(QLatin1Char('\n')));
     setMessage(QStringLiteral("Copied %1 path(s) to the clipboard.").arg(paths.size()));
     return true;
 }
@@ -817,10 +891,14 @@ bool FileShelfManager::startTransfer(const QVariantList &plan, const QString &de
         setMessage(QStringLiteral("The selected shelf items are no longer available."), true);
         return false;
     }
+    m_transfer = std::make_shared<TransferControl>();
+    m_transfer->itemCount = items.size();
+    m_progressTimer.start();
+    emit progressChanged();
     setBusy(true);
     setMessage(move ? QStringLiteral("Moving selected items…") : QStringLiteral("Copying selected items…"));
-    m_transferWatcher.setFuture(QtConcurrent::run([items, destinationPath, move] {
-        return executeTransfers(items, destinationPath, move);
+    m_transferWatcher.setFuture(QtConcurrent::run([items, destinationPath, move, control = m_transfer] {
+        return executeTransfers(items, destinationPath, move, control);
     }));
     return true;
 }

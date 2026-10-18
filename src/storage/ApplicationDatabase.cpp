@@ -1,4 +1,4 @@
-#include "ScreenshotDatabase.h"
+#include "ApplicationDatabase.h"
 
 #include "../app/AppDataPaths.h"
 
@@ -28,20 +28,10 @@ QString timestampForPath(const QFileInfo &file)
     return modified.isValid() ? modified.toUTC().toString(Qt::ISODateWithMs) : QStringLiteral("");
 }
 
-QStringList fileUrlsFromJson(const QString &json)
-{
-    QStringList urls;
-    const QJsonDocument document = QJsonDocument::fromJson(json.toUtf8());
-    if (!document.isArray())
-        return urls;
-    for (const QJsonValue &value : document.array())
-        if (value.isString())
-            urls.append(value.toString());
-    return urls;
-}
+
 }
 
-ScreenshotDatabase::ScreenshotDatabase(const QString &databasePath, QObject *parent)
+ApplicationDatabase::ApplicationDatabase(const QString &databasePath, QObject *parent)
     : QObject(parent), m_databasePath(databasePath),
       m_connectionName(QStringLiteral("SmallDTL-ScreenshotDb-") + newId()),
       m_ownerThread(QThread::currentThread())
@@ -51,19 +41,19 @@ ScreenshotDatabase::ScreenshotDatabase(const QString &databasePath, QObject *par
     m_databasePath = QDir::cleanPath(QFileInfo(m_databasePath).absoluteFilePath());
 }
 
-ScreenshotDatabase::~ScreenshotDatabase()
+ApplicationDatabase::~ApplicationDatabase()
 {
     if (!m_database)
         return;
     if (QThread::currentThread() != m_ownerThread)
-        qFatal("ScreenshotDatabase must be destroyed on its owning thread.");
+        qFatal("ApplicationDatabase must be destroyed on its owning thread.");
     m_database->close();
     delete m_database;
     m_database = nullptr;
     QSqlDatabase::removeDatabase(m_connectionName);
 }
 
-bool ScreenshotDatabase::checkThread() const
+bool ApplicationDatabase::checkThread() const
 {
     if (QThread::currentThread() == m_ownerThread)
         return true;
@@ -71,7 +61,7 @@ bool ScreenshotDatabase::checkThread() const
     return false;
 }
 
-bool ScreenshotDatabase::initialize(const QString &legacyIndexPath)
+bool ApplicationDatabase::initialize(const QString &legacyIndexPath)
 {
     if (!checkThread())
         return false;
@@ -88,6 +78,7 @@ bool ScreenshotDatabase::initialize(const QString &legacyIndexPath)
         return false;
     }
     m_database = new QSqlDatabase(QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), m_connectionName));
+    m_database->setConnectOptions(QStringLiteral("QSQLITE_BUSY_TIMEOUT=5000"));
     m_database->setDatabaseName(m_databasePath);
     if (!m_database->open()) {
         m_lastError = QStringLiteral("Could not open screenshot database: %1").arg(m_database->lastError().text());
@@ -106,7 +97,7 @@ bool ScreenshotDatabase::initialize(const QString &legacyIndexPath)
     return true;
 }
 
-bool ScreenshotDatabase::migrateSchema()
+bool ApplicationDatabase::migrateSchema()
 {
     QSqlQuery versionQuery(*m_database);
     if (!versionQuery.exec(QStringLiteral("PRAGMA user_version")) || !versionQuery.next())
@@ -208,7 +199,7 @@ bool ScreenshotDatabase::migrateSchema()
     return true;
 }
 
-bool ScreenshotDatabase::importLegacyIndex(const QString &legacyIndexPath)
+bool ApplicationDatabase::importLegacyIndex(const QString &legacyIndexPath)
 {
     if (legacyIndexPath.isEmpty() || !QFileInfo::exists(legacyIndexPath))
         return true;
@@ -287,23 +278,23 @@ bool ScreenshotDatabase::importLegacyIndex(const QString &legacyIndexPath)
     return true;
 }
 
-QString ScreenshotDatabase::normalizedPath(const QString &path) const
+QString ApplicationDatabase::normalizedPath(const QString &path) const
 {
     return QDir::cleanPath(QFileInfo(path).absoluteFilePath());
 }
 
-QString ScreenshotDatabase::normalizedPathKey(const QString &path) const
+QString ApplicationDatabase::normalizedPathKey(const QString &path) const
 {
     return QDir::fromNativeSeparators(normalizedPath(path)).toCaseFolded();
 }
 
-bool ScreenshotDatabase::transactionError(const QString &context, const QString &detail) const
+bool ApplicationDatabase::transactionError(const QString &context, const QString &detail) const
 {
     m_lastError = detail.isEmpty() ? context : QStringLiteral("%1: %2").arg(context, detail);
     return false;
 }
 
-QVector<ScreenshotRecord> ScreenshotDatabase::screenshots(const QString &directory, const QString &tagId) const
+QVector<ScreenshotRecord> ApplicationDatabase::screenshots(const QString &directory, const QString &tagId) const
 {
     QVector<ScreenshotRecord> result;
     if (!checkThread() || !m_ready)
@@ -353,7 +344,7 @@ QVector<ScreenshotRecord> ScreenshotDatabase::screenshots(const QString &directo
     return result;
 }
 
-ScreenshotRecord ScreenshotDatabase::screenshotById(const QString &id) const
+ScreenshotRecord ApplicationDatabase::screenshotById(const QString &id) const
 {
     if (!checkThread() || !m_ready)
         return {};
@@ -383,7 +374,7 @@ ScreenshotRecord ScreenshotDatabase::screenshotById(const QString &id) const
     return record;
 }
 
-QVector<ScreenshotTag> ScreenshotDatabase::tags() const
+QVector<ScreenshotTag> ApplicationDatabase::tags() const
 {
     QVector<ScreenshotTag> result;
     if (!checkThread() || !m_ready)
@@ -398,7 +389,7 @@ QVector<ScreenshotTag> ScreenshotDatabase::tags() const
     return result;
 }
 
-QString ScreenshotDatabase::screenshotIdForPath(const QString &path) const
+QString ApplicationDatabase::screenshotIdForPath(const QString &path) const
 {
     if (!checkThread() || !m_ready)
         return {};
@@ -410,7 +401,7 @@ QString ScreenshotDatabase::screenshotIdForPath(const QString &path) const
     return query.value(0).toString();
 }
 
-bool ScreenshotDatabase::addScreenshot(const QString &path, const QSize &dimensions, qint64 sizeBytes,
+bool ApplicationDatabase::addScreenshot(const QString &path, const QSize &dimensions, qint64 sizeBytes,
                                        const QString &source, QString *id,
                                        const QString &sourceScreenshotId, bool inheritTags,
                                        const QString &captureProfileId, const QString &tagId)
@@ -479,7 +470,7 @@ bool ScreenshotDatabase::addScreenshot(const QString &path, const QSize &dimensi
     return true;
 }
 
-bool ScreenshotDatabase::updateScreenshotPath(const QString &id, const QString &path)
+bool ApplicationDatabase::updateScreenshotPath(const QString &id, const QString &path)
 {
     if (!checkThread() || !m_ready)
         return false;
@@ -492,7 +483,7 @@ bool ScreenshotDatabase::updateScreenshotPath(const QString &id, const QString &
     return true;
 }
 
-bool ScreenshotDatabase::updateScreenshotMetadata(const QString &id, const QString &timestamp,
+bool ApplicationDatabase::updateScreenshotMetadata(const QString &id, const QString &timestamp,
                                                    const QSize &dimensions, qint64 sizeBytes)
 {
     if (!checkThread() || !m_ready)
@@ -509,7 +500,7 @@ bool ScreenshotDatabase::updateScreenshotMetadata(const QString &id, const QStri
     return true;
 }
 
-bool ScreenshotDatabase::removeScreenshot(const QString &id, ScreenshotRecord *removed)
+bool ApplicationDatabase::removeScreenshot(const QString &id, ScreenshotRecord *removed)
 {
     if (!checkThread() || !m_ready)
         return false;
@@ -540,7 +531,7 @@ bool ScreenshotDatabase::removeScreenshot(const QString &id, ScreenshotRecord *r
     return true;
 }
 
-bool ScreenshotDatabase::restoreScreenshot(const ScreenshotRecord &record)
+bool ApplicationDatabase::restoreScreenshot(const ScreenshotRecord &record)
 {
     if (!checkThread() || !m_ready)
         return false;
@@ -579,7 +570,7 @@ bool ScreenshotDatabase::restoreScreenshot(const ScreenshotRecord &record)
     return true;
 }
 
-QString ScreenshotDatabase::createTag(const QString &name)
+QString ApplicationDatabase::createTag(const QString &name)
 {
     if (!checkThread() || !m_ready)
         return {};
@@ -600,7 +591,7 @@ QString ScreenshotDatabase::createTag(const QString &name)
     return id;
 }
 
-bool ScreenshotDatabase::renameTag(const QString &id, const QString &name)
+bool ApplicationDatabase::renameTag(const QString &id, const QString &name)
 {
     if (!checkThread() || !m_ready)
         return false;
@@ -616,7 +607,7 @@ bool ScreenshotDatabase::renameTag(const QString &id, const QString &name)
     return true;
 }
 
-bool ScreenshotDatabase::deleteTag(const QString &id)
+bool ApplicationDatabase::deleteTag(const QString &id)
 {
     if (!checkThread() || !m_ready)
         return false;
@@ -628,7 +619,7 @@ bool ScreenshotDatabase::deleteTag(const QString &id)
     return true;
 }
 
-int ScreenshotDatabase::tagAssignmentState(const QString &tagId, const QStringList &screenshotIds) const
+int ApplicationDatabase::tagAssignmentState(const QString &tagId, const QStringList &screenshotIds) const
 {
     if (!checkThread() || !m_ready || screenshotIds.isEmpty())
         return 0;
@@ -650,7 +641,7 @@ int ScreenshotDatabase::tagAssignmentState(const QString &tagId, const QStringLi
     return assignedCount == screenshotIds.size() ? 1 : 2;
 }
 
-bool ScreenshotDatabase::setTagForScreenshots(const QStringList &screenshotIds, const QString &tagId, bool assigned)
+bool ApplicationDatabase::setTagForScreenshots(const QStringList &screenshotIds, const QString &tagId, bool assigned)
 {
     if (!checkThread() || !m_ready)
         return false;
@@ -679,326 +670,3 @@ bool ScreenshotDatabase::setTagForScreenshots(const QStringList &screenshotIds, 
     return true;
 }
 
-QVector<ClipboardHistoryRecord> ScreenshotDatabase::clipboardHistory(const QString &search) const
-{
-    QVector<ClipboardHistoryRecord> result;
-    if (!checkThread() || !m_ready)
-        return result;
-    QSqlQuery query(*m_database);
-    query.prepare(QStringLiteral("SELECT id, content_type, captured_at, fingerprint, text_content, file_urls, payload_path, size_bytes, width, height, pinned "
-                                 "FROM clipboard_history WHERE ?='' OR text_content LIKE ? OR file_urls LIKE ? "
-                                 "ORDER BY pinned DESC, captured_at DESC, id"));
-    query.addBindValue(search);
-    query.addBindValue(QStringLiteral("%") + search + QLatin1Char('%'));
-    query.addBindValue(QStringLiteral("%") + search + QLatin1Char('%'));
-    if (!query.exec()) {
-        transactionError(QStringLiteral("Could not read clipboard history"), query.lastError().text());
-        return result;
-    }
-    while (query.next()) {
-        ClipboardHistoryRecord record;
-        record.id = query.value(0).toString();
-        record.type = query.value(1).toString();
-        record.capturedAt = query.value(2).toString();
-        record.fingerprint = query.value(3).toString();
-        record.text = query.value(4).toString();
-        record.fileUrls = fileUrlsFromJson(query.value(5).toString());
-        record.payloadPath = query.value(6).toString();
-        record.sizeBytes = query.value(7).toLongLong();
-        record.width = query.value(8).toInt();
-        record.height = query.value(9).toInt();
-        record.pinned = query.value(10).toBool();
-        result.append(record);
-    }
-    return result;
-}
-
-bool ScreenshotDatabase::saveClipboardHistory(const ClipboardHistoryRecord &record, QString *id, bool *inserted)
-{
-    if (!checkThread() || !m_ready)
-        return false;
-    if (record.fingerprint.isEmpty() ||
-        !QStringList{QStringLiteral("text"), QStringLiteral("image"), QStringLiteral("files")}.contains(record.type))
-        return transactionError(QStringLiteral("Clipboard history record is invalid"));
-    if (!m_database->transaction())
-        return transactionError(QStringLiteral("Could not start clipboard history save"), m_database->lastError().text());
-    QSqlQuery existing(*m_database);
-    existing.prepare(QStringLiteral("SELECT id FROM clipboard_history WHERE fingerprint=?"));
-    existing.addBindValue(record.fingerprint);
-    if (!existing.exec()) {
-        const QString detail = existing.lastError().text();
-        m_database->rollback();
-        return transactionError(QStringLiteral("Could not check clipboard history duplicates"), detail);
-    }
-    const bool hasExisting = existing.next();
-    const QString existingId = hasExisting ? existing.value(0).toString() : QString();
-    existing.finish();
-    if (hasExisting) {
-        QSqlQuery touch(*m_database);
-        touch.prepare(QStringLiteral("UPDATE clipboard_history SET captured_at=CASE WHEN captured_at<? THEN ? ELSE captured_at END WHERE id=?"));
-        touch.addBindValue(record.capturedAt);
-        touch.addBindValue(record.capturedAt);
-        touch.addBindValue(existingId);
-        if (!touch.exec() || !m_database->commit()) {
-            const QString detail = touch.lastError().text().isEmpty() ? m_database->lastError().text() : touch.lastError().text();
-            m_database->rollback();
-            return transactionError(QStringLiteral("Could not update duplicate clipboard history entry"), detail);
-        }
-        if (id)
-            *id = existingId;
-        if (inserted)
-            *inserted = false;
-        return true;
-    }
-    QJsonArray urls;
-    for (const QString &url : record.fileUrls)
-        urls.append(url);
-    QSqlQuery insert(*m_database);
-    insert.prepare(QStringLiteral("INSERT INTO clipboard_history(id, content_type, captured_at, fingerprint, text_content, file_urls, payload_path, size_bytes, width, height, pinned) "
-                                  "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"));
-    const QString recordId = record.id.isEmpty() ? newId() : record.id;
-    insert.addBindValue(recordId);
-    insert.addBindValue(record.type);
-    insert.addBindValue(record.capturedAt);
-    insert.addBindValue(record.fingerprint);
-    insert.addBindValue(record.text.isNull() ? QStringLiteral("") : record.text);
-    insert.addBindValue(QString::fromUtf8(QJsonDocument(urls).toJson(QJsonDocument::Compact)));
-    insert.addBindValue(record.payloadPath.isNull() ? QStringLiteral("") : record.payloadPath);
-    insert.addBindValue(qMax<qint64>(0, record.sizeBytes));
-    insert.addBindValue(qMax(0, record.width));
-    insert.addBindValue(qMax(0, record.height));
-    insert.addBindValue(record.pinned);
-    if (!insert.exec() || !m_database->commit()) {
-        const QString detail = insert.lastError().text().isEmpty() ? m_database->lastError().text() : insert.lastError().text();
-        m_database->rollback();
-        return transactionError(QStringLiteral("Could not save clipboard history entry"), detail);
-    }
-    if (id)
-        *id = recordId;
-    if (inserted)
-        *inserted = true;
-    return true;
-}
-
-bool ScreenshotDatabase::setClipboardHistoryPinned(const QString &id, bool pinned)
-{
-    if (!checkThread() || !m_ready)
-        return false;
-    QSqlQuery query(*m_database);
-    query.prepare(QStringLiteral("UPDATE clipboard_history SET pinned=? WHERE id=?"));
-    query.addBindValue(pinned);
-    query.addBindValue(id);
-    if (!query.exec() || query.numRowsAffected() != 1)
-        return transactionError(QStringLiteral("Could not update clipboard history pin"), query.lastError().text());
-    return true;
-}
-
-bool ScreenshotDatabase::deleteClipboardHistory(const QString &id, ClipboardHistoryRecord *removed)
-{
-    QVector<ClipboardHistoryRecord> records;
-    if (!deleteClipboardHistory(QStringList{id}, &records))
-        return false;
-    if (records.isEmpty())
-        return transactionError(QStringLiteral("Clipboard history entry was not found"));
-    if (removed)
-        *removed = records.first();
-    return true;
-}
-
-bool ScreenshotDatabase::deleteClipboardHistory(const QStringList &ids, QVector<ClipboardHistoryRecord> *removed)
-{
-    if (!checkThread() || !m_ready)
-        return false;
-    if (ids.isEmpty())
-        return true;
-    if (!m_database->transaction())
-        return transactionError(QStringLiteral("Could not start clipboard history removal"), m_database->lastError().text());
-    QVector<ClipboardHistoryRecord> records;
-    for (const QString &id : ids) {
-        QSqlQuery find(*m_database);
-        find.prepare(QStringLiteral("SELECT id, content_type, captured_at, fingerprint, text_content, file_urls, payload_path, size_bytes, width, height, pinned FROM clipboard_history WHERE id=?"));
-        find.addBindValue(id);
-        if (!find.exec()) {
-            const QString detail = find.lastError().text();
-            m_database->rollback();
-            return transactionError(QStringLiteral("Could not read clipboard history before removal"), detail);
-        }
-        if (!find.next())
-            continue;
-        ClipboardHistoryRecord record;
-        record.id = find.value(0).toString(); record.type = find.value(1).toString();
-        record.capturedAt = find.value(2).toString(); record.fingerprint = find.value(3).toString();
-        record.text = find.value(4).toString(); record.fileUrls = fileUrlsFromJson(find.value(5).toString());
-        record.payloadPath = find.value(6).toString(); record.sizeBytes = find.value(7).toLongLong();
-        record.width = find.value(8).toInt(); record.height = find.value(9).toInt(); record.pinned = find.value(10).toBool();
-        find.finish();
-        records.append(record);
-        QSqlQuery remove(*m_database);
-        remove.prepare(QStringLiteral("DELETE FROM clipboard_history WHERE id=?"));
-        remove.addBindValue(id);
-        if (!remove.exec()) {
-            const QString detail = remove.lastError().text();
-            m_database->rollback();
-            return transactionError(QStringLiteral("Could not remove clipboard history entry"), detail);
-        }
-    }
-    if (!m_database->commit()) {
-        const QString detail = m_database->lastError().text();
-        m_database->rollback();
-        return transactionError(QStringLiteral("Could not commit clipboard history removal"), detail);
-    }
-    if (removed)
-        *removed = records;
-    return true;
-}
-
-QVector<FileShelfRecord> ScreenshotDatabase::fileShelfEntries() const
-{
-    QVector<FileShelfRecord> records;
-    if (!checkThread() || !m_ready)
-        return records;
-    QSqlQuery query(*m_database);
-    if (!query.exec(QStringLiteral("SELECT id, path, added_at, display_name, source_folder, item_type, size_bytes "
-                                   "FROM file_shelf ORDER BY added_at DESC, display_name COLLATE NOCASE"))) {
-        transactionError(QStringLiteral("Could not load file shelf"), query.lastError().text());
-        return records;
-    }
-    while (query.next()) {
-        FileShelfRecord record;
-        record.id = query.value(0).toString();
-        record.path = query.value(1).toString();
-        record.addedAt = query.value(2).toString();
-        record.displayName = query.value(3).toString();
-        record.sourceFolder = query.value(4).toString();
-        record.itemType = query.value(5).toString();
-        record.sizeBytes = query.value(6).toLongLong();
-        records.append(record);
-    }
-    return records;
-}
-
-bool ScreenshotDatabase::addFileShelfEntries(const QVector<FileShelfRecord> &records,
-                                              int *inserted, int *duplicates)
-{
-    if (inserted)
-        *inserted = 0;
-    if (duplicates)
-        *duplicates = 0;
-    if (!checkThread() || !m_ready)
-        return false;
-    if (records.isEmpty())
-        return true;
-    if (!m_database->transaction())
-        return transactionError(QStringLiteral("Could not start file shelf update"), m_database->lastError().text());
-    int addedCount = 0;
-    int duplicateCount = 0;
-    for (const FileShelfRecord &record : records) {
-        const QString path = normalizedPath(record.path);
-        const QString type = record.itemType == QStringLiteral("folder") ? QStringLiteral("folder") : QStringLiteral("file");
-        QSqlQuery query(*m_database);
-        query.prepare(QStringLiteral("INSERT OR IGNORE INTO file_shelf"
-                                     "(id,path,path_key,added_at,display_name,source_folder,item_type,size_bytes)"
-                                     " VALUES(?,?,?,?,?,?,?,?)"));
-        query.addBindValue(record.id.isEmpty() ? newId() : record.id);
-        query.addBindValue(path);
-        query.addBindValue(normalizedPathKey(path));
-        query.addBindValue(record.addedAt.isEmpty()
-                               ? QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)
-                               : record.addedAt);
-        query.addBindValue(record.displayName.isEmpty() ? QFileInfo(path).fileName() : record.displayName);
-        query.addBindValue(record.sourceFolder.isEmpty() ? QFileInfo(path).absolutePath() : normalizedPath(record.sourceFolder));
-        query.addBindValue(type);
-        query.addBindValue(qMax<qint64>(0, record.sizeBytes));
-        if (!query.exec()) {
-            const QString detail = query.lastError().text();
-            m_database->rollback();
-            return transactionError(QStringLiteral("Could not add a file shelf reference"), detail);
-        }
-        if (query.numRowsAffected() == 0)
-            ++duplicateCount;
-        else
-            ++addedCount;
-    }
-    if (!m_database->commit()) {
-        const QString detail = m_database->lastError().text();
-        m_database->rollback();
-        return transactionError(QStringLiteral("Could not commit file shelf references"), detail);
-    }
-    if (inserted)
-        *inserted = addedCount;
-    if (duplicates)
-        *duplicates = duplicateCount;
-    m_lastError.clear();
-    return true;
-}
-
-bool ScreenshotDatabase::removeFileShelfEntries(const QStringList &ids, int *removed)
-{
-    if (removed)
-        *removed = 0;
-    if (!checkThread() || !m_ready)
-        return false;
-    if (ids.isEmpty())
-        return true;
-    if (!m_database->transaction())
-        return transactionError(QStringLiteral("Could not start file shelf removal"), m_database->lastError().text());
-    int removedCount = 0;
-    for (const QString &id : ids) {
-        QSqlQuery query(*m_database);
-        query.prepare(QStringLiteral("DELETE FROM file_shelf WHERE id=?"));
-        query.addBindValue(id);
-        if (!query.exec()) {
-            const QString detail = query.lastError().text();
-            m_database->rollback();
-            return transactionError(QStringLiteral("Could not remove a file shelf reference"), detail);
-        }
-        removedCount += query.numRowsAffected();
-    }
-    if (!m_database->commit()) {
-        const QString detail = m_database->lastError().text();
-        m_database->rollback();
-        return transactionError(QStringLiteral("Could not commit file shelf removal"), detail);
-    }
-    if (removed)
-        *removed = removedCount;
-    m_lastError.clear();
-    return true;
-}
-
-bool ScreenshotDatabase::clearFileShelf(int *removed)
-{
-    if (removed)
-        *removed = 0;
-    if (!checkThread() || !m_ready)
-        return false;
-    QSqlQuery query(*m_database);
-    if (!query.exec(QStringLiteral("DELETE FROM file_shelf")))
-        return transactionError(QStringLiteral("Could not clear file shelf"), query.lastError().text());
-    if (removed)
-        *removed = query.numRowsAffected();
-    m_lastError.clear();
-    return true;
-}
-
-bool ScreenshotDatabase::updateFileShelfPath(const QString &id, const QString &path)
-{
-    if (!checkThread() || !m_ready)
-        return false;
-    const QString normalizedValue = normalizedPath(path);
-    const QFileInfo info(normalizedValue);
-    if (!info.exists() || (!info.isFile() && !info.isDir()))
-        return transactionError(QStringLiteral("The moved file shelf destination is unavailable"));
-    QSqlQuery query(*m_database);
-    query.prepare(QStringLiteral("UPDATE file_shelf SET path=?, path_key=?, display_name=?, source_folder=?, item_type=?, size_bytes=? WHERE id=?"));
-    query.addBindValue(normalizedValue);
-    query.addBindValue(normalizedPathKey(normalizedValue));
-    query.addBindValue(info.fileName().isEmpty() ? normalizedValue : info.fileName());
-    query.addBindValue(info.absolutePath());
-    query.addBindValue(info.isDir() ? QStringLiteral("folder") : QStringLiteral("file"));
-    query.addBindValue(info.isFile() ? info.size() : 0);
-    query.addBindValue(id);
-    if (!query.exec() || query.numRowsAffected() != 1)
-        return transactionError(QStringLiteral("Could not update the moved file shelf reference"), query.lastError().text());
-    m_lastError.clear();
-    return true;
-}

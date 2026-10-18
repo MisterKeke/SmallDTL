@@ -92,6 +92,8 @@ The executable is now `SmallDTL.exe`. The existing data directory and internal s
 
 ## Verification
 
+Storage cleanup/retry and compaction controls, persistent clipboard privacy preferences, confirmed clearing with optional pins, asynchronous paged history, cancellable file transfers, and bounded thumbnail caching are described in [maintenance behavior](docs/MAINTENANCE.md). Tests are split by subsystem, and Windows CI builds/tests/packages the app. Use `tools/verify-windows-interactive.ps1` to record physical desktop checks separately.
+
 See [the completion audit](docs/PROMPT_AUDIT.md), [configuration decisions](docs/CONFIGURATION.md), and [executed checks](docs/VERIFICATION.md).
 
 Manual Windows checklist (not implied by unit/offscreen success):

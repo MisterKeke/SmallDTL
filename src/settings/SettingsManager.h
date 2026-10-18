@@ -28,6 +28,10 @@ class SettingsManager final : public QObject {
     Q_PROPERTY(int clipboardHistoryRetentionDays READ clipboardHistoryRetentionDays WRITE setClipboardHistoryRetentionDays NOTIFY preferencesChanged)
     Q_PROPERTY(int clipboardHistoryRetentionCount READ clipboardHistoryRetentionCount WRITE setClipboardHistoryRetentionCount NOTIFY preferencesChanged)
     Q_PROPERTY(int clipboardHistoryStorageLimitMB READ clipboardHistoryStorageLimitMB WRITE setClipboardHistoryStorageLimitMB NOTIFY preferencesChanged)
+    Q_PROPERTY(bool clipboardHistoryEnabled READ clipboardHistoryEnabled WRITE setClipboardHistoryEnabled NOTIFY preferencesChanged)
+    Q_PROPERTY(bool clipboardHistorySessionOnly READ clipboardHistorySessionOnly WRITE setClipboardHistorySessionOnly NOTIFY preferencesChanged)
+    Q_PROPERTY(QStringList clipboardHistoryExcludedApplications READ clipboardHistoryExcludedApplications WRITE setClipboardHistoryExcludedApplications NOTIFY preferencesChanged)
+    Q_PROPERTY(int thumbnailCacheLimitMB READ thumbnailCacheLimitMB WRITE setThumbnailCacheLimitMB NOTIFY preferencesChanged)
 public:
     explicit SettingsManager(QObject *parent = nullptr);
     QString generalScreenshotDirectory() const;
@@ -73,6 +77,14 @@ public slots:
     bool setClipboardHistoryRetentionCount(int count);
     int clipboardHistoryStorageLimitMB() const;
     bool setClipboardHistoryStorageLimitMB(int megabytes);
+    bool clipboardHistoryEnabled() const;
+    bool setClipboardHistoryEnabled(bool value);
+    bool clipboardHistorySessionOnly() const;
+    bool setClipboardHistorySessionOnly(bool value);
+    QStringList clipboardHistoryExcludedApplications() const;
+    bool setClipboardHistoryExcludedApplications(const QStringList & value);
+    int thumbnailCacheLimitMB() const;
+    bool setThumbnailCacheLimitMB(int value);
 signals:
     void preferencesChanged();
     void generalScreenshotDirectoryChanged();

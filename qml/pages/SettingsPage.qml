@@ -24,6 +24,7 @@ Item {
     }
     ScrollView {
         id: scroll
+        objectName: "settingsScrollView"
         anchors.fill: parent
         contentWidth: availableWidth
         clip: true
@@ -47,6 +48,22 @@ Item {
                     Preference { title: "Minimize to tray"; description: "Hide the taskbar window when you minimize it."; value: settings.minimizeToTray; apply: function(value) { settings.setMinimizeToTray(value) } }
                     Preference { title: "Success notifications"; description: "Show nonessential tray notifications. Errors are always reported."; value: settings.notificationsEnabled; apply: function(value) { settings.setNotificationsEnabled(value) } }
                     Preference { title: "Automatically save clipboard images"; description: "Save images copied from other apps without opening SmallDTL. Pause temporarily from the tray menu."; value: settings.automaticClipboardSavingEnabled; apply: function(value) { settings.setAutomaticClipboardSavingEnabled(value) } }
+                    Preference { title: "Enable clipboard history"; description: "Remember this preference across restarts. Sensitive clipboard markers are always respected."; value: settings.clipboardHistoryEnabled; apply: function(value) { settings.setClipboardHistoryEnabled(value) } }
+                    Preference { title: "Clear history on exit"; description: "Includes pinned entries. History is stored locally during this run, cleared on normal exit, and cleared at next startup after an interruption."; value: settings.clipboardHistorySessionOnly; apply: function(value) { settings.setClipboardHistorySessionOnly(value) } }
+                    Label { text: "Exclude applications from history (one executable name or full path per line)"; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                    TextArea {
+                        objectName: "historyExcludedApplications"
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 72
+                        text: settings.clipboardHistoryExcludedApplications.join("\n")
+                        placeholderText: "Example: passwordmanager.exe"
+                        wrapMode: TextEdit.WrapAnywhere
+                        onActiveFocusChanged: if (!activeFocus) {
+                            settings.setClipboardHistoryExcludedApplications(text.split(/\r?\n/))
+                            text = Qt.binding(function() { return settings.clipboardHistoryExcludedApplications.join("\n") })
+                        }
+                    }
+                    Label { text: "Exclusions use the clipboard owner reported by Windows. Apps without an identifiable owner cannot be matched. These exclusions apply to history; automatic image saving has its own switch."; wrapMode: Text.WordWrap; Layout.fillWidth: true; font.pixelSize: 10 }
                     Label { text: "Clipboard history"; font.pixelSize: 14; font.weight: Font.DemiBold; Layout.topMargin: 5 }
                     Label { text: "History keeps text, image copies, and file references locally. Its shortcut opens a compact popup even when the main window is hidden."; color: settings.palette["#9697a3"]; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true }
                     RowLayout {
@@ -90,6 +107,35 @@ Item {
                         Label { text: "MiB" }
                     }
                     Label { text: "Pinned entries are kept during ordinary cleanup. File references point to their original locations; SmallDTL never copies or deletes those files."; color: settings.palette["#9697a3"]; font.pixelSize: 10; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                }
+            }
+            Rectangle {
+                Layout.fillWidth: true
+                implicitHeight: storageOptions.implicitHeight + 36
+                objectName: "storageSettingsPanel"
+                radius: 14; color: settings.palette["#191a20"]; border.color: settings.palette["#2d2e37"]
+                ColumnLayout {
+                    id: storageOptions
+                    anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 18
+                    spacing: 10
+                    Label { text: "Local storage"; font.pixelSize: 17; font.weight: Font.DemiBold }
+                    Label {
+                        Layout.fillWidth: true; wrapMode: Text.WordWrap
+                        text: "History images: " + ((clipboardHistory.storageUsage.imageBytes || 0) / 1048576).toFixed(1) + " MiB · Shared database: " + ((clipboardHistory.storageUsage.databaseBytes || 0) / 1048576).toFixed(1) + " MiB · Thumbnails: " + ((clipboardHistory.storageUsage.thumbnailBytes || 0) / 1048576).toFixed(1) + " MiB · Cleanup failures: " + (clipboardHistory.storageUsage.failedFiles || 0)
+                    }
+                    RowLayout {
+                        Label { text: "Thumbnail cache limit" }
+                        SpinBox { from: 16; to: 4096; value: settings.thumbnailCacheLimitMB; onValueModified: settings.setThumbnailCacheLimitMB(value) }
+                        Label { text: "MiB (also expires after 30 days)" }
+                    }
+                    Flow {
+                        Layout.fillWidth: true; spacing: 8
+                        Button { text: "Refresh and retry cleanup"; enabled: !clipboardHistory.maintaining; onClicked: clipboardHistory.maintainStorage() }
+                        Button { text: "Compact database"; enabled: !clipboardHistory.maintaining; onClicked: clipboardHistory.maintainStorage(true) }
+                        Button { text: "Clear thumbnails"; enabled: !clipboardHistory.maintaining; onClicked: clipboardHistory.maintainStorage(false, true) }
+                    }
+                    Label { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: "Maintenance removes orphaned history images and retries failed deletions. Compaction reclaims database space. These are ordinary deletion operations, not secure erasure."; font.pixelSize: 10 }
+                    BusyIndicator { running: clipboardHistory.maintaining; visible: running; implicitWidth: 24; implicitHeight: 24 }
                 }
             }
             Rectangle {
