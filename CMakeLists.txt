@@ -103,6 +103,7 @@ qt_add_qml_module(ScreenshotHotkeyManager
     VERSION 1.0
     QML_FILES
         qml/Main.qml
+        qml/components/CustomCursor.qml
         qml/components/Sidebar.qml
         qml/components/HotkeyRecorder.qml
         qml/components/HistoryClearDialog.qml
@@ -118,6 +119,8 @@ qt_add_qml_module(ScreenshotHotkeyManager
         qml/pages/FileShelfPage.qml
         qml/pages/QrCodePage.qml
         qml/pages/WindowArrangementsPage.qml
+    RESOURCES
+        qml/assets/SmallDTL.png
 )
 
 target_link_libraries(ScreenshotHotkeyManager PRIVATE
@@ -205,6 +208,7 @@ if(BUILD_TESTING)
         OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-qml/ScreenshotHotkeyManagerTest"
         QML_FILES
             qml/Main.qml
+            qml/components/CustomCursor.qml
             qml/components/Sidebar.qml
             qml/components/HotkeyRecorder.qml
         qml/components/HistoryClearDialog.qml
@@ -220,6 +224,8 @@ if(BUILD_TESTING)
             qml/pages/FileShelfPage.qml
             qml/pages/QrCodePage.qml
             qml/pages/WindowArrangementsPage.qml
+        RESOURCES
+            qml/assets/SmallDTL.png
     )
     target_compile_definitions(ScreenshotHotkeyManagerTests PRIVATE
         QT_NO_CAST_FROM_ASCII

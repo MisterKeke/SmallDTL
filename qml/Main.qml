@@ -187,6 +187,8 @@ ApplicationWindow {
         }
     }
 
+    CustomCursor { parent: Overlay.overlay.parent }
+
     Window {
         id: clipboardHistoryPopup
         objectName: "clipboardHistoryPopup"
@@ -204,6 +206,7 @@ ApplicationWindow {
         Material.background: settings.palette["#191a20"]
         Material.foreground: settings.palette["#f2f1f4"]
         flags: Qt.Tool | Qt.WindowStaysOnTopHint
+        CustomCursor { parent: Overlay.overlay.parent }
         onVisibleChanged: if (visible) { x = Math.max(0, (Screen.width - width) / 2); y = Math.max(0, (Screen.height - height) / 3); popupSearch.forceActiveFocus() }
         onClosing: app.setClipboardHistoryPopupVisible(false)
 
@@ -297,6 +300,7 @@ ApplicationWindow {
         Material.background: settings.palette["#191a20"]
         Material.foreground: settings.palette["#f2f1f4"]
         flags: Qt.Tool | Qt.WindowStaysOnTopHint
+        CustomCursor { parent: Overlay.overlay.parent }
         onVisibleChanged: if (visible) { x = Math.max(0, (Screen.width - width) / 2); y = Math.max(0, (Screen.height - height) / 3); fileShelf.refresh() }
         onClosing: app.setFileShelfPopupVisible(false)
 

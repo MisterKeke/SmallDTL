@@ -1,4 +1,218 @@
 #include "UnitTests.h"
+#include <QJSValue>
+
+void UnitTests::sidebarHoverClearsAfterNavigationWithCustomCursor()
+{
+    ApplicationController controller;
+    SettingsManager settings;
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty(QStringLiteral("app"), &controller);
+    engine.rootContext()->setContextProperty(QStringLiteral("settings"), &settings);
+    QQmlComponent component(&engine);
+    component.setData(QByteArrayLiteral(R"(
+        import QtQuick
+        import QtQuick.Controls
+        import "components"
+        ApplicationWindow {
+            width: 700; height: 850
+            Sidebar {
+                objectName: "testSidebar"
+                width: 242; height: parent.height
+                onPageSelected: function(page) { selectedPage = page }
+            }
+            CustomCursor { parent: Overlay.overlay.parent }
+        }
+    )"), QUrl::fromLocalFile(QStringLiteral(TEST_QML_DIR "/SidebarTest.qml")));
+    std::unique_ptr<QObject> object(component.create());
+    QVERIFY2(object, qPrintable(component.errorString()));
+    auto *window = qobject_cast<QQuickWindow *>(object.get());
+    QVERIFY(window);
+    window->show();
+    window->requestActivate();
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+    QTRY_VERIFY(window->isActive());
+    const QPointF initialPosition(500, 400);
+    QEnterEvent enter(initialPosition, initialPosition, window->mapToGlobal(initialPosition.toPoint()));
+    QCoreApplication::sendEvent(window, &enter);
+    QTest::mouseMove(window, initialPosition.toPoint());
+    auto *cursor = findItem(window->contentItem(), QStringLiteral("customCursor"));
+    QVERIFY(cursor);
+    QTRY_VERIFY(cursor->property("cursorVisible").toBool());
+    QTest::qWait(50);
+    auto *sidebar = findItem(window->contentItem(), QStringLiteral("testSidebar"));
+    QVERIFY(sidebar);
+    const QStringList pages{QStringLiteral("Dashboard"), QStringLiteral("Screenshots"),
+        QStringLiteral("Clipboard History"), QStringLiteral("File Shelf"), QStringLiteral("QR Codes"),
+        QStringLiteral("Hotkeys"), QStringLiteral("Profiles"), QStringLiteral("Actions"),
+        QStringLiteral("Window Arrangements"), QStringLiteral("Settings")};
+    QList<QQuickItem *> rows;
+    for (const QString &page : pages) {
+        auto *row = findItem(sidebar, QStringLiteral("sidebarItem:") + page);
+        QVERIFY(row);
+        rows.append(row);
+    }
+    const QColor hover = settings.palette().value(QStringLiteral("#22232a")).value<QColor>();
+    const QColor selected = settings.palette().value(QStringLiteral("#39222b")).value<QColor>();
+    // Visit and click every item with the cursor overlay present, then leave the menu.
+    for (int index = 0; index < rows.size(); ++index) {
+        const QPoint center = rows[index]->mapToScene(
+            QPointF(rows[index]->width() / 2, rows[index]->height() / 2)).toPoint();
+        QTest::mouseMove(window, center);
+        if (sidebar->property("selectedPage").toString() != pages[index])
+            QTRY_COMPARE(rows[index]->property("color").value<QColor>(), hover);
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, center);
+        QCOMPARE(sidebar->property("selectedPage").toString(), pages[index]);
+        QTest::mouseMove(window, QPoint(500, 400));
+        for (int other = 0; other < rows.size(); ++other) {
+            QTRY_COMPARE(rows[other]->property("color").value<QColor>(),
+                         other == index ? selected : QColor(Qt::transparent));
+        }
+    }
+    rows[0]->forceActiveFocus(Qt::TabFocusReason);
+    QTest::keyClick(window, Qt::Key_Return);
+    QCOMPARE(sidebar->property("selectedPage").toString(), pages[0]);
+    QEvent leave(QEvent::Leave);
+    QCoreApplication::sendEvent(window, &leave);
+    for (int index = 1; index < rows.size(); ++index)
+        QTRY_COMPARE(rows[index]->property("color").value<QColor>(), QColor(Qt::transparent));
+    QVERIFY(window->grabWindow().save(QDir(QCoreApplication::applicationDirPath())
+                                         .filePath(QStringLiteral("sidebar-hover-reset.png"))));
+}
+
+void UnitTests::customCursorTracksEntryExitAndKeepsControlsInteractive()
+{
+    ApplicationController controller;
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty(QStringLiteral("app"), &controller);
+    QQmlComponent component(&engine);
+    component.setData(QByteArrayLiteral(R"(
+        import QtQuick
+        import QtQuick.Controls
+        import "components"
+        ApplicationWindow {
+            id: window
+            width: 420; height: 300
+            property int clicks: 0
+            Button {
+                objectName: "cursorTestButton"
+                x: 40; y: 40; width: 120; height: 40
+                text: "Click"
+                onClicked: window.clicks++
+            }
+            Dialog {
+                objectName: "cursorTestDialog"
+                x: 160; y: 80; width: 220; height: 160
+                modal: true
+                popupType: Popup.Item
+                Button {
+                    objectName: "cursorTestDialogButton"
+                    text: "Dialog click"
+                    onClicked: window.clicks++
+                }
+            }
+            CustomCursor { parent: Overlay.overlay.parent }
+        }
+    )"), QUrl::fromLocalFile(QStringLiteral(TEST_QML_DIR "/CursorTest.qml")));
+    std::unique_ptr<QObject> object(component.create());
+    QVERIFY2(object, qPrintable(component.errorString()));
+    auto *window = qobject_cast<QQuickWindow *>(object.get());
+    QVERIFY(window);
+    auto *cursor = findItem(window->contentItem(), QStringLiteral("customCursor"));
+    auto *image = findItem(cursor, QStringLiteral("cursorImage"));
+    QVERIFY(cursor);
+    QVERIFY(image);
+    QCOMPARE(cursor->parentItem(), window->contentItem());
+    window->show();
+    window->requestActivate();
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+    QTRY_VERIFY(window->isActive());
+    QTRY_COMPARE(image->property("status").toInt(), 1); // Image.Ready
+    QVERIFY(cursor->isVisible()); // Must track while its artwork is hidden.
+
+    const auto samples = [&]() {
+        const QVariant value = cursor->property("trailPoints");
+        return value.metaType() == QMetaType::fromType<QJSValue>()
+            ? value.value<QJSValue>().toVariant().toList() : value.toList();
+    };
+
+    const auto enter = [&] {
+        const QPointF position(30, 30);
+        QEnterEvent event(position, position, window->mapToGlobal(position.toPoint()));
+        QCoreApplication::sendEvent(window, &event);
+        QTest::mouseMove(window, QPoint(100, 60));
+    };
+    enter();
+    QTRY_VERIFY(image->isVisible());
+    QCOMPARE(cursor->property("pointerPosition").toPointF(), QPointF(100, 60));
+    QTRY_COMPARE(window->cursor().shape(), Qt::BlankCursor);
+    QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, QPoint(100, 60));
+    QCOMPARE(window->property("clicks").toInt(), 1);
+    QTRY_VERIFY_WITH_TIMEOUT(samples().isEmpty(), 1000);
+    QTest::mouseMove(window, QPoint(120, 100));
+    QTest::qWait(30);
+    QTest::mouseMove(window, QPoint(220, 100));
+    QTest::qWait(30);
+    const QVariantList movingTrail = samples();
+    QVERIFY(!movingTrail.isEmpty());
+    const double headX = movingTrail.first().toMap().value(QStringLiteral("x")).toDouble();
+    const double tailX = movingTrail.last().toMap().value(QStringLiteral("x")).toDouble();
+    QVERIFY(headX > 120 && headX < 220);
+    QVERIFY2(tailX >= 120 && tailX < headX,
+             qPrintable(QStringLiteral("Trail head %1, tail %2").arg(headX).arg(tailX)));
+    QTRY_VERIFY_WITH_TIMEOUT(samples().isEmpty(), 1000);
+    QTest::mouseMove(window, QPoint(280, 220));
+    QTest::qWait(50);
+    const QImage inside = window->grabWindow();
+    QVERIFY(inside.save(QDir(QCoreApplication::applicationDirPath())
+                            .filePath(QStringLiteral("custom-cursor-inside.png"))));
+
+    QEvent leave(QEvent::Leave);
+    QCoreApplication::sendEvent(window, &leave);
+    QTRY_VERIFY(!image->isVisible());
+    QVERIFY(cursor->isVisible());
+    QVERIFY(samples().isEmpty());
+    const QImage outside = window->grabWindow();
+    QVERIFY(outside.save(QDir(QCoreApplication::applicationDirPath())
+                             .filePath(QStringLiteral("custom-cursor-outside.png"))));
+    // Verify the artwork was actually rendered with usable contrast, not just visible=true.
+    int contrastingPixels = 0;
+    const qreal scale = window->devicePixelRatio();
+    for (int y = qRound(190 * scale); y < qRound(250 * scale); ++y) {
+        for (int x = qRound(250 * scale); x < qRound(310 * scale); ++x) {
+            if (qAbs(qGray(inside.pixel(x, y)) - qGray(outside.pixel(x, y))) > 60)
+                ++contrastingPixels;
+        }
+    }
+    QVERIFY(contrastingPixels > 60);
+    enter();
+    QTRY_VERIFY(image->isVisible());
+
+    // A missing/unloaded image must leave a usable native cursor.
+    const QUrl source = image->property("source").toUrl();
+    image->setProperty("source", QUrl());
+    QTRY_VERIFY(!image->isVisible());
+    QTest::mouseMove(window, QPoint(101, 61));
+    QTRY_VERIFY(window->cursor().shape() != Qt::BlankCursor);
+    image->setProperty("source", source);
+    QTRY_VERIFY(image->isVisible());
+
+    QObject *dialog = window->findChild<QObject *>(QStringLiteral("cursorTestDialog"));
+    QVERIFY(dialog);
+    QVERIFY(QMetaObject::invokeMethod(dialog, "open"));
+    QTest::qWait(200);
+    auto *dialogButton = findItem(window->contentItem(), QStringLiteral("cursorTestDialogButton"));
+    QVERIFY(dialogButton);
+    const QPoint buttonCenter = dialogButton->mapToScene(
+        QPointF(dialogButton->width() / 2, dialogButton->height() / 2)).toPoint();
+    QTest::mouseMove(window, buttonCenter);
+    QTRY_VERIFY(image->isVisible());
+    QTRY_COMPARE(window->cursor().shape(), Qt::BlankCursor);
+    QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, buttonCenter);
+    QCOMPARE(window->property("clicks").toInt(), 2);
+    QVERIFY(QMetaObject::invokeMethod(dialog, "close"));
+    window->hide();
+    QTRY_VERIFY(!image->isVisible());
+}
 
 void UnitTests::activeProfileNameBinding()
 {

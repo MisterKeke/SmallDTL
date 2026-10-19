@@ -19,12 +19,68 @@
 #include <QScreen>
 #include <QDesktopServices>
 #include <QUrl>
+#include <QQuickWindow>
+#include <QScopedValueRollback>
 
 namespace {
+// Keep cursor styling separate from pointer delivery so controls receive hover exits.
+class WindowCursorGuard final : public QObject
+{
+public:
+    explicit WindowCursorGuard(QQuickWindow *window) : QObject(window), m_window(window)
+    {
+        window->installEventFilter(this);
+    }
+
+    void setHidden(bool hidden)
+    {
+        if (m_hidden == hidden)
+            return;
+        m_hidden = hidden;
+        if (hidden)
+            m_restoreCursor = m_window->cursor();
+        const QScopedValueRollback<bool> updating(m_updating, true);
+        m_window->setCursor(hidden ? QCursor(Qt::BlankCursor) : m_restoreCursor);
+    }
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        if (event->type() == QEvent::CursorChange && m_hidden && !m_updating
+            && m_window->cursor().shape() != Qt::BlankCursor) {
+            m_restoreCursor = m_window->cursor();
+            const QScopedValueRollback<bool> updating(m_updating, true);
+            m_window->setCursor(Qt::BlankCursor);
+        }
+        return QObject::eventFilter(watched, event);
+    }
+
+private:
+    QQuickWindow *const m_window;
+    QCursor m_restoreCursor;
+    bool m_hidden = false;
+    bool m_updating = false;
+};
+
 bool isReservedPasteShortcut(int key, int modifiers)
 {
     return key == Qt::Key_V && modifiers == int(Qt::ControlModifier);
 }
+}
+
+void ApplicationController::setWindowCursorHidden(QObject *object, bool hidden)
+{
+    auto *window = qobject_cast<QQuickWindow *>(object);
+    if (!window)
+        return;
+    for (QObject *child : window->children()) {
+        if (auto *guard = dynamic_cast<WindowCursorGuard *>(child)) {
+            guard->setHidden(hidden);
+            return;
+        }
+    }
+    if (hidden)
+        (new WindowCursorGuard(window))->setHidden(true);
 }
 
 ApplicationController::ApplicationController(QObject *parent)

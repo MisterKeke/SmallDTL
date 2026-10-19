@@ -28,6 +28,8 @@ private slots:
     void windowArrangementNativeMonitorEnumeration();
     void profileCrudAndActivation();
     void activeProfileNameBinding();
+    void customCursorTracksEntryExitAndKeepsControlsInteractive();
+    void sidebarHoverClearsAfterNavigationWithCustomCursor();
     void hotkeyConflictAndScope();
     void screenshotFilenameCollision();
     void screenshotIndexMigrationIsPreservedAndRestartSafe();

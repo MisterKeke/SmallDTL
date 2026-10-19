@@ -67,6 +67,7 @@ public:
     Q_INVOKABLE void showPage(const QString &page);
     Q_INVOKABLE void hideToTray();
     Q_INVOKABLE void showWindow();
+    Q_INVOKABLE void setWindowCursorHidden(QObject *window, bool hidden);
     Q_INVOKABLE void exitApplication();
     Q_INVOKABLE void saveClipboardScreenshot();
     Q_INVOKABLE void toggleClipboardHistoryPopup();

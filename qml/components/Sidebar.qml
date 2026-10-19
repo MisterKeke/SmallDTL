@@ -59,6 +59,7 @@ Rectangle {
             ]
             delegate: Rectangle {
                 required property var modelData
+                objectName: "sidebarItem:" + modelData.name
                 activeFocusOnTab: true
                 border.color: activeFocus ? settings.palette["#e96782"] : "transparent"
                 Keys.onReturnPressed: root.pageSelected(modelData.name)
@@ -69,7 +70,7 @@ Rectangle {
                 Layout.preferredHeight: 43
                 Layout.bottomMargin: 4
                 radius: 10
-                color: root.selectedPage === modelData.name ? settings.palette["#39222b"] : navMouse.containsMouse ? settings.palette["#22232a"] : "transparent"
+                color: root.selectedPage === modelData.name ? settings.palette["#39222b"] : navHover.hovered ? settings.palette["#22232a"] : "transparent"
                 RowLayout {
                     anchors.fill: parent
                     anchors.leftMargin: 12
@@ -94,11 +95,13 @@ Rectangle {
                         width: 5; height: 5; radius: 3; color: settings.palette["#e96782"]
                     }
                 }
-                MouseArea {
-                    id: navMouse
-                    anchors.fill: parent
-                    hoverEnabled: true
+                HoverHandler {
+                    id: navHover
+                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
                     cursorShape: Qt.PointingHandCursor
+                }
+                MouseArea {
+                    anchors.fill: parent
                     onClicked: root.pageSelected(modelData.name)
                 }
             }
@@ -109,6 +112,7 @@ Rectangle {
         Rectangle { Layout.fillWidth: true; height: 1; color: settings.palette["#292a31"]; Layout.bottomMargin: 15 }
 
         Rectangle {
+            objectName: "sidebarItem:Settings"
             Layout.fillWidth: true
             Layout.preferredHeight: 43
             activeFocusOnTab: true
@@ -118,13 +122,18 @@ Rectangle {
             Accessible.role: Accessible.Button
             Accessible.name: "Settings"
             radius: 10
-            color: selectedPage === "Settings" ? settings.palette["#39222b"] : settingsMouse.containsMouse ? settings.palette["#22232a"] : "transparent"
+            color: selectedPage === "Settings" ? settings.palette["#39222b"] : settingsHover.hovered ? settings.palette["#22232a"] : "transparent"
             RowLayout {
                 anchors.fill: parent; anchors.leftMargin: 12; spacing: 12
                 Label { text: "⚙"; color: settings.palette["#90919c"]; font.pixelSize: 16; Layout.preferredWidth: 20; horizontalAlignment: Text.AlignHCenter }
                 Label { text: "Settings"; color: settings.palette["#b5b6c0"]; font.pixelSize: 13 }
             }
-            MouseArea { id: settingsMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.pageSelected("Settings") }
+            HoverHandler {
+                id: settingsHover
+                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                cursorShape: Qt.PointingHandCursor
+            }
+            MouseArea { anchors.fill: parent; onClicked: root.pageSelected("Settings") }
         }
         Label {
             text: "LOCAL • OFFLINE"
