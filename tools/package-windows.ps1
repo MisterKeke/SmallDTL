@@ -35,8 +35,16 @@ try {
     & $CMakePath --build $BuildDirectory --parallel 4
     if ($LASTEXITCODE -ne 0) { throw 'Release build failed.' }
     $ctest = Join-Path ([IO.Path]::GetDirectoryName((Get-Command $CMakePath).Source)) 'ctest.exe'
+    $qtTestLog = Join-Path $BuildDirectory 'qt-test-results.txt'
+    if (Test-Path -LiteralPath $qtTestLog) { Remove-Item -LiteralPath $qtTestLog -Force }
     & $ctest --test-dir $BuildDirectory --output-on-failure
-    if ($LASTEXITCODE -ne 0) { throw 'Release tests failed.' }
+    if ($LASTEXITCODE -ne 0) {
+        if (Test-Path -LiteralPath $qtTestLog) { Get-Content -LiteralPath $qtTestLog }
+        throw 'Release tests failed. See qt-test-results.txt and Testing/Temporary/LastTest.log in the build directory.'
+    }
+    if (Test-Path -LiteralPath $qtTestLog) {
+        Select-String -LiteralPath $qtTestLog -Pattern '^Totals:' | ForEach-Object { Write-Output $_.Line }
+    }
     New-Item -ItemType Directory -Path $OutputDirectory | Out-Null
     $binary = Join-Path $OutputDirectory 'SmallDTL.exe'
     Copy-Item -LiteralPath (Join-Path $BuildDirectory 'SmallDTL.exe') -Destination $binary

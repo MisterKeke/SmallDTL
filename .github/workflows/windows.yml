@@ -36,4 +36,5 @@ jobs:
             out/SmallDTL-ci/build-manifest.json
             out/SmallDTL-ci/smoke-result.json
             build-release/Testing/Temporary/LastTest.log
+            build-release/qt-test-results.txt
           if-no-files-found: warn

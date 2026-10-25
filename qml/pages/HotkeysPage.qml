@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "../components"
 
 Item {
     id: root
@@ -159,31 +160,31 @@ Item {
                                     onCleared: app.updateHotkey(assignmentId, 0, 0, actionType, targetProfileId, sequenceId, assignmentEnabled, layoutId)
                                 }
                                 Label { visible: actionType === "switchProfile"; text: "Switch target"; color: settings.palette["#999aa4"]; font.pixelSize: 10 }
-                                ComboBox {
+                                ValueComboBox {
                                     visible: actionType === "switchProfile"
                                     Layout.preferredWidth: 220
                                     model: { root.profileOptionsEpoch; return profiles.profileOptions() }
                                     textRole: "name"
                                     valueRole: "id"
-                                    currentValue: targetProfileId
-                                    onActivated: if (!app.updateHotkey(assignmentId, key, modifiers, actionType, currentValue, sequenceId, assignmentEnabled, layoutId)) currentValue = Qt.binding(function() { return targetProfileId })
+                                    selectedValue: targetProfileId
+                                    onActivated: app.updateHotkey(assignmentId, key, modifiers, actionType, currentValue, sequenceId, assignmentEnabled, layoutId)
                                 }
                                 Label { visible: actionType === "sequence"; text: "Sequence"; color: settings.palette["#999aa4"]; font.pixelSize: 10 }
-                                ComboBox {
+                                ValueComboBox {
                                     visible: actionType === "sequence"
                                     Layout.preferredWidth: 220
                                     model: { root.sequenceOptionsEpoch; return actions.sequenceOptions() }
                                     textRole: "name"
                                     valueRole: "id"
-                                    currentValue: sequenceId
-                                    onActivated: if (!app.updateHotkey(assignmentId, key, modifiers, actionType, targetProfileId, currentValue, assignmentEnabled, layoutId)) currentValue = Qt.binding(function() { return sequenceId })
+                                    selectedValue: sequenceId
+                                    onActivated: app.updateHotkey(assignmentId, key, modifiers, actionType, targetProfileId, currentValue, assignmentEnabled, layoutId)
                                 }
                                 Label { visible: actionType === "applyWindowLayout"; text: "Layout"; color: settings.palette["#999aa4"]; font.pixelSize: 10 }
-                                ComboBox {
+                                ValueComboBox {
                                     visible: actionType === "applyWindowLayout"; Layout.preferredWidth: 240
                                     model: { root.layoutOptionsEpoch; return windowArrangements.layoutOptions() }
-                                    textRole: "name"; valueRole: "id"; currentValue: layoutId
-                                    onActivated: if (!app.updateHotkey(assignmentId,key,modifiers,actionType,targetProfileId,sequenceId,assignmentEnabled,currentValue)) currentValue = Qt.binding(function(){return layoutId})
+                                    textRole: "name"; valueRole: "id"; selectedValue: layoutId
+                                    onActivated: app.updateHotkey(assignmentId,key,modifiers,actionType,targetProfileId,sequenceId,assignmentEnabled,currentValue)
                                 }
                                 Item { Layout.fillWidth: true }
                             }
@@ -259,23 +260,23 @@ Item {
                         valueRole: "id"
                         Component.onCompleted: if (count > 0 && currentIndex < 0) currentIndex = 0
                     }
-                    ComboBox {
+                    ValueComboBox {
                         id: newLayout
                         visible: newActionType.currentIndex === 3
                         Layout.preferredWidth: 240
                         model: { root.layoutOptionsEpoch; return windowArrangements.layoutOptions() }
-                        textRole: "name"; valueRole: "id"; currentValue: root.newLayoutId
+                        textRole: "name"; valueRole: "id"; selectedValue: root.newLayoutId
                         onActivated: root.newLayoutId = currentValue
                         Component.onCompleted: { const opts = windowArrangements.layoutOptions(); if (root.newLayoutId === "" && opts.length > 0) root.newLayoutId = opts[0].id }
                     }
-                    ComboBox {
+                    ValueComboBox {
                         id: newSequence
                         visible: newActionType.currentIndex === 2
                         Layout.preferredWidth: 210
                         model: { root.sequenceOptionsEpoch; return actions.sequenceOptions() }
                         textRole: "name"
                         valueRole: "id"
-                        currentValue: root.newSequenceId
+                        selectedValue: root.newSequenceId
                         onActivated: root.newSequenceId = currentValue
                     }
                     Item { Layout.fillWidth: true }

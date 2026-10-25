@@ -1,5 +1,17 @@
 # Verification record
 
+## Qt 6.8 CI compatibility and test diagnostics — 2026-10-25
+
+Reproducing the test run with the workflow's Qt 6.8.3/MinGW 13.1 kit produced **85 passed, 8 failed, 2 skipped**. The QML failures reported that `ComboBox.currentValue` was read-only; those assignments prevented the Hotkeys/Actions pages and main shell from loading. `ValueComboBox` now keeps the persisted selection in a separate property, maps it to `currentIndex` through `indexOfValue()`, and restores rejected selections after activation. It handles profile-model and list-model changes without assigning to `currentValue`.
+
+After the fix, the complete Qt 6.8.3 Release test run passed: **94 passed, 0 failed, 2 skipped**. A new dropdown regression checks model replacement/reordering, external saved-value changes, rejected-edit restoration, accepted selections, and missing values. Native hotkey registration and temporary junction creation remained sandbox-restricted.
+
+The final Qt 6.11.0 Release build and full suite also passed: **94 passed, 0 failed, 2 skipped**. The Qt 6.8.3 portable packaging pipeline passed configuration, application/test builds, CTest, deployment, and isolated startup with **0 QML warnings**. Package: `out/SmallDTL-ci-fixed-qt683-20261025.zip`. Detailed local results are retained in `build-release/qt-683-test-results.txt` and `build-release/qt-test-results.txt`; packaging evidence is in the output folder's manifest and smoke-result files.
+
+A separate local run reproduced a timing-dependent clipboard test failure: captures sharing a millisecond were selected by row zero despite stable-ID tie ordering. The test now identifies the text, file, and image entries by their content type and verifies their stable IDs and restoration, without relying on display order.
+
+CTest now writes `qt-test-results.txt` in its build directory. Packaging prints that log when tests fail and prints the Qt Test totals on success. The Windows workflow uploads the detailed file alongside `Testing/Temporary/LastTest.log`, including when packaging stops at the test stage. The hosted workflow itself has not been rerun from this task.
+
 ## Review fixes, bulk tags, annotations, and CI paths — 2026-10-25
 
 The local Windows Release build with Qt 6.11.0 passed. The directly logged Qt Test run reported **93 passed, 0 failed, 2 skipped**. Windows denied temporary junction creation and native global-hotkey registration in this sandbox; these skips do not establish physical desktop verification.

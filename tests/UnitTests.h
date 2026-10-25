@@ -5,6 +5,7 @@ class UnitTests final : public QObject
 {
     Q_OBJECT
 private slots:
+    void valueComboBoxTracksSavedValuesAndRejectedEdits();
     void oversizedProfileEditPreservesSavedState();
     void unicodeScreenshotMigrationMergesTagsAndSourceLinks();
     void fileShelfMoveRejectsEditingSources();

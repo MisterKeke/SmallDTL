@@ -1,4 +1,39 @@
 #include "UnitTests.h"
+
+void UnitTests::valueComboBoxTracksSavedValuesAndRejectedEdits()
+{
+    QQmlEngine engine;
+    QSignalSpy warnings(&engine, &QQmlEngine::warnings);
+    QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(TEST_QML_DIR "/components/ValueComboBox.qml")));
+    QTRY_VERIFY(component.status() != QQmlComponent::Loading);
+    std::unique_ptr<QObject> picker(component.create());
+    QVERIFY2(picker, qPrintable(component.errorString()));
+    picker->setProperty("textRole", QStringLiteral("label"));
+    picker->setProperty("valueRole", QStringLiteral("id"));
+    const QVariantMap one{{QStringLiteral("id"), QStringLiteral("one")}, {QStringLiteral("label"), QStringLiteral("One")}};
+    const QVariantMap two{{QStringLiteral("id"), QStringLiteral("two")}, {QStringLiteral("label"), QStringLiteral("Two")}};
+    const QVariantMap three{{QStringLiteral("id"), QStringLiteral("three")}, {QStringLiteral("label"), QStringLiteral("Three")}};
+    picker->setProperty("model", QVariantList{one, two});
+    picker->setProperty("selectedValue", QStringLiteral("two"));
+    QTRY_COMPARE(picker->property("currentIndex").toInt(), 1);
+    QCOMPARE(picker->property("currentValue").toString(), QStringLiteral("two"));
+    picker->setProperty("model", QVariantList{two, three, one});
+    QTRY_COMPARE(picker->property("currentIndex").toInt(), 0);
+    picker->setProperty("selectedValue", QStringLiteral("one"));
+    QTRY_COMPARE(picker->property("currentIndex").toInt(), 2);
+    // No saved-value update represents a rejected edit.
+    picker->setProperty("currentIndex", 1);
+    QVERIFY(QMetaObject::invokeMethod(picker.get(), "activated", Q_ARG(int, 1)));
+    QTRY_COMPARE(picker->property("currentIndex").toInt(), 2);
+    QCOMPARE(picker->property("currentValue").toString(), QStringLiteral("one"));
+    picker->setProperty("currentIndex", 1);
+    QVERIFY(QMetaObject::invokeMethod(picker.get(), "activated", Q_ARG(int, 1)));
+    picker->setProperty("selectedValue", QStringLiteral("three"));
+    QTRY_COMPARE(picker->property("currentValue").toString(), QStringLiteral("three"));
+    picker->setProperty("model", QVariantList{one, two});
+    QTRY_COMPARE(picker->property("currentIndex").toInt(), -1);
+    QCOMPARE(warnings.count(), 0);
+}
 #include <QJSValue>
 
 void UnitTests::sidebarHoverClearsAfterNavigationWithCustomCursor()

@@ -34,4 +34,6 @@ Tests are split by subsystem, with shared support and one Qt Test entry point. `
 
 `.github/workflows/windows.yml` installs Qt 6.8.3/MinGW, runs Release build/test/deploy/smoke checks, and uploads the package and evidence. Local execution does not establish that this remote workflow has run.
 
+CTest writes per-case Qt Test diagnostics to `qt-test-results.txt` in the build directory. Packaging prints that file on failure, and CI uploads it even if no portable package was produced. This avoids losing assertion details from the Windows GUI test executable's uncaptured console output.
+
 `tools/verify-windows-interactive.ps1` records pass/fail/not-run plus evidence for physical Explorer/application drops, shortcuts, clipboard interoperability, mixed-DPI/disconnected monitors, elevated windows, network shares, cross-volume moves, and shutdown. A checklist entry or offscreen render does not establish physical verification. See `VERIFICATION.md` for executed checks.

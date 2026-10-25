@@ -72,25 +72,36 @@ void UnitTests::clipboardHistoryPersistsAndDeduplicatesTextAndFiles()
         ProfileManager profiles(&settings);
         ScreenshotManager screenshots(&profiles, &settings);
         ClipboardHistoryManager history(screenshots.database(), screenshots.clipboardService(), &settings, &screenshots);
+        // Captures can share the same millisecond. Row zero is not a reliable
+        // identity: SQL breaks equal timestamps by stable ID, not event order.
+        const auto entryOfType = [&](const QString &type) {
+            for (int row = 0; row < history.model()->rowCount(); ++row) {
+                const auto record = history.model()->recordAt(row);
+                if (record.type == type) return record;
+            }
+            return ClipboardHistoryRecord{};
+        };
         ClipboardSnapshot text;
         text.type = QStringLiteral("text");
         text.text = QStringLiteral("persisted note");
         screenshots.clipboardService()->processContentChange(text, false);
         QTRY_VERIFY2(history.count() == 1, qPrintable(screenshots.database()->lastError()));
-        textId = history.model()->recordAt(0).id;
+        textId = entryOfType(QStringLiteral("text")).id;
+        QVERIFY(!textId.isEmpty());
         screenshots.clipboardService()->processContentChange(text, false);
         QTRY_COMPARE(history.count(), 1);
-        QCOMPARE(history.model()->recordAt(0).id, textId);
+        QCOMPARE(entryOfType(QStringLiteral("text")).id, textId);
 
         ClipboardSnapshot files;
         files.type = QStringLiteral("files");
         files.urls.append(QUrl::fromLocalFile(referencedFile));
         screenshots.clipboardService()->processContentChange(files, false);
         QTRY_COMPARE(history.count(), 2);
-        filesId = history.model()->recordAt(0).id;
+        filesId = entryOfType(QStringLiteral("files")).id;
+        QVERIFY(!filesId.isEmpty());
         screenshots.clipboardService()->processContentChange(files, false);
         QTRY_COMPARE(history.count(), 2);
-        QCOMPARE(history.model()->recordAt(0).id, filesId);
+        QCOMPARE(entryOfType(QStringLiteral("files")).id, filesId);
         QVERIFY(history.restoreEntry(filesId));
         QVERIFY(QGuiApplication::clipboard()->mimeData()->hasUrls());
         QCOMPARE(QGuiApplication::clipboard()->mimeData()->urls().first().toLocalFile(), referencedFile);
@@ -103,8 +114,9 @@ void UnitTests::clipboardHistoryPersistsAndDeduplicatesTextAndFiles()
         screenshots.clipboardService()->processContentChange(image, false);
         QTRY_COMPARE_WITH_TIMEOUT(history.count(), 3, 5000);
         history.finishPendingSaves();
-        imageId = history.model()->recordAt(0).id;
-        QVERIFY(QFileInfo::exists(history.model()->recordAt(0).payloadPath));
+        imageId = entryOfType(QStringLiteral("image")).id;
+        QVERIFY(!imageId.isEmpty());
+        QVERIFY(QFileInfo::exists(history.model()->recordById(imageId).payloadPath));
 
         ClipboardSnapshot pausedText;
         pausedText.type = QStringLiteral("text");

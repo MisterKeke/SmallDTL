@@ -115,14 +115,15 @@ ApplicationWindow {
                                 color: appTheme.accentSoft
                                 Label { anchors.centerIn: parent; text: "P"; color: appTheme.accent; font.bold: true }
                             }
-                            ComboBox {
+                            ValueComboBox {
                                 id: activeProfilePicker
+                                objectName: "activeProfilePicker"
                                 Layout.fillWidth: true
                                 model: profiles
                                 textRole: "name"
                                 valueRole: "profileId"
-                                currentValue: profiles.activeProfileId
-                                onActivated: { profiles.setActiveProfile(currentValue); currentIndex = indexOfValue(profiles.activeProfileId) }
+                                selectedValue: profiles.activeProfileId
+                                onActivated: profiles.setActiveProfile(currentValue)
                                 background: Item {}
                                 contentItem: Text {
                                     text: activeProfilePicker.displayText

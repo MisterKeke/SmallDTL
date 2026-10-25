@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQml.Models
+import "../components"
 
 Item {
     id: root
@@ -415,13 +416,13 @@ Item {
                                                 from: 0; to: 20; value: stepQrMarginModules
                                                 onValueModified: { actions.updateStep(root.selectedSequenceId, stepId, { "qrMarginModules": value }); value = Qt.binding(function() { return stepQrMarginModules }) }
                                             }
-                                            ComboBox {
+                                            ValueComboBox {
                                                 model: [{code: "L", label: "L"}, {code: "M", label: "M"}, {code: "Q", label: "Q"}, {code: "H", label: "H"}]
                                                 textRole: "label"
                                                 valueRole: "code"
-                                                currentValue: stepQrErrorCorrection
+                                                selectedValue: stepQrErrorCorrection
                                                 Layout.preferredWidth: 66
-                                                onActivated: { actions.updateStep(root.selectedSequenceId, stepId, { "qrErrorCorrection": currentValue }); currentValue = Qt.binding(function() { return stepQrErrorCorrection }) }
+                                                onActivated: actions.updateStep(root.selectedSequenceId, stepId, { "qrErrorCorrection": currentValue })
                                             }
                                         }
                                         RowLayout {
@@ -452,11 +453,11 @@ Item {
                                             Layout.fillWidth: true
                                             visible: stepType === "applyWindowLayout"
                                             Label { text: "Saved layout"; color: settings.palette["#999aa4"]; font.pixelSize: 9; Layout.preferredWidth: 65 }
-                                            ComboBox {
+                                            ValueComboBox {
                                                 Layout.preferredWidth: 300
                                                 model: { root.layoutEpoch; return windowArrangements.layoutOptions() }
-                                                textRole: "name"; valueRole: "id"; currentValue: stepLayoutId
-                                                onActivated: { actions.updateStep(root.selectedSequenceId, stepId, { "layoutId": currentValue }); currentValue = Qt.binding(function() { return stepLayoutId }) }
+                                                textRole: "name"; valueRole: "id"; selectedValue: stepLayoutId
+                                                onActivated: actions.updateStep(root.selectedSequenceId, stepId, { "layoutId": currentValue })
                                             }
                                             Label { text: "Only this explicit step applies the layout."; color: settings.palette["#898a95"]; font.pixelSize: 9 }
                                         }
@@ -464,13 +465,13 @@ Item {
                                             Layout.fillWidth: true
                                             visible: stepType === "switchProfile"
                                             Label { text: "Profile"; color: settings.palette["#999aa4"]; font.pixelSize: 9; Layout.preferredWidth: 55 }
-                                            ComboBox {
+                                            ValueComboBox {
                                                 Layout.preferredWidth: 260
                                                 model: { root.profileEpoch; return profiles.profileOptions() }
                                                 textRole: "name"
                                                 valueRole: "id"
-                                                currentValue: stepTargetProfileId
-                                                onActivated: { actions.updateStep(root.selectedSequenceId, stepId, { "targetProfileId": currentValue }); currentValue = Qt.binding(function() { return stepTargetProfileId }) }
+                                                selectedValue: stepTargetProfileId
+                                                onActivated: actions.updateStep(root.selectedSequenceId, stepId, { "targetProfileId": currentValue })
                                             }
                                         }
                                         RowLayout {

@@ -7,6 +7,7 @@
 #include <QApplication>
 #include <QCoreApplication>
 #include <QCryptographicHash>
+#include <QIcon>
 #include <QLocalServer>
 #include <QLocalSocket>
 #include <QQmlApplicationEngine>
@@ -38,6 +39,7 @@ int main(int argc, char *argv[])
     QCoreApplication::setApplicationName(QStringLiteral("ScreenshotHotkeyManager"));
     QGuiApplication::setApplicationDisplayName(QStringLiteral("SmallDTL"));
     QCoreApplication::setApplicationVersion(QStringLiteral("0.1.0"));
+    QGuiApplication::setWindowIcon(QIcon(QStringLiteral(":/qt/qml/ScreenshotHotkeyManager/qml/assets/SmallDTL.ico")));
     application.setQuitOnLastWindowClosed(true);
 
     const QByteArray identity = QCryptographicHash::hash(
@@ -104,6 +106,7 @@ int main(int argc, char *argv[])
         for(const QString &page:{QStringLiteral("Dashboard"),QStringLiteral("Screenshots"),QStringLiteral("Clipboard History"),QStringLiteral("File Shelf"),QStringLiteral("QR Codes"),QStringLiteral("Window Arrangements"),QStringLiteral("Hotkeys"),QStringLiteral("Profiles"),QStringLiteral("Actions"),QStringLiteral("Settings")})controller.setCurrentPage(page);
         auto metrics=std::make_shared<QJsonObject>(QJsonObject{{QStringLiteral("qmlWarnings"),smokeWarnings},{QStringLiteral("loaded"),!engine.rootObjects().isEmpty()},
             {QStringLiteral("applicationDisplayName"),QGuiApplication::applicationDisplayName()},
+            {QStringLiteral("applicationIconAvailable"),!QGuiApplication::windowIcon().pixmap(32,32).isNull()},
             {QStringLiteral("windowTitle"),window ? window->title() : QString()}});
 #ifdef Q_OS_WIN
         FILETIME created,exitTime,kernel,user;

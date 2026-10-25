@@ -94,7 +94,10 @@ set_target_properties(ScreenshotHotkeyManager PROPERTIES OUTPUT_NAME SmallDTL)
 if(WIN32)
     enable_language(RC)
     configure_file(src/app/SmallDTL.manifest "${CMAKE_CURRENT_BINARY_DIR}/SmallDTL.manifest" COPYONLY)
+    configure_file(qml/assets/SmallDTL.ico "${CMAKE_CURRENT_BINARY_DIR}/SmallDTL.ico" COPYONLY)
     configure_file(src/app/SmallDTL.rc.in "${CMAKE_CURRENT_BINARY_DIR}/SmallDTL.rc" @ONLY)
+    set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/SmallDTL.rc" PROPERTIES
+        OBJECT_DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/SmallDTL.ico")
     target_sources(ScreenshotHotkeyManager PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/SmallDTL.rc")
 endif()
 
@@ -106,6 +109,7 @@ qt_add_qml_module(ScreenshotHotkeyManager
         qml/components/CustomCursor.qml
         qml/components/Sidebar.qml
         qml/components/HotkeyRecorder.qml
+        qml/components/ValueComboBox.qml
         qml/components/HistoryClearDialog.qml
         qml/components/ScreenshotEditor.qml
         qml/components/InsetTextArea.qml
@@ -120,6 +124,7 @@ qt_add_qml_module(ScreenshotHotkeyManager
         qml/pages/QrCodePage.qml
         qml/pages/WindowArrangementsPage.qml
     RESOURCES
+        qml/assets/SmallDTL.ico
         qml/assets/SmallDTL.png
 )
 
@@ -212,6 +217,7 @@ if(BUILD_TESTING)
             qml/components/CustomCursor.qml
             qml/components/Sidebar.qml
             qml/components/HotkeyRecorder.qml
+            qml/components/ValueComboBox.qml
         qml/components/HistoryClearDialog.qml
             qml/pages/DashboardPage.qml
             qml/pages/ScreenshotsPage.qml
@@ -240,7 +246,10 @@ if(BUILD_TESTING)
         )
         target_link_libraries(ScreenshotHotkeyManagerTests PRIVATE shell32 user32 psapi)
     endif()
-    add_test(NAME ScreenshotHotkeyManager.UnitTests COMMAND ScreenshotHotkeyManagerTests)
+    # Qt's Windows GUI test executable may have no captured console output.
+    # Keep a durable per-case log even when CTest only reports the exit code.
+    add_test(NAME ScreenshotHotkeyManager.UnitTests COMMAND ScreenshotHotkeyManagerTests
+        -o "${CMAKE_CURRENT_BINARY_DIR}/qt-test-results.txt,txt")
     set_tests_properties(ScreenshotHotkeyManager.UnitTests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
         TIMEOUT 300
