@@ -1,5 +1,24 @@
 # Verification record
 
+## Review fixes, bulk tags, annotations, and CI paths — 2026-10-25
+
+The local Windows Release build with Qt 6.11.0 passed. The directly logged Qt Test run reported **93 passed, 0 failed, 2 skipped**. Windows denied temporary junction creation and native global-hotkey registration in this sandbox; these skips do not establish physical desktop verification.
+
+New regression coverage verifies:
+
+- A rejected profile edit exceeding the 4 MiB serialized limit keeps the previous file bytes and in-memory arguments, and that profile still loads after restart.
+- Schema-6-to-7 migration merges Unicode case-only screenshot paths, unions tag assignments, redirects edited-copy links, and preserves lookup and restoration identities across restart.
+- A Move rejects sources held open for editing. A file created inside a source folder during a 128 MiB transfer survives, and the operation reports failure while preserving the source. Existing successful moves, conflict handling, and cancellation checks also pass.
+- File Shelf and clipboard-history shortcut setters reject Ctrl+V; the native registration path also rejects older saved or imported Ctrl+V bindings. Missing layout IDs fail sequence validation, and shortcut/sequence references prevent layout deletion.
+- Arrow, rectangle, ellipse, highlight, text, and opaque redaction output, including crop coordinates, original-file preservation, and alpha behavior. The real QML editor creates all six annotations through pointer events, exercises undo/redo, and renders without QML warnings.
+- The real bulk-tag popup opens at its button, displays mixed state, assigns a tag to both selected screenshots, updates its check state, and removes the assignments on a subsequent click, without QML warnings.
+
+Visual inspection used `build-release/editor-visual.png` and `build-release/bulk-tag-fixed.png`. Full test details are in `build-release/fixes-full.txt`.
+
+The packaging argument regression exercised `tools/package-windows.ps1` using a temporary compiler path containing a CI-style backslash-a component. Its compiler cache arguments used typed CMake paths with forward slashes, and the generated `CMakeRCCompiler.cmake` parsed successfully with CMake. The local CMake resource-compiler template directly embeds its compiler path in a quoted CMake string, explaining why an unnormalized native path triggered the reported escape error. This local check does not establish that the hosted GitHub workflow has rerun.
+
+The final portable packaging run rebuilt the application and tests, passed CTest, deployed Qt and the SQLite driver, and passed isolated startup with **0 QML warnings**. Artifacts: `out/SmallDTL-fixes-final-20261025/SmallDTL.exe` and `out/SmallDTL-fixes-final-20261025.zip`. The package records its results in `build-manifest.json` and `smoke-result.json`; the full packaging log is `build-release/fixes-package-final.log`.
+
 ## Storage, privacy, transfer, and maintainability fixes — 2026-10-18
 
 Implemented the review's cleanup error reporting/retry and orphan reconciliation, storage usage/compaction controls, persisted capture enablement and application exclusions, supported sensitive clipboard markers, clear-on-exit behavior, confirmed clearing with optional pins, five-minute idle retention, asynchronous bounded history queries and filesystem checks, incremental history rows, transfer progress/cancellation and shutdown cancellation, and bounded/expiring thumbnail storage. The shared SQLite service is now `ApplicationDatabase`, its domain SQL is split, tests are organized by subsystem, and Windows CI builds/tests/packages with an isolated smoke check. Existing data identity, database filename, and schema remain unchanged. Behavior and limitations are detailed in `MAINTENANCE.md`.

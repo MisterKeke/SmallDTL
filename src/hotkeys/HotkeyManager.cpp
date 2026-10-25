@@ -122,6 +122,8 @@ bool HotkeyManager::isRegistered(const QString &id) const
 
 bool HotkeyManager::isSupportedKey(int key, int modifiers)
 {
+    if (key == Qt::Key_V && modifiers == int(Qt::ControlModifier))
+        return false;
     const int supportedModifiers = int(Qt::ControlModifier | Qt::AltModifier | Qt::ShiftModifier | Qt::MetaModifier);
     if (key == 0 || (modifiers & ~supportedModifiers) != 0)
         return false;
@@ -258,7 +260,8 @@ int HotkeyManager::failureCount() const {
 bool HotkeyManager::registerBinding(const Binding &binding, int nativeId)
 {
 #ifdef Q_OS_WIN
-    if (m_window.isNull())
+    // Also protect paste when loading an older saved shortcut or imported data.
+    if (m_window.isNull() || !isSupportedKey(binding.key, binding.modifiers))
         return false;
     UINT virtualKey = 0;
     if (!toWindowsKey(binding.key, &virtualKey))

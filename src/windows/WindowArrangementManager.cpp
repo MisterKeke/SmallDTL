@@ -407,7 +407,33 @@ QString WindowArrangementManager::saveSelectedLayout(const QString &name){
     m_layouts.append(layout);if(!saveLayouts()){m_layouts.removeLast();return{};}setSelectedLayoutId(layout.id);emit layoutsChanged();setStatus(QStringLiteral("Saved layout %1 with %2 window rule(s).").arg(layout.name).arg(layout.rules.size()));return layout.id;
 }
 bool WindowArrangementManager::renameLayout(const QString &id,const QString &name){const int row=layoutIndex(id);const QString normalized=name.trimmed();if(row<0||normalized.isEmpty()||normalized.size()>120)return false;const QString old=m_layouts[row].name;m_layouts[row].name=normalized;if(!saveLayouts()){m_layouts[row].name=old;return false;}emit layoutsChanged();return true;}
-bool WindowArrangementManager::deleteLayout(const QString &id){const int row=layoutIndex(id);if(row<0)return false;const WindowLayout old=m_layouts.takeAt(row);if(!saveLayouts()){m_layouts.insert(row,old);return false;}if(m_selectedLayoutId==id)setSelectedLayoutId({});if(m_previewLayoutId==id){m_previewLayoutId.clear();m_preview.clear();emit previewChanged();}emit layoutsChanged();return true;}
+bool WindowArrangementManager::deleteLayout(const QString &id)
+{
+    const int row = layoutIndex(id);
+    if (row < 0) return false;
+    QVector<Profile> profiles = m_profiles->profiles();
+    profiles.append(m_profiles->globalProfile());
+    for (const Profile &profile : profiles) {
+        for (const auto &binding : profile.hotkeys) {
+            if (binding.actionType == QStringLiteral("applyWindowLayout") && binding.layoutId == id) {
+                setStatus(QStringLiteral("Remove the shortcut referencing this layout in %1 before deleting it.").arg(profile.name), true);
+                return false;
+            }
+        }
+        for (const auto &sequence : profile.sequences) for (const auto &step : sequence.steps) {
+            if (step.type == QStringLiteral("applyWindowLayout") && step.layoutId == id) {
+                setStatus(QStringLiteral("Remove the layout step from %1 in %2 before deleting this layout.").arg(sequence.name, profile.name), true);
+                return false;
+            }
+        }
+    }
+    const WindowLayout old = m_layouts.takeAt(row);
+    if (!saveLayouts()) { m_layouts.insert(row, old); return false; }
+    if (m_selectedLayoutId == id) setSelectedLayoutId({});
+    if (m_previewLayoutId == id) { m_previewLayoutId.clear(); m_preview.clear(); emit previewChanged(); }
+    emit layoutsChanged();
+    return true;
+}
 QVariantList WindowArrangementManager::layoutSlots(const QString &id)const{QVariantList result;const int row=layoutIndex(id);if(row<0)return result;for(int i=0;i<m_layouts[row].rules.size();++i)result.append(slotToMap(m_layouts[row].rules.at(i),i));return result;}
 bool WindowArrangementManager::setTitleRule(const QString &id,int slotIndex,const QString &rule){const int row=layoutIndex(id);if(row<0||slotIndex<0||slotIndex>=m_layouts[row].rules.size()||rule.size()>300)return false;const QString old=m_layouts[row].rules[slotIndex].titleRule;m_layouts[row].rules[slotIndex].titleRule=rule.trimmed();if(!saveLayouts()){m_layouts[row].rules[slotIndex].titleRule=old;return false;}if(m_previewLayoutId==id){m_resolutions.remove(slotIndex);rebuildPreview();}return true;}
 bool WindowArrangementManager::previewLayout(const QString &id)

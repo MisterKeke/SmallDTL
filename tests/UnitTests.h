@@ -5,6 +5,12 @@ class UnitTests final : public QObject
 {
     Q_OBJECT
 private slots:
+    void oversizedProfileEditPreservesSavedState();
+    void unicodeScreenshotMigrationMergesTagsAndSourceLinks();
+    void fileShelfMoveRejectsEditingSources();
+    void fileShelfMovePreservesNewFolderEntries();
+    void screenshotAnnotationsRenderShapesTextAndOpaqueRedaction();
+    void screenshotBulkTagPopupAppliesAndRemovesMixedAssignments();
     void historyPrivacyPreferencesAndSensitiveMarkers();
     void historySessionCleanupAndPinnedClear();
     void historyMaintenanceReconcilesAndRetriesLockedPayload();

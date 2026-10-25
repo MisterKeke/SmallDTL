@@ -153,6 +153,7 @@ if(BUILD_TESTING)
     qt_add_executable(ScreenshotHotkeyManagerTests
         tests/UnitTests.cpp
         tests/MaintenanceTests.cpp
+        tests/ReviewRegressionTests.cpp
         tests/UnitTests.h
         tests/TestSupport.h
         tests/TestLifecycle.cpp

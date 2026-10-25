@@ -5,6 +5,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QImageReader>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -103,10 +104,10 @@ bool ApplicationDatabase::migrateSchema()
     if (!versionQuery.exec(QStringLiteral("PRAGMA user_version")) || !versionQuery.next())
         return transactionError(QStringLiteral("Could not read screenshot database schema version"), versionQuery.lastError().text());
     int version = versionQuery.value(0).toInt();
-    if (version > 6)
+    if (version > 7)
         return transactionError(QStringLiteral("Screenshot database was created by a newer SmallDTL version"));
 
-    while (version < 6) {
+    while (version < 7) {
         if (!m_database->transaction())
             return transactionError(QStringLiteral("Could not start screenshot database migration"), m_database->lastError().text());
         QSqlQuery query(*m_database);
@@ -184,6 +185,40 @@ bool ApplicationDatabase::migrateSchema()
                  query.exec(QStringLiteral("PRAGMA user_version = 6"));
             if (ok)
                 version = 6;
+        } else if (version == 6) {
+            ok = query.exec(QStringLiteral("ALTER TABLE screenshots ADD COLUMN path_key TEXT NOT NULL DEFAULT ''"));
+            QVector<QPair<QString, QString>> paths;
+            if (ok) ok = query.exec(QStringLiteral("SELECT id,path FROM screenshots ORDER BY rowid"));
+            while (ok && query.next()) paths.append({query.value(0).toString(), query.value(1).toString()});
+            query.finish();
+            QHash<QString, QString> canonicalIds;
+            for (const auto &entry : paths) {
+                if (!ok) break;
+                const QString key = normalizedPathKey(entry.second);
+                const QString canonical = canonicalIds.value(key);
+                if (!canonical.isEmpty()) {
+                    // Keep the earliest ID, union tags, and redirect edited-copy links.
+                    query.prepare(QStringLiteral("INSERT OR IGNORE INTO screenshot_tags(screenshot_id,tag_id) SELECT ?,tag_id FROM screenshot_tags WHERE screenshot_id=?"));
+                    query.addBindValue(canonical); query.addBindValue(entry.first);
+                    ok = query.exec();
+                    if (ok) {
+                        query.prepare(QStringLiteral("UPDATE screenshots SET source_screenshot_id=CASE WHEN id=? THEN NULL ELSE ? END WHERE source_screenshot_id=?"));
+                        query.addBindValue(canonical); query.addBindValue(canonical); query.addBindValue(entry.first);
+                        ok = query.exec();
+                    }
+                    if (ok) {
+                        query.prepare(QStringLiteral("DELETE FROM screenshots WHERE id=?"));
+                        query.addBindValue(entry.first); ok = query.exec();
+                    }
+                } else {
+                    canonicalIds.insert(key, entry.first);
+                    query.prepare(QStringLiteral("UPDATE screenshots SET path_key=? WHERE id=?"));
+                    query.addBindValue(key); query.addBindValue(entry.first); ok = query.exec();
+                }
+            }
+            if (ok) ok = query.exec(QStringLiteral("CREATE UNIQUE INDEX screenshots_path_key_idx ON screenshots(path_key)")) &&
+                         query.exec(QStringLiteral("PRAGMA user_version = 7"));
+            if (ok) version = 7;
         }
         if (!ok) {
             const QString detail = query.lastError().text();
@@ -237,8 +272,8 @@ bool ApplicationDatabase::importLegacyIndex(const QString &legacyIndexPath)
             continue;
         const QString path = normalizedPath(rawPath);
         QSqlQuery existing(*m_database);
-        existing.prepare(QStringLiteral("SELECT 1 FROM screenshots WHERE path=?"));
-        existing.addBindValue(path);
+        existing.prepare(QStringLiteral("SELECT 1 FROM screenshots WHERE path_key=?"));
+        existing.addBindValue(normalizedPathKey(path));
         if (!existing.exec()) {
             const QString detail = existing.lastError().text();
             m_database->rollback();
@@ -251,8 +286,8 @@ bool ApplicationDatabase::importLegacyIndex(const QString &legacyIndexPath)
         const QSize dimensions = fileInfo.exists() && fileInfo.isFile() ? reader.size() : QSize();
         QSqlQuery insert(*m_database);
         insert.prepare(QStringLiteral("INSERT INTO screenshots"
-                                      "(id, path, captured_at, width, height, size_bytes, source)"
-                                      " VALUES(?, ?, ?, ?, ?, ?, ?)"));
+                                      "(id, path, captured_at, width, height, size_bytes, source, path_key)"
+                                      " VALUES(?, ?, ?, ?, ?, ?, ?, ?)"));
         insert.bindValue(0, newId());
         insert.bindValue(1, path);
         insert.bindValue(2, timestampForPath(fileInfo));
@@ -260,6 +295,7 @@ bool ApplicationDatabase::importLegacyIndex(const QString &legacyIndexPath)
         insert.bindValue(4, qMax(0, dimensions.height()));
         insert.bindValue(5, fileInfo.exists() && fileInfo.isFile() ? fileInfo.size() : 0);
         insert.bindValue(6, QStringLiteral("legacy-index"));
+        insert.bindValue(7, normalizedPathKey(path));
         if (!insert.exec()) {
             const QString detail = insert.lastError().text();
             m_database->rollback();
@@ -394,8 +430,8 @@ QString ApplicationDatabase::screenshotIdForPath(const QString &path) const
     if (!checkThread() || !m_ready)
         return {};
     QSqlQuery query(*m_database);
-    query.prepare(QStringLiteral("SELECT id FROM screenshots WHERE path = ?"));
-    query.addBindValue(normalizedPath(path));
+    query.prepare(QStringLiteral("SELECT id FROM screenshots WHERE path_key = ?"));
+    query.addBindValue(normalizedPathKey(path));
     if (!query.exec() || !query.next())
         return {};
     return query.value(0).toString();
@@ -421,8 +457,8 @@ bool ApplicationDatabase::addScreenshot(const QString &path, const QSize &dimens
     if (!m_database->transaction())
         return transactionError(QStringLiteral("Could not start screenshot registration"), m_database->lastError().text());
     QSqlQuery query(*m_database);
-    query.prepare(QStringLiteral("INSERT INTO screenshots(id, path, captured_at, width, height, size_bytes, source, source_screenshot_id, capture_profile_id) "
-                                 "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)"));
+    query.prepare(QStringLiteral("INSERT INTO screenshots(id, path, captured_at, width, height, size_bytes, source, source_screenshot_id, capture_profile_id, path_key) "
+                                 "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"));
     const QString screenshotId = newId();
     query.addBindValue(screenshotId);
     query.addBindValue(normalized);
@@ -433,6 +469,7 @@ bool ApplicationDatabase::addScreenshot(const QString &path, const QSize &dimens
     query.addBindValue(source);
     query.addBindValue(sourceScreenshotId.isEmpty() ? QVariant() : QVariant(sourceScreenshotId));
     query.addBindValue(captureProfileId.isEmpty() ? QVariant(QStringLiteral("")) : QVariant(captureProfileId));
+    query.addBindValue(normalizedPathKey(normalized));
     if (!query.exec()) {
         m_database->rollback();
         return transactionError(QStringLiteral("Could not add screenshot to the gallery"), query.lastError().text());
@@ -475,8 +512,9 @@ bool ApplicationDatabase::updateScreenshotPath(const QString &id, const QString 
     if (!checkThread() || !m_ready)
         return false;
     QSqlQuery query(*m_database);
-    query.prepare(QStringLiteral("UPDATE screenshots SET path = ? WHERE id = ?"));
+    query.prepare(QStringLiteral("UPDATE screenshots SET path = ?, path_key = ? WHERE id = ?"));
     query.addBindValue(normalizedPath(path));
+    query.addBindValue(normalizedPathKey(path));
     query.addBindValue(id);
     if (!query.exec() || query.numRowsAffected() != 1)
         return transactionError(QStringLiteral("Could not update screenshot path"), query.lastError().text());
@@ -538,7 +576,7 @@ bool ApplicationDatabase::restoreScreenshot(const ScreenshotRecord &record)
     if (!m_database->transaction())
         return transactionError(QStringLiteral("Could not start screenshot restoration"), m_database->lastError().text());
     QSqlQuery insert(*m_database);
-    insert.prepare(QStringLiteral("INSERT INTO screenshots(id, path, captured_at, width, height, size_bytes, source, source_screenshot_id, capture_profile_id) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)"));
+    insert.prepare(QStringLiteral("INSERT INTO screenshots(id, path, captured_at, width, height, size_bytes, source, source_screenshot_id, capture_profile_id, path_key) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"));
     insert.addBindValue(record.id);
     insert.addBindValue(normalizedPath(record.path));
     insert.addBindValue(record.timestamp);
@@ -548,6 +586,7 @@ bool ApplicationDatabase::restoreScreenshot(const ScreenshotRecord &record)
     insert.addBindValue(record.source);
     insert.addBindValue(record.sourceScreenshotId.isEmpty() ? QVariant() : QVariant(record.sourceScreenshotId));
     insert.addBindValue(record.captureProfileId.isEmpty() ? QVariant(QStringLiteral("")) : QVariant(record.captureProfileId));
+    insert.addBindValue(normalizedPathKey(record.path));
     if (!insert.exec()) {
         m_database->rollback();
         return transactionError(QStringLiteral("Could not restore screenshot record"), insert.lastError().text());

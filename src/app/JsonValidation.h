@@ -21,8 +21,14 @@ inline bool integer(const QJsonObject &o, const QString &key, double min, double
     const QJsonValue v = o.value(key);
     return v.isDouble() && std::isfinite(v.toDouble()) && std::floor(v.toDouble()) == v.toDouble() && v.toDouble() >= min && v.toDouble() <= max;
 }
-inline bool write(const QString &path, const QJsonObject &object, QString *error = nullptr) {
+inline bool write(const QString &path, const QJsonObject &object, QString *error = nullptr,
+                  qint64 maximumBytes = -1) {
     const QByteArray bytes = QJsonDocument(object).toJson(QJsonDocument::Indented);
+    if (maximumBytes >= 0 && bytes.size() > maximumBytes) {
+        if (error) *error = QStringLiteral("Configuration exceeds the %1 MiB limit; the previous file was preserved.")
+                                .arg(maximumBytes / (1024 * 1024));
+        return false;
+    }
     QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit()) {
         if (error) *error = file.errorString();

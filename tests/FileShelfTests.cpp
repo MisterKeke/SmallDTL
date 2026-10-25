@@ -126,11 +126,15 @@ void UnitTests::fileShelfDatabaseUpgradesVersionFive()
     QVERIFY(temporary.isValid());
     const QString path = QDir(temporary.path()).filePath(QStringLiteral("shelf.db"));
     const QString connection = QStringLiteral("shelf-v5-fixture");
+    { ApplicationDatabase seed(path); QVERIFY(seed.initialize()); }
     {
         QSqlDatabase fixture = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connection);
         fixture.setDatabaseName(path);
         QVERIFY(fixture.open());
         QSqlQuery query(fixture);
+        QVERIFY(query.exec(QStringLiteral("DROP TABLE file_shelf")));
+        QVERIFY(query.exec(QStringLiteral("DROP INDEX screenshots_path_key_idx")));
+        QVERIFY(query.exec(QStringLiteral("ALTER TABLE screenshots DROP COLUMN path_key")));
         QVERIFY(query.exec(QStringLiteral("PRAGMA user_version=5")));
         fixture.close();
     }
@@ -161,7 +165,7 @@ void UnitTests::fileShelfDatabaseUpgradesVersionFive()
         QSqlQuery query(verify);
         QVERIFY(query.exec(QStringLiteral("PRAGMA user_version")));
         QVERIFY(query.next());
-        QCOMPARE(query.value(0).toInt(), 6);
+        QCOMPARE(query.value(0).toInt(), 7);
         verify.close();
     }
     QSqlDatabase::removeDatabase(verifyConnection);

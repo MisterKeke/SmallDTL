@@ -4,6 +4,8 @@
 #include <QImageReader>
 #include <QPainter>
 #include <QPainterPath>
+#include <QFont>
+#include <QPolygonF>
 #include <QVariantMap>
 #include <QtMath>
 #include <cmath>
@@ -71,7 +73,16 @@ QVector<ScreenshotEditorStroke> ScreenshotEditorImage::parseStrokes(const QVaria
     for (const QVariant &strokeValue : strokes) {
         const QVariantMap strokeMap = strokeValue.toMap();
         ScreenshotEditorStroke stroke;
+        stroke.type = strokeMap.value(QStringLiteral("type"), QStringLiteral("draw")).toString();
+        if (!QStringList{QStringLiteral("draw"), QStringLiteral("arrow"), QStringLiteral("rectangle"),
+                         QStringLiteral("ellipse"), QStringLiteral("highlight"), QStringLiteral("redact"),
+                         QStringLiteral("text")}.contains(stroke.type)) continue;
+        stroke.text = strokeMap.value(QStringLiteral("text")).toString().left(1000);
+        const qreal fontSize = strokeMap.value(QStringLiteral("fontSize"), 32.0).toDouble();
+        stroke.fontSize = qBound<qreal>(8, std::isfinite(fontSize) ? fontSize : 32, 512);
         stroke.color = QColor(strokeMap.value(QStringLiteral("color")).toString());
+        if (stroke.type == QStringLiteral("redact")) stroke.color = QColor(Qt::black);
+        if (stroke.type == QStringLiteral("highlight")) stroke.color.setAlphaF(0.30);
         const qreal width = strokeMap.value(QStringLiteral("width")).toDouble();
         stroke.width = qBound<qreal>(0.25, std::isfinite(width) ? width : 1.0, 512.0);
         const QVariantList points = strokeMap.value(QStringLiteral("points")).toList();
@@ -83,7 +94,8 @@ QVector<ScreenshotEditorStroke> ScreenshotEditorImage::parseStrokes(const QVaria
             if (std::isfinite(x) && std::isfinite(y))
                 stroke.points.append(QPointF(x, y));
         }
-        if (stroke.color.isValid() && !stroke.points.isEmpty())
+        const bool enoughPoints = stroke.points.size() >= ((stroke.type == QStringLiteral("draw") || stroke.type == QStringLiteral("text")) ? 1 : 2);
+        if (stroke.color.isValid() && enoughPoints && (stroke.type != QStringLiteral("text") || !stroke.text.trimmed().isEmpty()))
             parsed.append(std::move(stroke));
     }
     return parsed;
@@ -152,6 +164,37 @@ bool ScreenshotEditorImage::render(const QString &path, const QRect &requestedCr
         for (const ScreenshotEditorStroke &stroke : parsedStrokes) {
             QPen pen(stroke.color, stroke.width, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
             painter.setPen(pen);
+            const QPointF start = stroke.points.first();
+            const QPointF end = stroke.points.last();
+            const QRectF bounds = QRectF(start, end).normalized();
+            if (stroke.type == QStringLiteral("text")) {
+                QFont font(QStringLiteral("Segoe UI"));
+                font.setPixelSize(qRound(stroke.fontSize));
+                painter.setFont(font);
+                painter.drawText(start + QPointF(0, stroke.fontSize), stroke.text);
+                continue;
+            }
+            if (stroke.type == QStringLiteral("highlight") || stroke.type == QStringLiteral("redact")) {
+                painter.fillRect(bounds.toAlignedRect(), stroke.color);
+                continue;
+            }
+            if (stroke.type == QStringLiteral("rectangle")) { painter.drawRect(bounds); continue; }
+            if (stroke.type == QStringLiteral("ellipse")) { painter.drawEllipse(bounds); continue; }
+            if (stroke.type == QStringLiteral("arrow")) {
+                const qreal dx = end.x() - start.x(), dy = end.y() - start.y();
+                const qreal length = std::hypot(dx, dy);
+                if (length <= 0) continue;
+                const QPointF direction(dx / length, dy / length);
+                const QPointF normal(-direction.y(), direction.x());
+                const qreal head = qMin(length / 2, qMax<qreal>(12, stroke.width * 3));
+                painter.drawLine(start, end);
+                painter.setPen(Qt::NoPen);
+                painter.setBrush(stroke.color);
+                painter.drawPolygon(QPolygonF{end, end - direction * head + normal * head * 0.5,
+                                                   end - direction * head - normal * head * 0.5});
+                painter.setBrush(Qt::NoBrush);
+                continue;
+            }
             if (stroke.points.size() == 1) {
                 painter.drawPoint(stroke.points.first());
                 continue;

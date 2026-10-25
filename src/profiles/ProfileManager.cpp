@@ -11,6 +11,7 @@
 #include <algorithm>
 
 namespace {
+constexpr qint64 MaximumProfileBytes = 4LL * 1024 * 1024;
 QString newId() { return QUuid::createUuid().toString(QUuid::WithoutBraces); }
 void cloneIdentifiers(Profile &profile, const QString &originalId) {
     QHash<QString,QString> ids;
@@ -140,7 +141,7 @@ void ProfileManager::loadProfiles() {
     QSet<QString> sequenceIds;
     for(const QFileInfo &info:QDir(profilesDirectory()).entryInfoList({QStringLiteral("*.json")},QDir::Files,QDir::Name)) {
         QFile file(info.absoluteFilePath());bool valid=false;Profile p;int schema=0;
-        if(!info.isSymLink() && file.open(QIODevice::ReadOnly) && file.size()<=4*1024*1024) {
+        if(!info.isSymLink() && file.open(QIODevice::ReadOnly) && file.size()<=MaximumProfileBytes) {
             QJsonParseError error;const auto doc=QJsonDocument::fromJson(file.readAll(),&error);
             schema=doc.object().value(QStringLiteral("schemaVersion")).toInt();
             if(error.error==QJsonParseError::NoError && doc.isObject())p=parseProfile(doc.object(),&valid);
@@ -162,7 +163,7 @@ bool ProfileManager::saveProfile(const Profile &profile) const {
     }
     bool valid=false;const auto object=serializeProfile(profile);parseProfile(object,&valid);
     if(!valid){emit const_cast<ProfileManager *>(this)->errorOccurred(QStringLiteral("Invalid profile data was not saved."));return false;}
-    QString error;if(!JsonValidation::write(profileFilePath(profile.id),object,&error)){emit const_cast<ProfileManager *>(this)->errorOccurred(QStringLiteral("Could not save profile: %1").arg(error));return false;}return true;
+    QString error;if(!JsonValidation::write(profileFilePath(profile.id),object,&error,MaximumProfileBytes)){emit const_cast<ProfileManager *>(this)->errorOccurred(QStringLiteral("Could not save profile: %1").arg(error));return false;}return true;
 }
 QString ProfileManager::profilesDirectory() const {return QDir(AppDataPaths::root()).filePath(QStringLiteral("profiles"));}
 QString ProfileManager::profileFilePath(const QString &id) const {return JsonValidation::safeId(id)?QDir(profilesDirectory()).filePath(id+QStringLiteral(".json")):QString();}
@@ -210,10 +211,10 @@ QJsonObject ProfileManager::serializeProfile(const Profile &p) {
 }
 bool ProfileManager::exportProfile(const QString &id,const QString &path) {
     const auto *p=profileById(id);if(!p)return false;QString error;
-    if(!JsonValidation::write(path,serializeProfile(*p),&error)){emit errorOccurred(QStringLiteral("Export failed: %1").arg(error));return false;}return true;
+    if(!JsonValidation::write(path,serializeProfile(*p),&error,MaximumProfileBytes)){emit errorOccurred(QStringLiteral("Export failed: %1").arg(error));return false;}return true;
 }
 QString ProfileManager::importProfile(const QString &path) {
-    QFile file(path);if(!file.open(QIODevice::ReadOnly) || file.size()>4*1024*1024){emit errorOccurred(QStringLiteral("Cannot read the profile import."));return {};}
+    QFile file(path);if(!file.open(QIODevice::ReadOnly) || file.size()>MaximumProfileBytes){emit errorOccurred(QStringLiteral("Cannot read the profile import."));return {};}
     QJsonParseError error;const auto doc=QJsonDocument::fromJson(file.readAll(),&error);bool valid=false;Profile p=parseProfile(doc.object(),&valid);
     if(error.error!=QJsonParseError::NoError || !valid || p.legacyActions){emit errorOccurred(QStringLiteral("Choose a valid profile export containing its action sequences."));return {};}
     QSet<QString> ids;for(const auto &s:p.sequences)ids.insert(s.id);

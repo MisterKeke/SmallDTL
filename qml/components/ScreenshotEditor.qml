@@ -7,12 +7,13 @@ import QtQuick.Window
 Popup {
     id: editor
     objectName: "screenshotEditor"
+    parent: Overlay.overlay
     modal: true
     dim: true
     closePolicy: Popup.NoAutoClose
     anchors.centerIn: Overlay.overlay
-    width: 1060
-    height: 735
+    width: Math.min(1060, parent ? parent.width - 24 : 1060)
+    height: Math.min(780, parent ? parent.height - 24 : 780)
     padding: 14
     Material.theme: Material.Dark
     Material.accent: settings.palette["#e96782"]
@@ -26,6 +27,8 @@ Popup {
     property string tool: "crop"
     property real zoom: 1.0
     property color strokeColor: "#ff4f68"
+    property string annotationText: ""
+    property int annotationFontSize: 32
     property var crop: null
     property var draftCrop: null
     property var strokes: []
@@ -70,6 +73,7 @@ Popup {
         errorText = ""
         saving = false
         pendingSavePath = ""
+        annotationText = ""
         inheritTags.checked = true
         open()
     }
@@ -155,6 +159,42 @@ Popup {
         return 0.0
     }
 
+    function beginAnnotation(point) {
+        if (tool === "text") {
+            if (!annotationText.trim().length) {
+                errorText = "Enter annotation text, then click the image to place it."
+                annotationTextField.forceActiveFocus()
+                return
+            }
+            rememberEdits()
+            strokes = strokes.concat([{ type: "text", points: [point], color: strokeColor.toString(),
+                                       width: strokeWidth.value, text: annotationText, fontSize: annotationFontSize }])
+            errorText = ""
+        } else {
+            draftStroke = { type: tool, points: [point], color: tool === "redact" ? "#000000" : strokeColor.toString(),
+                            width: strokeWidth.value }
+        }
+        inkCanvas.requestPaint()
+    }
+
+    function updateAnnotation(point) {
+        if (!draftStroke) return
+        const points = draftStroke.type === "draw" ? draftStroke.points.concat([point])
+                                                    : [draftStroke.points[0], point]
+        draftStroke = Object.assign({}, draftStroke, { points: points })
+        inkCanvas.requestPaint()
+    }
+
+    function finishAnnotation() {
+        if (!draftStroke) return
+        if (draftStroke.type === "draw" || draftStroke.points.length >= 2) {
+            rememberEdits()
+            strokes = strokes.concat([draftStroke])
+        }
+        draftStroke = null
+        inkCanvas.requestPaint()
+    }
+
     function requestEditedSave() {
         if (saving)
             return
@@ -236,9 +276,20 @@ Popup {
         RowLayout {
             Layout.fillWidth: true
             spacing: 6
-            ToolButton { text: "Crop"; checkable: true; checked: editor.tool === "crop"; onClicked: editor.tool = "crop" }
-            ToolButton { text: "Draw"; checkable: true; checked: editor.tool === "draw"; onClicked: editor.tool = "draw" }
-            ToolButton { text: "Pan"; checkable: true; checked: editor.tool === "pan"; onClicked: editor.tool = "pan" }
+            ComboBox {
+                id: toolPicker
+                objectName: "editorToolPicker"
+                Layout.preferredWidth: 150
+                textRole: "name"
+                valueRole: "tool"
+                model: [{ name: "Crop", tool: "crop" }, { name: "Freehand", tool: "draw" },
+                        { name: "Arrow", tool: "arrow" }, { name: "Rectangle", tool: "rectangle" },
+                        { name: "Ellipse", tool: "ellipse" }, { name: "Highlight", tool: "highlight" },
+                        { name: "Redact", tool: "redact" }, { name: "Text", tool: "text" }, { name: "Pan", tool: "pan" }]
+                currentIndex: model.findIndex(entry => entry.tool === editor.tool)
+                onActivated: { editor.draftStroke = null; editor.draftCrop = null; editor.tool = currentValue }
+                enabled: !editor.saving
+            }
             Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 25; color: settings.palette["#383942"] }
             Label { text: "Ratio"; color: settings.palette["#b0b1bb"]; font.pixelSize: 10 }
             ComboBox {
@@ -255,7 +306,7 @@ Popup {
                 from: 1
                 to: 48
                 value: 6
-                enabled: editor.tool === "draw"
+                enabled: ["draw", "arrow", "rectangle", "ellipse"].indexOf(editor.tool) >= 0
                 Layout.preferredWidth: 105
             }
             Label { text: Math.round(strokeWidth.value) + " px"; color: settings.palette["#b0b1bb"]; font.pixelSize: 10 }
@@ -279,7 +330,39 @@ Popup {
             Button { text: "−"; enabled: editor.zoom > 0.25; onClicked: editor.zoom = Math.max(0.25, editor.zoom / 1.25) }
             Label { text: Math.round(editor.zoom * 100) + "%"; color: settings.palette["#b0b1bb"]; font.pixelSize: 10; Layout.minimumWidth: 42; horizontalAlignment: Text.AlignHCenter }
             Button { text: "+"; enabled: editor.zoom < 6; onClicked: editor.zoom = Math.min(6, editor.zoom * 1.25) }
-            Button { text: "Fit"; onClicked: { editor.zoom = 1.0; viewport.contentX = 0; viewport.contentY = 0 } }
+            Button { text: "Fit"; onClicked: { editor.zoom = 1.0; imageFlickable.contentX = 0; imageFlickable.contentY = 0 } }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            visible: editor.tool === "text" || editor.tool === "redact" || editor.tool === "highlight"
+            Label {
+                visible: editor.tool !== "text"
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                text: editor.tool === "redact" ? "Drag to cover an area with opaque black in the saved copy."
+                                               : "Drag a rectangle to highlight an area."
+                color: settings.palette["#b0b1bb"]
+            }
+            TextField {
+                id: annotationTextField
+                objectName: "editorAnnotationText"
+                visible: editor.tool === "text"
+                Layout.fillWidth: true
+                maximumLength: 1000
+                placeholderText: "Enter text, then click the image to place it"
+                text: editor.annotationText
+                onTextEdited: editor.annotationText = text
+                enabled: !editor.saving
+            }
+            Label { visible: editor.tool === "text"; text: "Text size (image px)"; color: settings.palette["#b0b1bb"] }
+            SpinBox {
+                objectName: "editorAnnotationFontSize"
+                visible: editor.tool === "text"
+                from: 8; to: 512; value: editor.annotationFontSize
+                onValueModified: editor.annotationFontSize = value
+                enabled: !editor.saving
+            }
         }
 
         Rectangle {
@@ -330,13 +413,53 @@ Popup {
                             for (let i = 0; i < allStrokes.length; ++i) {
                                 const stroke = allStrokes[i]
                                 if (!stroke.points || stroke.points.length === 0) continue
+                                const type = stroke.type || "draw"
+                                const scale = editor.overlayPixelScale
+                                const start = stroke.points[0]
+                                const end = stroke.points[stroke.points.length - 1]
+                                const x = Math.min(start.x, end.x) * scale
+                                const y = Math.min(start.y, end.y) * scale
+                                const width = Math.abs(end.x - start.x) * scale
+                                const height = Math.abs(end.y - start.y) * scale
+                                context.save()
                                 context.beginPath()
                                 context.strokeStyle = stroke.color
                                 context.fillStyle = stroke.color
                                 context.lineWidth = Math.max(0.4, stroke.width * editor.overlayPixelScale)
                                 context.lineCap = "round"
                                 context.lineJoin = "round"
-                                if (stroke.points.length === 1) {
+                                if (type === "text") {
+                                    context.font = Math.round(stroke.fontSize * scale) + "px 'Segoe UI'"
+                                    context.textBaseline = "alphabetic"
+                                    context.fillText(stroke.text, start.x * scale, (start.y + stroke.fontSize) * scale)
+                                } else if (type === "highlight" || type === "redact") {
+                                    context.globalAlpha = type === "highlight" ? 0.30 : 1
+                                    context.fillStyle = type === "redact" ? "#000000" : stroke.color
+                                    context.fillRect(x, y, width, height)
+                                } else if (type === "rectangle") {
+                                    context.strokeRect(x, y, width, height)
+                                } else if (type === "ellipse") {
+                                    context.ellipse(x, y, width, height)
+                                    context.stroke()
+                                } else if (type === "arrow") {
+                                    const dx = end.x - start.x, dy = end.y - start.y
+                                    const length = Math.sqrt(dx * dx + dy * dy)
+                                    if (length > 0) {
+                                        const head = Math.min(length / 2, Math.max(12, stroke.width * 3))
+                                        const ux = dx / length, uy = dy / length
+                                        context.moveTo(start.x * scale, start.y * scale)
+                                        context.lineTo(end.x * scale, end.y * scale)
+                                        context.stroke()
+                                        context.beginPath()
+                                        context.moveTo(end.x * scale, end.y * scale)
+                                        context.lineTo((end.x - ux * head - uy * head * 0.5) * scale,
+                                                       (end.y - uy * head + ux * head * 0.5) * scale)
+                                        context.lineTo((end.x - ux * head + uy * head * 0.5) * scale,
+                                                       (end.y - uy * head - ux * head * 0.5) * scale)
+                                        context.closePath()
+                                        context.fill()
+                                    }
+                                } else if (stroke.points.length === 1) {
                                     const point = stroke.points[0]
                                     context.arc(point.x * editor.overlayPixelScale, point.y * editor.overlayPixelScale,
                                                 Math.max(0.4, context.lineWidth / 2), 0, Math.PI * 2)
@@ -349,6 +472,7 @@ Popup {
                                                        stroke.points[j].y * editor.overlayPixelScale)
                                     context.stroke()
                                 }
+                                context.restore()
                             }
                         }
                     }
@@ -370,6 +494,7 @@ Popup {
                     }
                     MouseArea {
                         id: editMouse
+                        objectName: "editorMouseArea"
                         anchors.fill: parent
                         enabled: editor.visible && editor.tool !== "pan" && !editor.saving
                         acceptedButtons: Qt.LeftButton
@@ -383,10 +508,8 @@ Popup {
                             imageStart = Qt.point(first.x, first.y)
                             if (editor.tool === "crop") {
                                 editor.draftCrop = { x: first.x, y: first.y, width: 0, height: 0 }
-                            } else if (editor.tool === "draw") {
-                                editor.draftStroke = { points: [first], color: editor.strokeColor.toString(),
-                                                       width: strokeWidth.value }
-                                inkCanvas.requestPaint()
+                            } else {
+                                editor.beginAnnotation(first)
                             }
                         }
                         onPositionChanged: function(mouse) {
@@ -395,11 +518,8 @@ Popup {
                             if (editor.tool === "crop") {
                                 editor.draftCrop = screenshots.editorCropFromDrag(imageStart.x, imageStart.y,
                                     current.x, current.y, editor.imageWidth, editor.imageHeight, editor.ratioValue())
-                            } else if (editor.tool === "draw" && editor.draftStroke) {
-                                const points = editor.draftStroke.points.concat([current])
-                                editor.draftStroke = { points: points, color: editor.draftStroke.color,
-                                                       width: editor.draftStroke.width }
-                                inkCanvas.requestPaint()
+                            } else {
+                                editor.updateAnnotation(current)
                             }
                         }
                         onReleased: {
@@ -409,13 +529,11 @@ Popup {
                                     editor.crop = editor.draftCrop
                                 }
                                 editor.draftCrop = null
-                            } else if (editor.tool === "draw" && editor.draftStroke) {
-                                editor.rememberEdits()
-                                editor.strokes = editor.strokes.concat([editor.draftStroke])
-                                editor.draftStroke = null
-                                inkCanvas.requestPaint()
+                            } else {
+                                editor.finishAnnotation()
                             }
                         }
+                        onCanceled: { editor.draftCrop = null; editor.draftStroke = null; inkCanvas.requestPaint() }
                     }
                 }
             }

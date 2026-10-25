@@ -358,6 +358,10 @@ void ApplicationController::setFileShelfPopupVisible(bool visible)
 
 bool ApplicationController::setFileShelfShortcut(int key, int modifiers)
 {
+    if (key != 0 && isReservedPasteShortcut(key, modifiers)) {
+        setStatus(QStringLiteral("Ctrl+V is reserved for screenshot paste while the Screenshots page is open."), true);
+        return false;
+    }
     if (key != 0 && !HotkeyManager::isSupportedKey(key, modifiers)) {
         setStatus(QStringLiteral("Choose a supported shortcut with at least one modifier."), true);
         return false;

@@ -13,6 +13,9 @@
 
 struct ScreenshotEditorStroke
 {
+    QString type = QStringLiteral("draw");
+    QString text;
+    qreal fontSize = 32.0;
     QVector<QPointF> points;
     QColor color;
     qreal width = 1.0;

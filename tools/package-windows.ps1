@@ -15,6 +15,12 @@ if (Test-Path -LiteralPath $OutputDirectory) { throw 'Output directory already e
 $deployTool = Join-Path $QtRoot 'bin/windeployqt.exe'
 $sqlitePlugin = Join-Path $QtRoot 'plugins/sqldrivers/qsqlite.dll'
 $compiler = Join-Path $CompilerBin 'g++.exe'
+# Generated CMake compiler files quote these paths as CMake strings. Native
+# backslashes such as the CI checkout's \a would become invalid escapes.
+$cmakeQtRoot = $QtRoot.Replace('\', '/')
+$cmakeCompiler = $compiler.Replace('\', '/')
+$cmakeResourceCompiler = (Join-Path $CompilerBin 'windres.exe').Replace('\', '/')
+$cmakeMakeProgram = (Join-Path $CompilerBin 'mingw32-make.exe').Replace('\', '/')
 if (!(Test-Path -LiteralPath $deployTool) -or !(Test-Path -LiteralPath $sqlitePlugin) -or !(Test-Path -LiteralPath $compiler)) { throw 'Provide a Qt MinGW installation with the QSQLITE driver and its compatible compiler directory.' }
 $previousPath = $env:PATH
 $previousPlatform = $env:QT_QPA_PLATFORM
@@ -24,7 +30,7 @@ $previousImports = $env:QML_IMPORT_PATH
 $previousFontDirectory = $env:QT_QPA_FONTDIR
 try {
     $env:PATH = (Join-Path $QtRoot 'bin') + ';' + $CompilerBin + ';' + $previousPath
-    & $CMakePath -S $projectRoot -B $BuildDirectory -G 'MinGW Makefiles' '-DCMAKE_BUILD_TYPE=Release' "-DCMAKE_PREFIX_PATH=$QtRoot" "-DCMAKE_CXX_COMPILER=$compiler" "-DCMAKE_RC_COMPILER=$(Join-Path $CompilerBin 'windres.exe')" "-DCMAKE_MAKE_PROGRAM=$(Join-Path $CompilerBin 'mingw32-make.exe')"
+    & $CMakePath -S $projectRoot -B $BuildDirectory -G 'MinGW Makefiles' '-DCMAKE_BUILD_TYPE=Release' "-DCMAKE_PREFIX_PATH:PATH=$cmakeQtRoot" "-DCMAKE_CXX_COMPILER:FILEPATH=$cmakeCompiler" "-DCMAKE_RC_COMPILER:FILEPATH=$cmakeResourceCompiler" "-DCMAKE_MAKE_PROGRAM:FILEPATH=$cmakeMakeProgram"
     if ($LASTEXITCODE -ne 0) { throw 'Release configuration failed.' }
     & $CMakePath --build $BuildDirectory --parallel 4
     if ($LASTEXITCODE -ne 0) { throw 'Release build failed.' }

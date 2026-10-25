@@ -1,6 +1,6 @@
 # Storage, privacy, transfers, and verification
 
-These changes retain the application-data identity, `screenshots.db` filename, and schema 6. There is no data relocation. `ApplicationDatabase` is the shared storage service, with separate clipboard, shelf, and maintenance SQL files. File Shelf receives the database and clipboard directly; history uses ScreenshotManager only for explicit gallery export.
+These changes retain the application-data identity and `screenshots.db` filename. The current schema is 7, adding Unicode case-folded screenshot path keys and merging case-only duplicate records while preserving tags and source links. There is no data relocation. `ApplicationDatabase` is the shared storage service, with separate clipboard, shelf, and maintenance SQL files. File Shelf receives the database and clipboard directly; history uses ScreenshotManager only for explicit gallery export.
 
 ## Clipboard privacy
 

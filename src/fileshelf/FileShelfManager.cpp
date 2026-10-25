@@ -18,6 +18,7 @@
 #include <QTemporaryFile>
 #include <QUuid>
 #include <QWindow>
+#include <QThread>
 #include <QtConcurrent/QtConcurrentRun>
 #ifdef Q_OS_WIN
 #ifndef NOMINMAX
@@ -134,6 +135,138 @@ bool rejectUnsafeFolderDestination(const QString &source, const QString &target,
     return false;
 }
 
+// Hold the exact source objects through copy and deletion. Files deny writers
+// and renames; directories deny renames. Delete only these objects, never a
+// recursively re-enumerated tree that may contain newly created user data.
+class MoveSource final : public QIODevice
+{
+public:
+    QString path;
+    bool directory = false;
+    ~MoveSource() override { closeHandle(); }
+    bool acquire(const QString &source, bool isDirectory, QString *error)
+    {
+        path = source; directory = isDirectory;
+#ifdef Q_OS_WIN
+        m_handle = CreateFileW(reinterpret_cast<LPCWSTR>(path.utf16()), GENERIC_READ | DELETE,
+                              FILE_SHARE_READ | (directory ? FILE_SHARE_WRITE : 0), nullptr,
+                              OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+        if (m_handle == INVALID_HANDLE_VALUE) {
+            const DWORD code = GetLastError();
+            if (error) *error = QStringLiteral("Could not protect move source %1 (Win32 error %2). Close applications editing it and try again; source preserved.")
+                                    .arg(path).arg(code);
+            return false;
+        }
+        BY_HANDLE_FILE_INFORMATION info{};
+        if (!GetFileInformationByHandle(m_handle, &info) || (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) ||
+            bool(info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != directory) {
+            if (error) *error = QStringLiteral("Linked or unreadable move source was rejected: %1").arg(path);
+            return false;
+        }
+        return QIODevice::open(QIODevice::ReadOnly);
+#else
+        if (error) *error = QStringLiteral("Protected file moves require Windows; source preserved.");
+        return false;
+#endif
+    }
+    bool removeProtected(QString *error)
+    {
+#ifdef Q_OS_WIN
+        FILE_DISPOSITION_INFO disposition{TRUE};
+        if (!SetFileInformationByHandle(m_handle, FileDispositionInfo, &disposition, sizeof(disposition))) {
+            const DWORD code = GetLastError();
+            if (error) *error = QStringLiteral("Copied data is at the destination, but source %1 could not be removed (Win32 error %2). Remaining source data was preserved.")
+                                    .arg(path).arg(code);
+            return false;
+        }
+        closeHandle();
+        return true;
+#else
+        Q_UNUSED(error)
+        return false;
+#endif
+    }
+    bool isSequential() const override { return true; }
+protected:
+    qint64 readData(char *data, qint64 maximum) override
+    {
+#ifdef Q_OS_WIN
+        DWORD count = 0;
+        if (!ReadFile(m_handle, data, DWORD(qMin<qint64>(maximum, 1024 * 1024)), &count, nullptr)) {
+            setErrorString(QStringLiteral("Could not read protected source (Win32 error %1).").arg(GetLastError()));
+            return -1;
+        }
+        return count;
+#else
+        Q_UNUSED(data) Q_UNUSED(maximum)
+        return -1;
+#endif
+    }
+    qint64 writeData(const char *, qint64) override { return -1; }
+private:
+    void closeHandle()
+    {
+#ifdef Q_OS_WIN
+        if (m_handle != INVALID_HANDLE_VALUE) { CloseHandle(m_handle); m_handle = INVALID_HANDLE_VALUE; }
+#endif
+    }
+#ifdef Q_OS_WIN
+    HANDLE m_handle = INVALID_HANDLE_VALUE;
+#endif
+};
+
+struct MoveSnapshot {
+    QVector<std::shared_ptr<MoveSource>> entries;
+    QString root;
+    bool acquire(const QString &source, bool directory, QString *error, FileShelfManager::TransferControl *control)
+    {
+        root = source;
+        auto add = [&](const QString &path, bool isDirectory) {
+            auto entry = std::make_shared<MoveSource>();
+            if (!entry->acquire(path, isDirectory, error)) return false;
+            entries.append(entry);
+            return true;
+        };
+        if (!add(source, directory)) return false;
+        if (!directory) return true;
+        QDirIterator it(source, QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System,
+                        QDirIterator::Subdirectories);
+        while (it.hasNext()) {
+            if (control->cancel.load()) return false;
+            const QString path = it.next();
+            if (!add(path, it.fileInfo().isDir())) return false;
+        }
+        return true;
+    }
+    bool unchanged(QString *error) const
+    {
+        if (entries.isEmpty() || !entries.first()->directory) return true;
+        QSet<QString> expected;
+        for (const auto &entry : entries) if (entry->path != root) expected.insert(entry->path);
+        QSet<QString> current;
+        QDirIterator it(root, QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System,
+                        QDirIterator::Subdirectories);
+        while (it.hasNext()) current.insert(it.next());
+        if (current == expected) return true;
+        if (error) *error = QStringLiteral("The source folder changed during the move. Source data was preserved; review the destination copy before retrying.");
+        return false;
+    }
+    bool removeSources(QString *error, FileShelfManager::TransferControl *control)
+    {
+        if (!unchanged(error)) return false;
+        for (auto it = entries.rbegin(); it != entries.rend(); ++it) {
+            if (control->cancel.load()) {
+                if (error) *error = QStringLiteral("Move cancelled; the destination copy and remaining source data were preserved.");
+                return false;
+            }
+            // Windows refuses to delete a nonempty directory. A file created
+            // after the manifest check therefore survives this final phase.
+            if (!(*it)->removeProtected(error)) return false;
+        }
+        return true;
+    }
+};
+
 bool copyStream(QIODevice *input, QIODevice *output, QString *error, FileShelfManager::TransferControl *control)
 {
     QByteArray buffer(1024 * 1024, Qt::Uninitialized);
@@ -154,15 +287,16 @@ bool copyStream(QIODevice *input, QIODevice *output, QString *error, FileShelfMa
     }
 }
 
-bool copyFileSafely(const QString &source, const QString &target, bool replace, QString *error, FileShelfManager::TransferControl *control)
+bool copyFileSafely(const QString &source, const QString &target, bool replace, QString *error, FileShelfManager::TransferControl *control, MoveSource *protectedInput = nullptr)
 {
     if (sameLocation(source, target)) {
         if (error) *error = QStringLiteral("Source and destination resolve to the same filesystem location; the operation was rejected.");
         return false;
     }
-    QFile input(source);
-    if (!input.open(QIODevice::ReadOnly)) {
-        if (error) *error = input.errorString();
+    QFile fileInput(source);
+    QIODevice *input = protectedInput ? static_cast<QIODevice *>(protectedInput) : &fileInput;
+    if (!protectedInput && !fileInput.open(QIODevice::ReadOnly)) {
+        if (error) *error = fileInput.errorString();
         return false;
     }
     if (QFileInfo::exists(target)) {
@@ -176,7 +310,7 @@ bool copyFileSafely(const QString &source, const QString &target, bool replace, 
             if (error) *error = output.errorString();
             return false;
         }
-        if (!copyStream(&input, &output, error, control) || (control->cancel.load() || !output.commit())) {
+        if (!copyStream(input, &output, error, control) || (control->cancel.load() || !output.commit())) {
             if (error && error->isEmpty()) *error = output.errorString();
             output.cancelWriting();
             return false;
@@ -193,7 +327,7 @@ bool copyFileSafely(const QString &source, const QString &target, bool replace, 
             return false;
         }
         stagedPath = output.fileName();
-        if (!copyStream(&input, &output, error, control))
+        if (!copyStream(input, &output, error, control))
             return false;
         output.setAutoRemove(false);
         output.close();
@@ -214,20 +348,31 @@ bool copyFileSafely(const QString &source, const QString &target, bool replace, 
     return true;
 }
 
-bool copyDirectoryContents(const QString &source, const QString &target, QString *error, FileShelfManager::TransferControl *control)
+bool copyDirectoryContents(const QString &source, const QString &target, QString *error, FileShelfManager::TransferControl *control, const MoveSnapshot *snapshot = nullptr)
 {
     if (!QDir().mkpath(target)) {
         if (error) *error = QStringLiteral("Could not create destination folder.");
         return false;
     }
     const QDir sourceDir(source);
+    if (snapshot) {
+        for (const auto &entry : snapshot->entries) {
+            if (control->cancel.load()) return false;
+            if (entry->path == source) continue;
+            const QString to = QDir(target).filePath(sourceDir.relativeFilePath(entry->path));
+            if (entry->directory) {
+                if (!QDir().mkpath(to)) { if (error) *error = QStringLiteral("Could not create folder: %1").arg(to); return false; }
+            } else if (!copyFileSafely(entry->path, to, false, error, control, entry.get())) return false;
+        }
+        return snapshot->unchanged(error);
+    }
     QDirIterator it(source, QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System,
                     QDirIterator::Subdirectories);
     while (it.hasNext()) {
         if (control->cancel.load()) { if (error) *error = QStringLiteral("Cancelled; source preserved."); return false; }
         const QString from = it.next();
         const QFileInfo info = it.fileInfo();
-        if (info.isSymLink()) {
+        if (info.isSymLink() || info.isJunction()) {
             if (error) *error = QStringLiteral("Folder contains a symbolic link that cannot be copied safely: %1").arg(from);
             return false;
         }
@@ -245,9 +390,21 @@ bool copyDirectoryContents(const QString &source, const QString &target, QString
     return true;
 }
 
-bool movePath(const QString &source, const QString &target)
+bool movePath(const QString &source, const QString &target, QString *error = nullptr)
 {
+#ifdef Q_OS_WIN
+    for (int attempt = 0; attempt < 5; ++attempt) {
+        if (MoveFileExW(reinterpret_cast<LPCWSTR>(source.utf16()), reinterpret_cast<LPCWSTR>(target.utf16()), MOVEFILE_WRITE_THROUGH)) return true;
+        const DWORD code = GetLastError();
+        if (error) *error = QStringLiteral("Win32 error %1").arg(code);
+        if (code != ERROR_SHARING_VIOLATION && code != ERROR_ACCESS_DENIED) return false;
+        QThread::msleep(20);
+    }
+    return false;
+#else
+    Q_UNUSED(error)
     return QDir().rename(source, target);
+#endif
 }
 
 bool pathIsSame(const QString &left, const QString &right)
@@ -271,14 +428,14 @@ QString availableRename(const QString &target)
     return {};
 }
 
-bool copyDirectorySafely(const QString &source, const QString &target, bool replace, QString *error, FileShelfManager::TransferControl *control)
+bool copyDirectorySafely(const QString &source, const QString &target, bool replace, QString *error, FileShelfManager::TransferControl *control, const MoveSnapshot *snapshot = nullptr)
 {
     if (rejectUnsafeFolderDestination(source, target, error))
         return false;
     const QString parent = QFileInfo(target).absolutePath();
     const QString stage = QDir(parent).filePath(QStringLiteral(".smalldtl-folder-%1")
                                                     .arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
-    if (!copyDirectoryContents(source, stage, error, control)) {
+    if (!copyDirectoryContents(source, stage, error, control, snapshot)) {
         QDir(stage).removeRecursively();
         return false;
     }
@@ -302,14 +459,15 @@ bool copyDirectorySafely(const QString &source, const QString &target, bool repl
             return false;
         }
     }
-    if (!movePath(stage, target)) {
+    QString commitError;
+    if (!movePath(stage, target, &commitError)) {
         QDir(stage).removeRecursively();
         const bool restored = backup.isEmpty() || movePath(backup, target);
         if (error) {
             if (!restored)
                 *error = QStringLiteral("Could not commit the copied folder; the previous destination is preserved at %1 and needs manual recovery.").arg(backup);
             else
-                *error = QStringLiteral("Could not commit the copied folder; the previous destination was restored.");
+                *error = QStringLiteral("Could not commit the copied folder (%1); the previous destination was restored.").arg(commitError);
         }
         return false;
     }
@@ -318,11 +476,6 @@ bool copyDirectorySafely(const QString &source, const QString &target, bool repl
         return false;
     }
     return true;
-}
-
-bool removeSource(const QString &path, bool directory)
-{
-    return directory ? QDir(path).removeRecursively() : QFile::remove(path);
 }
 
 FileShelfManager::TransferSummary executeTransfers(const QVector<FileShelfManager::TransferItem> &items,
@@ -404,9 +557,15 @@ FileShelfManager::TransferSummary executeTransfers(const QVector<FileShelfManage
             result.details.append(QStringLiteral("%1: source or destination could not be resolved safely before staging; the operation was rejected.").arg(item.source));
             continue;
         }
+        MoveSnapshot snapshot;
+        if (move && !snapshot.acquire(item.source, item.directory, &error, control.get())) {
+            ++result.failed;
+            result.details.append(QStringLiteral("%1: %2").arg(item.source, error));
+            continue;
+        }
         const bool copied = item.directory
-            ? copyDirectorySafely(item.source, target, replace, &error, control.get())
-            : copyFileSafely(item.source, target, replace, &error, control.get());
+            ? copyDirectorySafely(item.source, target, replace, &error, control.get(), move ? &snapshot : nullptr)
+            : copyFileSafely(item.source, target, replace, &error, control.get(), move ? snapshot.entries.first().get() : nullptr);
         if (!copied) {
             if (control->cancel.load()) { result.cancelled = true; result.details.append(QStringLiteral("Cancelled; uncommitted source files were preserved.")); break; }
             ++result.failed;
@@ -425,9 +584,9 @@ FileShelfManager::TransferSummary executeTransfers(const QVector<FileShelfManage
                 error.isEmpty() ? QStringLiteral("source and destination resolve to the same filesystem location; the source was preserved.") : error));
             continue;
         }
-        if (move && !removeSource(item.source, item.directory)) {
+        if (move && !snapshot.removeSources(&error, control.get())) {
             ++result.failed;
-            result.details.append(QStringLiteral("%1: copied to %2, but the source could not be removed.").arg(item.source, target));
+            result.details.append(QStringLiteral("%1: destination copy at %2. %3").arg(item.source, target, error));
             continue;
         }
         if (move)

@@ -438,6 +438,26 @@ void UnitTests::screenshotEditorOpensFromGalleryAndRenders()
     QTRY_VERIFY(editor->property("visible").toBool());
     QVERIFY(page->findChild<QObject *>(QStringLiteral("editorSaveCopy")));
     QTest::qWait(200);
+    auto *editMouse = findItem(window.contentItem(), QStringLiteral("editorMouseArea"));
+    QVERIFY(editMouse);
+    int annotationCount = 0;
+    for (const QString &tool : {QStringLiteral("arrow"), QStringLiteral("rectangle"), QStringLiteral("ellipse"),
+                                QStringLiteral("highlight"), QStringLiteral("redact"), QStringLiteral("text")}) {
+        editor->setProperty("tool", tool);
+        editor->setProperty("annotationText", QStringLiteral("Annotated screenshot"));
+        QTest::qWait(20);
+        const QPoint start = editMouse->mapToScene(QPointF(editMouse->width() * 0.15, editMouse->height() * (0.12 + annotationCount * 0.11))).toPoint();
+        const QPoint end = editMouse->mapToScene(QPointF(editMouse->width() * 0.55, editMouse->height() * (0.18 + annotationCount * 0.11))).toPoint();
+        QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, start);
+        QTest::mouseMove(&window, end, 10);
+        QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, end);
+        ++annotationCount;
+        QTRY_COMPARE(editor->property("strokes").toList().size(), annotationCount);
+    }
+    QVERIFY(QMetaObject::invokeMethod(editor, "undo"));
+    QCOMPARE(editor->property("strokes").toList().size(), 5);
+    QVERIFY(QMetaObject::invokeMethod(editor, "redo"));
+    QCOMPARE(editor->property("strokes").toList().size(), 6);
     const QString capturePath = QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("editor-visual.png"));
     QVERIFY(window.grabWindow().save(capturePath));
     editor->setProperty("crop", QVariantMap{{QStringLiteral("x"), 20}, {QStringLiteral("y"), 15},

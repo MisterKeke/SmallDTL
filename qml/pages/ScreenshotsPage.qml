@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Controls.Material
 import QtQuick.Layouts
 import QtQuick.Window
 
@@ -12,6 +13,15 @@ Item {
     property int selectedPixelHeight: 0
     property var selectedIds: []
     property int lastClickedIndex: -1
+    property int tagAssignmentRevision: 0
+    function assignmentState(tagId) {
+        tagAssignmentRevision
+        return screenshots.tagAssignmentState(tagId, selectedIds)
+    }
+    Connections {
+        target: screenshots
+        function onTagAssignmentsChanged() { root.tagAssignmentRevision += 1 }
+    }
     function isSelected(id) { return selectedIds.indexOf(id) >= 0 }
     function toggleSelected(id) {
         const next = selectedIds.slice()
@@ -155,7 +165,7 @@ Item {
             Label { text: root.selectedIds.length + " selected"; color: settings.palette["#b0b1bb"]; font.pixelSize: 10 }
             Button { text: "Select all"; onClicked: root.selectAll() }
             Button { text: "Clear"; enabled: root.selectedIds.length > 0; onClicked: root.clearSelection() }
-            Button { id: bulkTagButton; text: "Tag selected"; enabled: root.selectedIds.length > 0; onClicked: bulkTagPopup.open() }
+            Button { id: bulkTagButton; objectName: "bulkTagButton"; text: "Tag selected"; enabled: root.selectedIds.length > 0; onClicked: { root.tagAssignmentRevision += 1; bulkTagPopup.open() } }
         }
 
         Item {
@@ -358,9 +368,17 @@ Item {
 
     Popup {
         id: bulkTagPopup
+        objectName: "bulkTagPopup"
         parent: Overlay.overlay
-        x: bulkTagButton.mapToItem(Overlay.overlay, 0, bulkTagButton.height).x
-        y: bulkTagButton.mapToItem(Overlay.overlay, 0, bulkTagButton.height).y
+        Material.theme: settings.darkTheme ? Material.Dark : Material.Light
+        Material.accent: settings.palette["#e96782"]
+        Material.foreground: settings.palette["#f2f1f4"]
+        onAboutToShow: {
+            if (!parent) return
+            const anchor = bulkTagButton.mapToItem(parent, 0, bulkTagButton.height)
+            x = Math.max(0, Math.min(parent.width - width, anchor.x))
+            y = Math.max(0, Math.min(parent.height - height, anchor.y))
+        }
         width: 260
         height: Math.min(340, tagOptions.implicitHeight + 20)
         padding: 10
@@ -375,16 +393,20 @@ Item {
                 Repeater {
                     model: screenshots.tags
                     delegate: RowLayout {
-                        required property string tagId
-                        required property string name
+                        required property var modelData
+                        readonly property string tagId: modelData.tagId
+                        readonly property string name: modelData.name
                         width: tagOptions.width
                         CheckBox {
+                            objectName: "bulkTagCheckBox_" + tagId
                             Layout.fillWidth: true
                             text: name
                             checkState: {
-                                const state = screenshots.tagAssignmentState(tagId, root.selectedIds)
+                                const state = root.assignmentState(tagId)
                                 return state === 2 ? Qt.PartiallyChecked : state === 1 ? Qt.Checked : Qt.Unchecked
                             }
+                            tristate: true
+                            nextCheckState: function() { return checkState }
                             onClicked: {
                                 const previousState = screenshots.tagAssignmentState(tagId, root.selectedIds)
                                 screenshots.setTagForScreenshots(root.selectedIds, tagId, previousState !== 1)
@@ -392,7 +414,7 @@ Item {
                         }
                         ToolButton {
                             text: "Remove"
-                            enabled: screenshots.tagAssignmentState(tagId, root.selectedIds) > 0
+                            enabled: root.assignmentState(tagId) > 0
                             onClicked: screenshots.setTagForScreenshots(root.selectedIds, tagId, false)
                         }
                     }

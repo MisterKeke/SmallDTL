@@ -150,6 +150,7 @@ public:
     QString lastSaveError() const { return m_lastSaveError; }
 
 signals:
+    void tagAssignmentsChanged();
     void destinationChanged();
     void clipboardHasImageChanged();
     void tagsChanged();

@@ -39,6 +39,7 @@ ActionSequenceRunner::ActionSequenceRunner(ActionManager *actions, ProfileManage
       m_waitTimer(new QTimer(this))
 {
     m_waitTimer->setSingleShot(true);
+    m_actions->setWindowArrangementManager(m_windowArrangements);
     connect(m_waitTimer, &QTimer::timeout, this, &ActionSequenceRunner::runNext);
     connect(m_screenshots, &ScreenshotManager::saveFinished, this,
             [this](const QString &path, bool success, const QString &message) {

@@ -98,14 +98,30 @@ void UnitTests::windowLayoutHotkeyAndSequenceReferencesPersist()
 {
     SettingsManager settings;ProfileManager profiles(&settings);const QString profileId=profiles.activeProfileId();
     const QString layoutId=QStringLiteral("layout-reference");
+    WindowLayout layout; layout.id=layoutId; layout.name=QStringLiteral("Referenced layout"); layout.profileId=profileId;
+    layout.rules.append({QStringLiteral("C:/Apps/Editor.exe"),QString(),QStringLiteral("display"),{0,0,1,1},false});
+    QFile layoutFile(QDir(AppDataPaths::root()).filePath(QStringLiteral("window-layouts.json")));
+    QVERIFY(layoutFile.open(QIODevice::WriteOnly));
+    layoutFile.write(QJsonDocument(QJsonObject{{QStringLiteral("schemaVersion"),1},{QStringLiteral("layouts"),QJsonArray{WindowArrangementManager::serializeLayout(layout)}}}).toJson()); layoutFile.close();
+    WindowArrangementManager layouts(&profiles);
+    QTRY_VERIFY_WITH_TIMEOUT(!layouts.busy(),5000);
+    QVERIFY2(layouts.containsLayout(layoutId), qPrintable(layouts.status()));
     HotkeyAssignment binding;binding.id=QStringLiteral("layout-hotkey");binding.key=Qt::Key_F8;binding.modifiers=Qt::ControlModifier;binding.actionType=QStringLiteral("applyWindowLayout");binding.layoutId=layoutId;
     QVERIFY(profiles.addHotkey(profileId,binding));
     ActionManager actions(&profiles);const QString sequence=actions.createSequence(QStringLiteral("Arrange on request"));
+    actions.setWindowArrangementManager(&layouts);
     const QString step=actions.addStep(sequence,QStringLiteral("applyWindowLayout"));QVERIFY(!step.isEmpty());
-    QVERIFY(actions.updateStep(sequence,step,{{QStringLiteral("layoutId"),layoutId}}));QVERIFY(actions.validationError(sequence).isEmpty());
+    QVERIFY(actions.updateStep(sequence,step,{{QStringLiteral("layoutId"),layoutId}}));
+    QVERIFY2(actions.validationError(sequence).isEmpty(),qPrintable(actions.validationError(sequence)));
     bool valid=false;const Profile roundTrip=ProfileManager::parseProfile(ProfileManager::serializeProfile(*profiles.profileById(profileId)),&valid);QVERIFY(valid);
     QCOMPARE(roundTrip.hotkeys.first().layoutId,layoutId);
     QCOMPARE(actions.steps(sequence).first().toMap().value(QStringLiteral("layoutId")).toString(),layoutId);
+    QVERIFY(!layouts.deleteLayout(layoutId));
+    QVERIFY(profiles.removeHotkey(profileId,binding.id));
+    QVERIFY(!layouts.deleteLayout(layoutId));
+    QVERIFY(actions.updateStep(sequence,step,{{QStringLiteral("layoutId"),QStringLiteral("missing-layout")}}));
+    QVERIFY(!actions.validationError(sequence).isEmpty());
+    QVERIFY(layouts.deleteLayout(layoutId));
 }
 
 #ifdef Q_OS_WIN

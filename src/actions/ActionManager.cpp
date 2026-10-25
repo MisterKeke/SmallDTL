@@ -4,6 +4,7 @@
 #include "../app/JsonValidation.h"
 #include <QSet>
 #include "../profiles/ProfileManager.h"
+#include "../windows/WindowArrangementManager.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -45,6 +46,15 @@ ActionManager::ActionManager(ProfileManager *profiles, QObject *parent)
     load();
     connect(m_profiles,&ProfileManager::profilesChanged,this,&ActionManager::refreshModel);
     connect(m_profiles,&ProfileManager::activeProfileChanged,this,&ActionManager::refreshModel);
+    refreshModel();
+}
+
+void ActionManager::setWindowArrangementManager(WindowArrangementManager *manager)
+{
+    if (m_windowArrangements == manager) return;
+    if (m_windowArrangements) disconnect(m_windowArrangements, nullptr, this, nullptr);
+    m_windowArrangements = manager;
+    if (manager) connect(manager, &WindowArrangementManager::layoutsChanged, this, &ActionManager::refreshModel);
     refreshModel();
 }
 
@@ -167,7 +177,8 @@ QString ActionManager::validateSequence(const QString &sequenceId, QString *erro
             } else if (step.type == kSwitchProfile &&
                        (!m_profiles || step.targetProfileId==QStringLiteral("global") || !m_profiles->profileById(step.targetProfileId)))
                 reason = prefix + QStringLiteral("choose an available profile.");
-            else if(step.type==kApplyWindowLayout && !JsonValidation::safeId(step.layoutId))
+            else if(step.type==kApplyWindowLayout &&
+                    (!JsonValidation::safeId(step.layoutId) || !m_windowArrangements || !m_windowArrangements->containsLayout(step.layoutId)))
                 reason = prefix + QStringLiteral("choose a saved window layout.");
             else if (step.type == kWait && (step.delayMs < 0 || step.delayMs > kMaximumWaitMs))
                 reason = prefix + QStringLiteral("wait must be between 0 and 600000 milliseconds.");

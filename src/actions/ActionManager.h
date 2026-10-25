@@ -4,9 +4,11 @@
 #include <QJsonObject>
 #include <QVariantList>
 #include <QVector>
+#include <QPointer>
 #include "ActionDefinition.h"
 
 class ProfileManager;
+class WindowArrangementManager;
 
 class ActionManager final : public QAbstractListModel
 {
@@ -29,6 +31,7 @@ public:
     Q_INVOKABLE QVariantMap sequenceInfo(const QString &sequenceId) const;
     Q_INVOKABLE QVariantList steps(const QString &sequenceId) const;
     QString validateSequence(const QString &sequenceId, QString *error = nullptr) const;
+    void setWindowArrangementManager(WindowArrangementManager *manager);
 
     Q_INVOKABLE QString createSequence(const QString &name);
     Q_INVOKABLE bool renameSequence(const QString &sequenceId, const QString &name);
@@ -63,6 +66,7 @@ private:
     void refreshModel();
 
     ProfileManager *m_profiles = nullptr;
+    QPointer<WindowArrangementManager> m_windowArrangements;
     QVector<ActionSequence> m_sequences;
     bool m_globalScope = false;
     QStringList m_startupMessages;

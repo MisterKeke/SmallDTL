@@ -661,6 +661,7 @@ bool ScreenshotManager::setTagForScreenshots(const QStringList &screenshotIds, c
         emit messageChanged(QStringLiteral("Could not update screenshot tags: %1").arg(m_database.lastError()), true);
         return false;
     }
+    emit tagAssignmentsChanged();
     refreshGallery();
     return true;
 }

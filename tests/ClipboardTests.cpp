@@ -6,12 +6,16 @@ void UnitTests::clipboardHistoryDatabaseUpgradesVersionFour()
     QVERIFY(temporary.isValid());
     const QString databasePath = QDir(temporary.path()).filePath(QStringLiteral("screenshots.db"));
     const QString connectionName = QStringLiteral("history-v4-fixture");
+    { ApplicationDatabase seed(databasePath); QVERIFY(seed.initialize()); }
     {
         QSqlDatabase fixture = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connectionName);
         fixture.setDatabaseName(databasePath);
         QVERIFY(fixture.open());
         QSqlQuery query(fixture);
-        QVERIFY(query.exec(QStringLiteral("CREATE TABLE migration_state (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)")));
+        QVERIFY(query.exec(QStringLiteral("DROP TABLE clipboard_history")));
+        QVERIFY(query.exec(QStringLiteral("DROP TABLE file_shelf")));
+        QVERIFY(query.exec(QStringLiteral("DROP INDEX screenshots_path_key_idx")));
+        QVERIFY(query.exec(QStringLiteral("ALTER TABLE screenshots DROP COLUMN path_key")));
         QVERIFY(query.exec(QStringLiteral("PRAGMA user_version=4")));
         fixture.close();
     }
@@ -353,6 +357,9 @@ void UnitTests::clipboardHistoryShortcutIsConfigurableAndPersisted()
     const int modifiers = int(Qt::ControlModifier | Qt::ShiftModifier);
     {
         ApplicationController controller;
+        QVERIFY(!controller.setFileShelfShortcut(Qt::Key_V, Qt::ControlModifier));
+        QVERIFY(!controller.setClipboardHistoryShortcut(Qt::Key_V, Qt::ControlModifier));
+        QVERIFY(!HotkeyManager::isSupportedKey(Qt::Key_V, Qt::ControlModifier));
         QVERIFY(controller.addHotkey(Qt::Key_F18, modifiers, QStringLiteral("saveScreenshot"), QString(), QString()));
         QVERIFY(!controller.setFileShelfShortcut(Qt::Key_F18, modifiers));
         QVERIFY(controller.setFileShelfShortcut(Qt::Key_F20, modifiers));
