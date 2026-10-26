@@ -308,4 +308,160 @@ ApplicationWindow {
         Shortcut { sequence: "Escape"; context: Qt.WindowShortcut; onActivated: app.setFileShelfPopupVisible(false) }
         FileShelfPage { anchors.fill: parent; anchors.margins: 12; compact: true }
     }
+
+    Window {
+        id: fileShelfQuickAddPopup
+        objectName: "fileShelfQuickAddPopup"
+        visible: app.fileShelfQuickAddPopupVisible
+        width: 390
+        height: 470
+        minimumWidth: 340
+        minimumHeight: 390
+        title: "Add clipboard files to collection"
+        color: settings.palette["#111216"]
+        transientParent: null
+        Material.theme: settings.darkTheme ? Material.Dark : Material.Light
+        Material.accent: settings.palette["#e96782"]
+        Material.primary: settings.palette["#39222b"]
+        Material.background: settings.palette["#191a20"]
+        Material.foreground: settings.palette["#f2f1f4"]
+        flags: Qt.Tool | Qt.WindowStaysOnTopHint
+        property var filteredCollections: []
+        property string selectedCollectionId: ""
+        function refreshCollections() {
+            var search = quickCollectionSearch.text.trim().toLocaleLowerCase()
+            var all = fileShelf.collections
+            var next = []
+            for (var i = 0; i < all.length; ++i)
+                if (search.length === 0 || all[i].name.toLocaleLowerCase().indexOf(search) >= 0)
+                    next.push(all[i])
+            filteredCollections = next
+            var stillPresent = false
+            for (var j = 0; j < next.length; ++j)
+                if (next[j].id === selectedCollectionId) stillPresent = true
+            if (!stillPresent) selectedCollectionId = next.length ? next[0].id : ""
+            quickCollectionList.currentIndex = 0
+            for (var k = 0; k < next.length; ++k)
+                if (next[k].id === selectedCollectionId) quickCollectionList.currentIndex = k
+        }
+        function acceptSelection() {
+            if (!selectedCollectionId) return
+            if (fileShelf.quickAddToCollection(selectedCollectionId))
+                app.setFileShelfQuickAddPopupVisible(false)
+        }
+        onVisibleChanged: if (visible) {
+            x = Math.max(0, (Screen.width - width) / 2)
+            y = Math.max(0, (Screen.height - height) / 3)
+            quickCollectionSearch.text = ""
+            refreshCollections()
+            quickCollectionSearch.forceActiveFocus()
+        }
+        onClosing: app.setFileShelfQuickAddPopupVisible(false)
+
+        Connections {
+            target: fileShelf
+            function onCollectionsChanged() { fileShelfQuickAddPopup.refreshCollections() }
+        }
+        Shortcut { sequence: "Escape"; context: Qt.WindowShortcut; onActivated: app.setFileShelfQuickAddPopupVisible(false) }
+
+        ColumnLayout {
+            id: quickAddContent
+            x: 14
+            y: 14
+            width: fileShelfQuickAddPopup.width - 28
+            height: fileShelfQuickAddPopup.height - 28
+            spacing: 9
+            Label { text: "Add %1 clipboard reference(s)".arg(fileShelf.pendingQuickAddCount); font.pixelSize: 17; font.weight: Font.DemiBold }
+            Label { Layout.fillWidth: true; text: "Choose a collection. The current clipboard snapshot stays unchanged."; color: settings.palette["#9697a3"]; font.pixelSize: 10; wrapMode: Text.WordWrap }
+            TextField {
+                id: quickCollectionSearch
+                objectName: "fileShelfQuickAddSearch"
+                Layout.fillWidth: true
+                placeholderText: "Search collections"
+                onTextEdited: fileShelfQuickAddPopup.refreshCollections()
+                Keys.onPressed: function(event) {
+                    if (event.key === Qt.Key_Down || event.key === Qt.Key_Up) {
+                        var delta = event.key === Qt.Key_Down ? 1 : -1
+                        var count = quickCollectionList.count
+                        if (count > 0) quickCollectionList.currentIndex = Math.max(0, Math.min(count - 1, quickCollectionList.currentIndex + delta))
+                        event.accepted = true
+                    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                        if (quickCollectionList.currentIndex >= 0)
+                            fileShelfQuickAddPopup.selectedCollectionId = fileShelfQuickAddPopup.filteredCollections[quickCollectionList.currentIndex].id
+                        fileShelfQuickAddPopup.acceptSelection()
+                        event.accepted = true
+                    }
+                }
+            }
+            ListView {
+                id: quickCollectionList
+                objectName: "fileShelfQuickAddCollectionList"
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                spacing: 5
+                model: fileShelfQuickAddPopup.filteredCollections
+                delegate: Rectangle {
+                    required property var modelData
+                    required property int index
+                    width: quickCollectionList.width
+                    height: 48
+                    radius: 9
+                    color: quickCollectionList.currentIndex === index ? settings.palette["#39222b"] : settings.palette["#202127"]
+                    border.color: modelData.favorite ? settings.palette["#e7b879"] : settings.palette["#30313a"]
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 12
+                        anchors.rightMargin: 12
+                        Label { text: modelData.favorite ? "★" : ""; color: settings.palette["#e7b879"] }
+                        Label { Layout.fillWidth: true; text: modelData.name; elide: Text.ElideRight }
+                        Label { text: modelData.lastUsedAt.length ? "Recent" : ""; color: settings.palette["#9697a3"]; font.pixelSize: 9 }
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        onClicked: {
+                            quickCollectionList.currentIndex = index
+                            fileShelfQuickAddPopup.selectedCollectionId = modelData.id
+                            fileShelfQuickAddPopup.acceptSelection()
+                        }
+                    }
+                }
+                Label { anchors.centerIn: parent; visible: quickCollectionList.count === 0; text: "No matching collections. Create one below."; color: settings.palette["#9697a3"]; font.pixelSize: 11 }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Button { text: "New collection"; onClicked: { newQuickCollection.visible = !newQuickCollection.visible; if (newQuickCollection.visible) newQuickCollection.forceActiveFocus() } }
+                Item { Layout.fillWidth: true }
+                Button { text: "Add"; enabled: fileShelfQuickAddPopup.selectedCollectionId.length > 0; highlighted: true; onClicked: fileShelfQuickAddPopup.acceptSelection() }
+                Button { text: "Cancel"; onClicked: app.setFileShelfQuickAddPopupVisible(false) }
+            }
+            TextField {
+                id: newQuickCollection
+                objectName: "fileShelfQuickAddNewCollection"
+                Layout.fillWidth: true
+                visible: false
+                placeholderText: "New collection name"
+                onAccepted: {
+                    var createdId = fileShelf.createCollection(text)
+                    if (createdId) {
+                        text = ""
+                        visible = false
+                        quickCollectionSearch.text = ""
+                        fileShelfQuickAddPopup.selectedCollectionId = createdId
+                        fileShelfQuickAddPopup.refreshCollections()
+                        quickCollectionSearch.forceActiveFocus()
+                    }
+                }
+                Keys.onEscapePressed: app.setFileShelfQuickAddPopupVisible(false)
+            }
+            Label {
+                Layout.fillWidth: true
+                visible: fileShelf.message.length > 0
+                text: fileShelf.message
+                color: fileShelf.messageIsError ? settings.palette["#ff8d9c"] : settings.palette["#74d3aa"]
+                font.pixelSize: 10
+                wrapMode: Text.WrapAnywhere
+            }
+        }
+    }
 }

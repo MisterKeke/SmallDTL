@@ -32,6 +32,7 @@ class ApplicationController final : public QObject
     Q_PROPERTY(QString actionSequenceStatus READ actionSequenceStatus NOTIFY actionSequenceStatusChanged)
     Q_PROPERTY(bool clipboardHistoryPopupVisible READ clipboardHistoryPopupVisible WRITE setClipboardHistoryPopupVisible NOTIFY clipboardHistoryPopupVisibleChanged)
     Q_PROPERTY(bool fileShelfPopupVisible READ fileShelfPopupVisible WRITE setFileShelfPopupVisible NOTIFY fileShelfPopupVisibleChanged)
+    Q_PROPERTY(bool fileShelfQuickAddPopupVisible READ fileShelfQuickAddPopupVisible WRITE setFileShelfQuickAddPopupVisible NOTIFY fileShelfQuickAddPopupVisibleChanged)
 
 public:
     explicit ApplicationController(QObject *parent = nullptr);
@@ -59,6 +60,7 @@ public:
     QString actionSequenceStatus() const;
     bool clipboardHistoryPopupVisible() const { return m_clipboardHistoryPopupVisible; }
     bool fileShelfPopupVisible() const { return m_fileShelfPopupVisible; }
+    bool fileShelfQuickAddPopupVisible() const { return m_fileShelfQuickAddPopupVisible; }
 
     void initializeWindow(QWindow *window);
     void showAtStartup();
@@ -76,6 +78,9 @@ public:
     Q_INVOKABLE void toggleFileShelfPopup();
     Q_INVOKABLE void setFileShelfPopupVisible(bool visible);
     Q_INVOKABLE bool setFileShelfShortcut(int key, int modifiers);
+    Q_INVOKABLE bool setFileShelfQuickAddShortcut(int key, int modifiers);
+    Q_INVOKABLE void startFileShelfQuickAdd();
+    Q_INVOKABLE void setFileShelfQuickAddPopupVisible(bool visible);
     Q_INVOKABLE void chooseScreenshotDestination();
     Q_INVOKABLE void useProfileScreenshotDestination();
     Q_INVOKABLE void chooseGeneralScreenshotDirectory();
@@ -113,6 +118,7 @@ signals:
     void actionSequenceStatusChanged();
     void clipboardHistoryPopupVisibleChanged();
     void fileShelfPopupVisibleChanged();
+    void fileShelfQuickAddPopupVisibleChanged();
 
 private slots:
     void rebuildTrayMenu();
@@ -144,4 +150,5 @@ private:
     bool m_statusIsError = false;
     bool m_clipboardHistoryPopupVisible = false;
     bool m_fileShelfPopupVisible = false;
+    bool m_fileShelfQuickAddPopupVisible = false;
 };

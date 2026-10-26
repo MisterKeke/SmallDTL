@@ -115,6 +115,12 @@ QString HotkeyManager::fileShelfStatus() const
                               {false, QStringLiteral("Not assigned")}).text;
 }
 
+QString HotkeyManager::fileShelfQuickAddStatus() const
+{
+    return m_statusById.value(QStringLiteral("file-shelf-quick-add"),
+                              {false, QStringLiteral("Not assigned")}).text;
+}
+
 bool HotkeyManager::isRegistered(const QString &id) const
 {
     return nativeIdFor(id)>0;
@@ -124,15 +130,15 @@ bool HotkeyManager::isSupportedKey(int key, int modifiers)
 {
     if (key == Qt::Key_V && modifiers == int(Qt::ControlModifier))
         return false;
-    const int supportedModifiers = int(Qt::ControlModifier | Qt::AltModifier | Qt::ShiftModifier | Qt::MetaModifier);
+    const int supportedModifiers = int(Qt::ControlModifier | Qt::AltModifier | Qt::ShiftModifier | Qt::MetaModifier | Qt::KeypadModifier);
     if (key == 0 || (modifiers & ~supportedModifiers) != 0)
         return false;
-    const bool hasModifier = (modifiers & supportedModifiers) != 0;
+    const bool hasModifier = (modifiers & int(Qt::ControlModifier | Qt::AltModifier | Qt::ShiftModifier | Qt::MetaModifier)) != 0;
     if (!hasModifier)
         return false;
 #ifdef Q_OS_WIN
     quint32 ignored = 0;
-    return toWindowsKey(key, &ignored);
+    return toWindowsKey(key, modifiers, &ignored);
 #else
     return true;
 #endif
@@ -162,6 +168,9 @@ bool HotkeyManager::nativeEventFilter(const QByteArray &eventType, void *message
     } else if (binding.actionType == QStringLiteral("fileShelf")) {
         emit hotkeyTriggered(binding.description);
         emit fileShelfTriggered();
+    } else if (binding.actionType == QStringLiteral("fileShelfQuickAdd")) {
+        emit hotkeyTriggered(binding.description);
+        emit fileShelfQuickAddTriggered();
     } else if (binding.isActivation) {
         emit hotkeyTriggered(QStringLiteral("Activate %1").arg(binding.description));
         emit profileActivationRequested(binding.profileId);
@@ -212,6 +221,15 @@ void HotkeyManager::refreshRegistrations()
             desired.append(Binding{shelfId, QStringLiteral("global"),
                                    QStringLiteral("Open file shelf (%1)").arg(HotkeyUtils::formatShortcut(shelfKey, shelfModifiers)),
                                    shelfKey, shelfModifiers, false, QStringLiteral("fileShelf"), {}, {}});
+        const int quickKey = m_settings->fileShelfQuickAddShortcutKey();
+        const int quickModifiers = m_settings->fileShelfQuickAddShortcutModifiers();
+        const QString quickId = QStringLiteral("file-shelf-quick-add");
+        if (quickKey == 0)
+            statuses.insert(quickId, {false, QStringLiteral("Not assigned")});
+        else
+            desired.append(Binding{quickId, QStringLiteral("global"),
+                                   QStringLiteral("Quick-add to file shelf (%1)").arg(HotkeyUtils::formatShortcut(quickKey, quickModifiers)),
+                                   quickKey, quickModifiers, false, QStringLiteral("fileShelfQuickAdd"), {}, {}});
     }
     const bool canRegister=m_hasWindow && !m_window.isNull() && !m_recording;
     // Retain unchanged native registrations, especially application-wide bindings.
@@ -228,10 +246,10 @@ void HotkeyManager::refreshRegistrations()
     for(const auto &binding:desired) {
         if(!canRegister){statuses.insert(binding.id,{false,m_recording?QStringLiteral("Paused while recording"):QStringLiteral("Waiting for application window")});continue;}
         int existing=0;for(auto it=m_bindingByNativeId.begin();it!=m_bindingByNativeId.end();++it)if(it->id==binding.id){existing=it.key();break;}
-        if(existing){statuses.insert(binding.id,{true,(binding.isActivation || binding.actionType==QStringLiteral("clipboardHistory") || binding.actionType==QStringLiteral("fileShelf"))?QStringLiteral("Registered globally"):QStringLiteral("Registered")});continue;}
+        if(existing){statuses.insert(binding.id,{true,(binding.isActivation || binding.actionType==QStringLiteral("clipboardHistory") || binding.actionType==QStringLiteral("fileShelf") || binding.actionType==QStringLiteral("fileShelfQuickAdd"))?QStringLiteral("Registered globally"):QStringLiteral("Registered")});continue;}
         while(m_bindingByNativeId.contains(m_nextNativeId))m_nextNativeId=m_nextNativeId%0xbfff+1;
         const int nativeId=m_nextNativeId;m_nextNativeId=m_nextNativeId%0xbfff+1;
-        if(registerBinding(binding,nativeId)){m_bindingByNativeId.insert(nativeId,binding);statuses.insert(binding.id,{true,(binding.isActivation || binding.actionType==QStringLiteral("clipboardHistory") || binding.actionType==QStringLiteral("fileShelf"))?QStringLiteral("Registered globally"):QStringLiteral("Registered")});}
+        if(registerBinding(binding,nativeId)){m_bindingByNativeId.insert(nativeId,binding);statuses.insert(binding.id,{true,(binding.isActivation || binding.actionType==QStringLiteral("clipboardHistory") || binding.actionType==QStringLiteral("fileShelf") || binding.actionType==QStringLiteral("fileShelfQuickAdd"))?QStringLiteral("Registered globally"):QStringLiteral("Registered")});}
         else {statuses.insert(binding.id,{false,QStringLiteral("Unavailable or conflicts with another hotkey")});if(m_statusById.value(binding.id).text!=statuses.value(binding.id).text)failures.append(binding.description);}
     }
     beginResetModel();
@@ -264,7 +282,7 @@ bool HotkeyManager::registerBinding(const Binding &binding, int nativeId)
     if (m_window.isNull() || !isSupportedKey(binding.key, binding.modifiers))
         return false;
     UINT virtualKey = 0;
-    if (!toWindowsKey(binding.key, &virtualKey))
+    if (!toWindowsKey(binding.key, binding.modifiers, &virtualKey))
         return false;
     const UINT modifiers = toWindowsModifiers(binding.modifiers) | MOD_NOREPEAT;
     if (!RegisterHotKey(nullptr, nativeId, modifiers, virtualKey)) {
@@ -280,9 +298,23 @@ bool HotkeyManager::registerBinding(const Binding &binding, int nativeId)
 #endif
 }
 
-bool HotkeyManager::toWindowsKey(int qtKey, UINT *virtualKey)
+bool HotkeyManager::toWindowsKey(int qtKey, int qtModifiers, UINT *virtualKey)
 {
 #ifdef Q_OS_WIN
+    if (qtModifiers & Qt::KeypadModifier) {
+        if (qtKey >= Qt::Key_0 && qtKey <= Qt::Key_9) {
+            *virtualKey = VK_NUMPAD0 + static_cast<quint32>(qtKey - Qt::Key_0);
+            return true;
+        }
+        switch (qtKey) {
+        case Qt::Key_Period: *virtualKey = VK_DECIMAL; return true;
+        case Qt::Key_Plus: *virtualKey = VK_ADD; return true;
+        case Qt::Key_Minus: *virtualKey = VK_SUBTRACT; return true;
+        case Qt::Key_Asterisk: *virtualKey = VK_MULTIPLY; return true;
+        case Qt::Key_Slash: *virtualKey = VK_DIVIDE; return true;
+        default: return false;
+        }
+    }
     if (qtKey >= Qt::Key_A && qtKey <= Qt::Key_Z) {
         *virtualKey = static_cast<quint32>(qtKey);
         return true;
@@ -320,6 +352,7 @@ bool HotkeyManager::toWindowsKey(int qtKey, UINT *virtualKey)
     }
 #else
     Q_UNUSED(qtKey)
+    Q_UNUSED(qtModifiers)
     Q_UNUSED(virtualKey)
     return false;
 #endif

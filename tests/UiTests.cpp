@@ -504,6 +504,12 @@ void UnitTests::recorderFocusAndModifiedControlKeys()
     std::unique_ptr<QObject> object(component.create());QVERIFY2(object,qPrintable(component.errorString()));auto *recorder=qobject_cast<QQuickItem *>(object.get());recorder->setParentItem(window.contentItem());window.show();QVERIFY(QTest::qWaitForWindowExposed(&window));
     recorder->forceActiveFocus();recorder->setProperty("recording",true);QSignalSpy recorded(recorder,SIGNAL(recorded(int,int)));
     QTest::keyClick(&window,Qt::Key_Delete,Qt::ControlModifier);QCOMPARE(recorded.count(),1);QCOMPARE(recorded.first().at(0).toInt(),int(Qt::Key_Delete));QCOMPARE(recorded.first().at(1).toInt(),int(Qt::ControlModifier));
+    recorder->forceActiveFocus();recorder->setProperty("recording",true);
+    const int numpadModifiers = int(Qt::AltModifier | Qt::KeypadModifier);
+    QTest::keyClick(&window, Qt::Key_5, Qt::KeyboardModifiers(numpadModifiers));
+    QCOMPARE(recorded.count(), 2);
+    QCOMPARE(recorded.at(1).at(0).toInt(), int(Qt::Key_5));
+    QCOMPARE(recorded.at(1).at(1).toInt(), numpadModifiers);
     recorder->setProperty("recording",true);recorder->setVisible(false);QVERIFY(!recorder->property("recording").toBool());
     recorder->setVisible(true);recorder->forceActiveFocus();recorder->setProperty("recording",true);QQuickItem other(window.contentItem());other.setParentItem(window.contentItem());other.forceActiveFocus();QVERIFY(!recorder->property("recording").toBool());
 }
@@ -629,6 +635,69 @@ void UnitTests::fullShellPagesAndPreferences()
     QTest::mouseClick(window,Qt::LeftButton,Qt::NoModifier,closeSwitch->mapToScene(QPointF(closeSwitch->width()/2,closeSwitch->height()/2)).toPoint());
     QCOMPARE(controller.settings()->closeToTray(),before);QTRY_COMPARE(closeSwitch->property("checked").toBool(),before);QVERIFY(controller.statusIsError());
     QCOMPARE(warnings.count(),0);
+}
+
+void UnitTests::fileShelfQuickAddPopupKeyboardInteraction()
+{
+    ApplicationController controller;
+    QQmlApplicationEngine engine;
+    engine.addImageProvider(QStringLiteral("thumbnail"), new ThumbnailProvider);
+    engine.addImageProvider(QStringLiteral("qrpreview"), new QrImageProvider(controller.qrCode()));
+    for (const auto &entry : QList<QPair<QString, QObject *>>{
+             {QStringLiteral("app"), &controller}, {QStringLiteral("settings"), controller.settings()},
+             {QStringLiteral("profiles"), controller.profiles()}, {QStringLiteral("screenshots"), controller.screenshots()},
+             {QStringLiteral("clipboardHistory"), controller.clipboardHistory()}, {QStringLiteral("fileShelf"), controller.fileShelf()},
+             {QStringLiteral("qrCode"), controller.qrCode()}, {QStringLiteral("hotkeys"), controller.hotkeys()},
+             {QStringLiteral("actions"), controller.actions()}, {QStringLiteral("actionRunner"), controller.actionRunner()},
+             {QStringLiteral("windowArrangements"), controller.windowArrangements()}})
+        engine.rootContext()->setContextProperty(entry.first, entry.second);
+    engine.loadFromModule(QStringLiteral("ScreenshotHotkeyManagerTest"), QStringLiteral("Main"));
+    QVERIFY(!engine.rootObjects().isEmpty());
+    auto *mainWindow = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+    QVERIFY(mainWindow);
+    QVERIFY(mainWindow->isVisible() == false);
+
+    QTemporaryDir copied(g_testData->filePath(QStringLiteral("quick-add-keyboard-XXXXXX")));
+    QVERIFY(copied.isValid());
+    const QString firstPath = QDir(copied.path()).filePath(QStringLiteral("keyboard-one.txt"));
+    QFile firstFile(firstPath);
+    QVERIFY(firstFile.open(QIODevice::WriteOnly));
+    firstFile.close();
+    const QString firstCollection = controller.fileShelf()->createCollection(QStringLiteral("Keyboard A"));
+    const QString secondCollection = controller.fileShelf()->createCollection(QStringLiteral("Keyboard B"));
+    QVERIFY(!firstCollection.isEmpty());
+    QVERIFY(!secondCollection.isEmpty());
+    QVERIFY(controller.fileShelf()->setCollectionFavorite(firstCollection, true));
+    QApplication::clipboard()->setMimeData(new QMimeData);
+    auto *mime = new QMimeData;
+    mime->setUrls({QUrl::fromLocalFile(firstPath)});
+    QApplication::clipboard()->setMimeData(mime);
+
+    controller.startFileShelfQuickAdd();
+    QObject *popupObject = mainWindow->findChild<QObject *>(QStringLiteral("fileShelfQuickAddPopup"));
+    QVERIFY(popupObject);
+    QTRY_VERIFY(popupObject->property("visible").toBool());
+    auto *popup = qobject_cast<QQuickWindow *>(popupObject);
+    QVERIFY(popup);
+    QVERIFY(!mainWindow->isVisible());
+    QQuickItem *search = findItem(popup->contentItem(), QStringLiteral("fileShelfQuickAddSearch"));
+    QVERIFY(search);
+    search->forceActiveFocus();
+    QTRY_VERIFY(search->hasActiveFocus());
+    QTest::keyClick(popup, Qt::Key_Down);
+    QTest::keyClick(popup, Qt::Key_Return);
+    QTRY_VERIFY(!popupObject->property("visible").toBool());
+    const QVector<FileShelfRecord> entries = controller.screenshots()->database()->fileShelfEntries();
+    QCOMPARE(entries.size(), 1);
+    QCOMPARE(entries.first().collectionIds, QStringList{secondCollection});
+    QCOMPARE(QApplication::clipboard()->mimeData()->urls(), QList<QUrl>{QUrl::fromLocalFile(firstPath)});
+
+    controller.startFileShelfQuickAdd();
+    QTRY_VERIFY(popupObject->property("visible").toBool());
+    QTest::keyClick(popup, Qt::Key_Escape);
+    QTRY_VERIFY(!popupObject->property("visible").toBool());
+    QCOMPARE(controller.fileShelf()->pendingQuickAddCount(), 0);
+    QCOMPARE(controller.screenshots()->database()->fileShelfEntries().size(), 1);
 }
 
 void UnitTests::hotkeyEditorRestoresRejectedEdits()

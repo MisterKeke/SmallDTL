@@ -47,6 +47,11 @@ private slots:
     void screenshotDatabaseTagsAndBulkTransactions();
     void clipboardHistoryDatabaseUpgradesVersionFour();
     void fileShelfDatabaseUpgradesVersionFive();
+    void fileShelfDatabaseVersionSevenPreservesExistingItems();
+    void fileShelfCollectionsFavoritesAndRepairPreserveOrganization();
+    void fileShelfQuickAddUsesCurrentClipboardSnapshot();
+    void fileShelfQuickAddShortcutDistinguishesNumpadAndConflicts();
+    void fileShelfQuickAddPopupKeyboardInteraction();
     void fileShelfPersistsUnicodeReferencesDeduplicatesAndMarksMissing();
     void fileShelfSelectionConflictsAndPartialOperations();
     void fileShelfCopiesAndMovesFoldersInBackground();

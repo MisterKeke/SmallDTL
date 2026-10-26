@@ -132,6 +132,8 @@ void UnitTests::fileShelfDatabaseUpgradesVersionFive()
         fixture.setDatabaseName(path);
         QVERIFY(fixture.open());
         QSqlQuery query(fixture);
+        QVERIFY(query.exec(QStringLiteral("DROP TABLE IF EXISTS file_shelf_collection_items")));
+        QVERIFY(query.exec(QStringLiteral("DROP TABLE IF EXISTS file_shelf_collections")));
         QVERIFY(query.exec(QStringLiteral("DROP TABLE file_shelf")));
         QVERIFY(query.exec(QStringLiteral("DROP INDEX screenshots_path_key_idx")));
         QVERIFY(query.exec(QStringLiteral("ALTER TABLE screenshots DROP COLUMN path_key")));
@@ -141,6 +143,8 @@ void UnitTests::fileShelfDatabaseUpgradesVersionFive()
     QSqlDatabase::removeDatabase(connection);
     ApplicationDatabase database(path);
     QVERIFY2(database.initialize(), qPrintable(database.lastError()));
+    QVERIFY(database.fileShelfEntries().isEmpty());
+    QVERIFY(database.fileShelfCollections().isEmpty());
     FileShelfRecord record;
     record.path = QStringLiteral("C:/资料/研究 文档.txt");
     record.displayName = QStringLiteral("研究 文档.txt");
@@ -165,10 +169,230 @@ void UnitTests::fileShelfDatabaseUpgradesVersionFive()
         QSqlQuery query(verify);
         QVERIFY(query.exec(QStringLiteral("PRAGMA user_version")));
         QVERIFY(query.next());
-        QCOMPARE(query.value(0).toInt(), 7);
+        QCOMPARE(query.value(0).toInt(), 8);
         verify.close();
     }
     QSqlDatabase::removeDatabase(verifyConnection);
+}
+
+void UnitTests::fileShelfDatabaseVersionSevenPreservesExistingItems()
+{
+    QTemporaryDir temporary(g_testData->filePath(QStringLiteral("shelf-v7-upgrade-XXXXXX")));
+    QVERIFY(temporary.isValid());
+    const QString path = QDir(temporary.path()).filePath(QStringLiteral("shelf.db"));
+    const QString source = QDir(temporary.path()).filePath(QStringLiteral("existing résumé_日本語.txt"));
+    QFile file(source);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write(QByteArrayLiteral("existing")), qint64(8));
+    file.close();
+    const QString expectedId = QStringLiteral("existing-stable-shelf-id");
+    {
+        ApplicationDatabase seed(path);
+        QVERIFY2(seed.initialize(), qPrintable(seed.lastError()));
+        FileShelfRecord record;
+        record.id = expectedId;
+        record.path = source;
+        record.displayName = QFileInfo(source).fileName();
+        record.itemType = QStringLiteral("file");
+        int inserted = 0;
+        QVERIFY2(seed.addFileShelfEntries({record}, &inserted), qPrintable(seed.lastError()));
+        QCOMPARE(inserted, 1);
+    }
+    const QString connection = QStringLiteral("shelf-v7-fixture");
+    {
+        QSqlDatabase fixture = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connection);
+        fixture.setDatabaseName(path);
+        QVERIFY(fixture.open());
+        QSqlQuery query(fixture);
+        QVERIFY(query.exec(QStringLiteral("DROP TABLE file_shelf_collection_items")));
+        QVERIFY(query.exec(QStringLiteral("DROP TABLE file_shelf_collections")));
+        QVERIFY(query.exec(QStringLiteral("ALTER TABLE file_shelf DROP COLUMN favorite")));
+        QVERIFY(query.exec(QStringLiteral("PRAGMA user_version=7")));
+        fixture.close();
+    }
+    QSqlDatabase::removeDatabase(connection);
+    ApplicationDatabase upgraded(path);
+    QVERIFY2(upgraded.initialize(), qPrintable(upgraded.lastError()));
+    const QVector<FileShelfRecord> entries = upgraded.fileShelfEntries();
+    QCOMPARE(entries.size(), 1);
+    QCOMPARE(entries.first().id, expectedId);
+    QCOMPARE(entries.first().path, QDir::cleanPath(QFileInfo(source).absoluteFilePath()));
+    QVERIFY(!entries.first().favorite);
+    QVERIFY(entries.first().collectionIds.isEmpty());
+    QVERIFY(upgraded.fileShelfCollections().isEmpty());
+}
+
+void UnitTests::fileShelfCollectionsFavoritesAndRepairPreserveOrganization()
+{
+    QTemporaryDir workspace(g_testData->filePath(QStringLiteral("shelf-collections-repair-XXXXXX")));
+    QVERIFY(workspace.isValid());
+    auto writeFile = [](const QString &path) {
+        QFile file(path);
+        return file.open(QIODevice::WriteOnly) && file.write(QByteArrayLiteral("reference")) == 9;
+    };
+    const QString unicodeFolder = QDir(workspace.path()).filePath(QStringLiteral("資料目录"));
+    QVERIFY(QDir().mkpath(unicodeFolder));
+    const QString original = QDir(unicodeFolder).filePath(QStringLiteral("résumé_日本語.txt"));
+    const QString existing = QDir(workspace.path()).filePath(QStringLiteral("already-on-shelf.txt"));
+    const QString repaired = QDir(workspace.path()).filePath(QStringLiteral("移動済み résumé_日本語.txt"));
+    QVERIFY(writeFile(original));
+    QVERIFY(writeFile(existing));
+    QVERIFY(writeFile(repaired));
+
+    SettingsManager settings;
+    ProfileManager profiles(&settings);
+    ScreenshotManager screenshots(&profiles, &settings);
+    FileShelfManager shelf(screenshots.database(), screenshots.clipboardService());
+    const QString research = shelf.createCollection(QStringLiteral("研究資料"));
+    const QString personal = shelf.createCollection(QStringLiteral("個人"));
+    QVERIFY(!research.isEmpty());
+    QVERIFY(!personal.isEmpty());
+    QVERIFY(shelf.addPathsToCollection({original, existing}, research));
+    QString originalId, existingId;
+    for (int row = 0; row < shelf.rowCount(); ++row) {
+        const QString path = shelf.data(shelf.index(row, 0), FileShelfManager::PathRole).toString();
+        if (path == original) originalId = shelf.data(shelf.index(row, 0), FileShelfManager::IdRole).toString();
+        if (path == existing) existingId = shelf.data(shelf.index(row, 0), FileShelfManager::IdRole).toString();
+    }
+    QVERIFY(!originalId.isEmpty());
+    QVERIFY(!existingId.isEmpty());
+    QVERIFY(shelf.setEntryFavorite(originalId, true));
+    QVERIFY(shelf.addPathsToCollection({original}, personal));
+    QCOMPARE(screenshots.database()->fileShelfEntries().size(), 2);
+    QVERIFY(screenshots.database()->setFileShelfCollectionFavorite(research, true));
+    QVERIFY(shelf.renameCollection(personal, QStringLiteral("私人")));
+    QString disposable = shelf.createCollection(QStringLiteral("Temporary"));
+    QVERIFY(!disposable.isEmpty());
+    QVERIFY(screenshots.database()->setFileShelfCollectionMembership({existingId}, disposable, true));
+    QVERIFY(shelf.deleteCollection(disposable));
+    QVERIFY(QFileInfo::exists(existing));
+    QCOMPARE(screenshots.database()->fileShelfEntries().size(), 2);
+    shelf.refresh();
+    shelf.setSearchText(QStringLiteral("RÉSUMÉ"));
+    QCOMPARE(shelf.rowCount(), 1);
+    shelf.setSearchText(QStringLiteral("資料目录"));
+    QCOMPARE(shelf.rowCount(), 1);
+    shelf.setSearchText(QString());
+    shelf.setCollectionFilter(research);
+    QCOMPARE(shelf.rowCount(), 2);
+    shelf.setFavoritesOnly(true);
+    QCOMPARE(shelf.rowCount(), 1);
+    shelf.setFavoritesOnly(false);
+    shelf.setCollectionFilter(QString());
+    shelf.setSearchText(QString());
+
+    QVERIFY(QFile::remove(original));
+    shelf.refresh();
+    QVERIFY(!shelf.repairEntry(originalId, existing));
+    QVERIFY(shelf.message().contains(QStringLiteral("already exists"), Qt::CaseInsensitive));
+    QCOMPARE(screenshots.database()->fileShelfEntries().size(), 2);
+    bool existingStillPresent = false, sourceStillOrganized = false, existingStillOrganized = false;
+    for (const FileShelfRecord &record : screenshots.database()->fileShelfEntries()) {
+        if (record.id == originalId)
+            sourceStillOrganized = record.favorite && record.collectionIds.contains(research) && record.collectionIds.contains(personal);
+        if (record.id == existingId) {
+            existingStillPresent = true;
+            existingStillOrganized = record.collectionIds.contains(research);
+        }
+    }
+    QVERIFY(existingStillPresent);
+    QVERIFY(sourceStillOrganized);
+    QVERIFY(existingStillOrganized);
+    QVERIFY(!QFileInfo::exists(original));
+
+    QVERIFY(shelf.repairEntry(originalId, repaired));
+    QVector<FileShelfRecord> records = screenshots.database()->fileShelfEntries();
+    QCOMPARE(records.size(), 2);
+    bool preserved = false;
+    for (const FileShelfRecord &record : records) {
+        if (record.id == originalId) {
+            preserved = true;
+            QCOMPARE(record.path, QDir::cleanPath(QFileInfo(repaired).absoluteFilePath()));
+            QVERIFY(record.favorite);
+            QVERIFY(record.collectionIds.contains(research));
+            QVERIFY(record.collectionIds.contains(personal));
+        }
+        if (record.id == existingId)
+            QCOMPARE(record.path, QDir::cleanPath(QFileInfo(existing).absoluteFilePath()));
+    }
+    QVERIFY(preserved);
+    QVERIFY(screenshots.database()->fileShelfCollections().first().favorite);
+    QCOMPARE(shelf.createCollection(QStringLiteral("研究資料")), QString());
+    QVERIFY(shelf.messageIsError());
+}
+
+void UnitTests::fileShelfQuickAddUsesCurrentClipboardSnapshot()
+{
+    QTemporaryDir workspace(g_testData->filePath(QStringLiteral("shelf-quick-add-XXXXXX")));
+    QVERIFY(workspace.isValid());
+    const QString first = QDir(workspace.path()).filePath(QStringLiteral("第一 資料.txt"));
+    const QString second = QDir(workspace.path()).filePath(QStringLiteral("résumé_日本語.pdf"));
+    for (const QString &path : {first, second}) {
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        QCOMPARE(file.write(QByteArrayLiteral("clip")), qint64(4));
+    }
+    SettingsManager settings;
+    ProfileManager profiles(&settings);
+    ScreenshotManager screenshots(&profiles, &settings);
+    FileShelfManager shelf(screenshots.database(), screenshots.clipboardService());
+
+    QApplication::clipboard()->setText(QStringLiteral("not a file reference"));
+    QVERIFY(!shelf.beginQuickAdd());
+    QCOMPARE(shelf.pendingQuickAddCount(), 0);
+    QVERIFY(shelf.message().contains(QStringLiteral("no file"), Qt::CaseInsensitive));
+
+    const QString collection = shelf.createCollection(QStringLiteral("Clipboard batch"));
+    QVERIFY(!collection.isEmpty());
+    auto *mime = new QMimeData;
+    const QList<QUrl> clipboardUrls{QUrl::fromLocalFile(first), QUrl::fromLocalFile(second)};
+    mime->setUrls(clipboardUrls);
+    QApplication::clipboard()->setMimeData(mime);
+    QVERIFY(shelf.beginQuickAdd());
+    QCOMPARE(shelf.pendingQuickAddCount(), 2);
+    QVERIFY(shelf.quickAddToCollection(collection));
+    QCOMPARE(shelf.pendingQuickAddCount(), 0);
+    QCOMPARE(shelf.rowCount(), 2);
+    QCOMPARE(QApplication::clipboard()->mimeData()->urls(), clipboardUrls);
+    for (int row = 0; row < shelf.rowCount(); ++row) {
+        const QString path = shelf.data(shelf.index(row, 0), FileShelfManager::PathRole).toString();
+        QVERIFY(path == QDir::cleanPath(QFileInfo(first).absoluteFilePath()) ||
+                path == QDir::cleanPath(QFileInfo(second).absoluteFilePath()));
+        QVERIFY(shelf.data(shelf.index(row, 0), FileShelfManager::CollectionIdsRole).toStringList().contains(collection));
+    }
+
+    const QString missing = QDir(workspace.path()).filePath(QStringLiteral("missing résumé.txt"));
+    auto *mixed = new QMimeData;
+    mixed->setUrls({QUrl::fromLocalFile(first), QUrl::fromLocalFile(missing), QUrl(QStringLiteral("https://example.com/not-local"))});
+    QApplication::clipboard()->setMimeData(mixed);
+    QVERIFY(shelf.beginQuickAdd());
+    QVERIFY(!shelf.quickAddToCollection(collection));
+    QVERIFY(shelf.message().contains(QStringLiteral("missing résumé.txt")));
+    QVERIFY(shelf.message().contains(QStringLiteral("https://example.com/not-local")));
+    QCOMPARE(QApplication::clipboard()->mimeData()->urls(), mixed->urls());
+    shelf.cancelQuickAdd();
+}
+
+void UnitTests::fileShelfQuickAddShortcutDistinguishesNumpadAndConflicts()
+{
+    ApplicationController controller;
+    const int keypad = int(Qt::AltModifier | Qt::KeypadModifier);
+    QVERIFY(HotkeyManager::isSupportedKey(Qt::Key_5, keypad));
+    QVERIFY(HotkeyManager::isSupportedKey(Qt::Key_5, int(Qt::AltModifier)));
+    QCOMPARE(HotkeyUtils::formatShortcut(Qt::Key_5, keypad), QStringLiteral("Alt+Numpad5"));
+    QVERIFY(HotkeyUtils::formatShortcut(Qt::Key_5, keypad) !=
+            HotkeyUtils::formatShortcut(Qt::Key_5, int(Qt::AltModifier)));
+    QCOMPARE(controller.settings()->fileShelfQuickAddShortcutKey(), int(Qt::Key_5));
+    QCOMPARE(controller.settings()->fileShelfQuickAddShortcutModifiers(), keypad);
+    QVERIFY(controller.setFileShelfShortcut(Qt::Key_5, int(Qt::AltModifier)));
+    QVERIFY(controller.setFileShelfQuickAddShortcut(Qt::Key_5, keypad));
+    QVERIFY(!controller.setClipboardHistoryShortcut(Qt::Key_5, keypad));
+    QVERIFY(!controller.setFileShelfShortcut(Qt::Key_5, keypad));
+    const int existingHotkeyModifiers = int(Qt::ControlModifier | Qt::ShiftModifier);
+    QVERIFY(controller.addHotkey(Qt::Key_F8, existingHotkeyModifiers, QStringLiteral("saveScreenshot"), QString(), QString()));
+    QVERIFY(!controller.setFileShelfQuickAddShortcut(Qt::Key_F8, existingHotkeyModifiers));
+    QVERIFY(controller.setFileShelfQuickAddShortcut(Qt::Key_9, keypad));
+    QCOMPARE(controller.settings()->fileShelfQuickAddShortcutKey(), int(Qt::Key_9));
 }
 
 void UnitTests::fileShelfPersistsUnicodeReferencesDeduplicatesAndMarksMissing()

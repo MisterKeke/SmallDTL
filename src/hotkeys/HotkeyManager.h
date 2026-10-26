@@ -18,6 +18,7 @@ class HotkeyManager final : public QAbstractListModel, public QAbstractNativeEve
     Q_PROPERTY(bool globalScope READ globalScope WRITE setGlobalScope NOTIFY assignmentsChanged)
     Q_PROPERTY(QString clipboardHistoryStatus READ clipboardHistoryStatus NOTIFY registrationStatusesChanged)
     Q_PROPERTY(QString fileShelfStatus READ fileShelfStatus NOTIFY registrationStatusesChanged)
+    Q_PROPERTY(QString fileShelfQuickAddStatus READ fileShelfQuickAddStatus NOTIFY registrationStatusesChanged)
 
 public:
     enum Role {
@@ -48,6 +49,7 @@ public:
     Q_INVOKABLE QString activationStatus(const QString &profileId) const;
     QString clipboardHistoryStatus() const;
     QString fileShelfStatus() const;
+    QString fileShelfQuickAddStatus() const;
     bool isRegistered(const QString &id) const;
     int registeredCount() const { return m_bindingByNativeId.size(); }
     int nativeIdFor(const QString &id) const;
@@ -67,6 +69,7 @@ signals:
                          const QString &sequenceId, const QString &layoutId);
     void clipboardHistoryTriggered();
     void fileShelfTriggered();
+    void fileShelfQuickAddTriggered();
     void hotkeyTriggered(const QString &description);
     void registrationFailed(const QString &message);
 
@@ -91,7 +94,7 @@ private:
     void refreshRegistrations();
     void unregisterAll();
     bool registerBinding(const Binding &binding, int nativeId);
-    static bool toWindowsKey(int qtKey, quint32 *virtualKey);
+    static bool toWindowsKey(int qtKey, int qtModifiers, quint32 *virtualKey);
     static quint32 toWindowsModifiers(int qtModifiers);
 
     ProfileManager *m_profiles = nullptr;

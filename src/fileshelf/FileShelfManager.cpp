@@ -10,6 +10,7 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QInputDialog>
 #include <QGuiApplication>
 #include <QMimeData>
 #include <QDesktopServices>
@@ -616,7 +617,7 @@ FileShelfManager::FileShelfManager(ApplicationDatabase *database, ClipboardServi
         m_metadataBusy = false;
         if (result.revision != m_metadataRevision) { refreshMetadata(); return; }
         m_availability = result.values;
-        if (!m_records.isEmpty()) emit dataChanged(index(0), index(m_records.size()-1), {SizeBytesRole, AvailableRole});
+        if (!m_visibleRows.isEmpty()) emit dataChanged(index(0), index(m_visibleRows.size()-1), {SizeBytesRole, AvailableRole});
     });
     connect(&m_transferWatcher, &QFutureWatcher<TransferSummary>::finished, this, [this] {
         if (!m_busy) return; // Shutdown may already have applied the result.
@@ -689,14 +690,14 @@ void FileShelfManager::refreshMetadata()
 
 int FileShelfManager::rowCount(const QModelIndex &parent) const
 {
-    return parent.isValid() ? 0 : m_records.size();
+    return parent.isValid() ? 0 : m_visibleRows.size();
 }
 
 QVariant FileShelfManager::data(const QModelIndex &index, int role) const
 {
-    if (!index.isValid() || index.row() < 0 || index.row() >= m_records.size())
+    if (!index.isValid() || index.row() < 0 || index.row() >= m_visibleRows.size())
         return {};
-    const FileShelfRecord &record = m_records.at(index.row());
+    const FileShelfRecord &record = m_records.at(m_visibleRows.at(index.row()));
     const auto metadata = m_availability.value(record.id, {false, record.sizeBytes});
     switch (role) {
     case IdRole: return record.id;
@@ -711,6 +712,17 @@ QVariant FileShelfManager::data(const QModelIndex &index, int role) const
     }
     case SizeBytesRole: return metadata.size;
     case AvailableRole: return metadata.available;
+    case FavoriteRole: return record.favorite;
+    case CollectionIdsRole: return record.collectionIds;
+    case CollectionNamesRole: {
+        QStringList names;
+        for (const QVariant &value : m_collectionValues) {
+            const QVariantMap collection = value.toMap();
+            if (record.collectionIds.contains(collection.value(QStringLiteral("id")).toString()))
+                names.append(collection.value(QStringLiteral("name")).toString());
+        }
+        return names.join(QStringLiteral(" · "));
+    }
     default: return {};
     }
 }
@@ -719,14 +731,14 @@ QHash<int, QByteArray> FileShelfManager::roleNames() const
 {
     return {{IdRole, "entryId"}, {PathRole, "path"}, {DisplayNameRole, "displayName"},
             {SourceFolderRole, "sourceFolder"}, {ItemTypeRole, "itemType"},
-            {FileTypeRole, "fileType"}, {SizeBytesRole, "sizeBytes"}, {AvailableRole, "available"}};
+            {FileTypeRole, "fileType"}, {SizeBytesRole, "sizeBytes"}, {AvailableRole, "available"},
+            {FavoriteRole, "favorite"}, {CollectionIdsRole, "collectionIds"}, {CollectionNamesRole, "collectionNames"}};
 }
 
 void FileShelfManager::refresh()
 {
     if (!m_database || !m_database->isReady())
         return;
-    beginResetModel();
     m_records = m_database->fileShelfEntries();
     QSet<QString> currentIds;
     for (const FileShelfRecord &record : m_records)
@@ -736,14 +748,96 @@ void FileShelfManager::refresh()
     }
     if (!currentIds.contains(m_anchorId))
         m_anchorId.clear();
-    endResetModel();
-    emit countChanged();
+    rebuildView();
+    refreshCollections();
     emit selectionChanged();
     ++m_metadataRevision;
     if (!m_metadataBusy) refreshMetadata();
 }
 
+QVariantList FileShelfManager::collections() const
+{
+    return m_collectionValues;
+}
+
+void FileShelfManager::refreshCollections()
+{
+    m_collectionValues.clear();
+    if (m_database && m_database->isReady()) {
+        for (const FileShelfCollection &collection : m_database->fileShelfCollections()) {
+            m_collectionValues.append(QVariantMap{{QStringLiteral("id"), collection.id},
+                                                  {QStringLiteral("name"), collection.name},
+                                                  {QStringLiteral("favorite"), collection.favorite},
+                                                  {QStringLiteral("lastUsedAt"), collection.lastUsedAt}});
+        }
+    }
+    emit collectionsChanged();
+    if (!m_visibleRows.isEmpty())
+        emit dataChanged(index(0), index(m_visibleRows.size() - 1), {CollectionNamesRole});
+}
+
+void FileShelfManager::rebuildView()
+{
+    beginResetModel();
+    m_visibleRows.clear();
+    const QString needle = m_searchText.trimmed().toCaseFolded();
+    for (int row = 0; row < m_records.size(); ++row) {
+        const FileShelfRecord &record = m_records.at(row);
+        if (m_favoritesOnly && !record.favorite)
+            continue;
+        if (!m_collectionFilter.isEmpty() && !record.collectionIds.contains(m_collectionFilter))
+            continue;
+        if (!needle.isEmpty() && !record.displayName.toCaseFolded().contains(needle) &&
+            !record.path.toCaseFolded().contains(needle))
+            continue;
+        m_visibleRows.append(row);
+    }
+    endResetModel();
+    emit countChanged();
+    emit viewChanged();
+}
+
+void FileShelfManager::setCollectionFilter(const QString &collectionId)
+{
+    if (m_collectionFilter == collectionId && !m_favoritesOnly)
+        return;
+    if (!collectionId.isEmpty() && m_database && m_database->touchFileShelfCollection(collectionId))
+        refreshCollections();
+    m_collectionFilter = collectionId;
+    m_favoritesOnly = false;
+    rebuildView();
+}
+
+void FileShelfManager::setSearchText(const QString &text)
+{
+    if (m_searchText == text)
+        return;
+    m_searchText = text;
+    rebuildView();
+}
+
+void FileShelfManager::setFavoritesOnly(bool favoritesOnly)
+{
+    if (m_favoritesOnly == favoritesOnly && (!favoritesOnly || m_collectionFilter.isEmpty()))
+        return;
+    m_favoritesOnly = favoritesOnly;
+    if (favoritesOnly)
+        m_collectionFilter.clear();
+    rebuildView();
+}
+
+int FileShelfManager::viewRowForId(const QString &id) const
+{
+    const int recordRow = rowForId(id);
+    return m_visibleRows.indexOf(recordRow);
+}
+
 bool FileShelfManager::addPaths(const QStringList &paths)
+{
+    return addPathsToCollection(paths, {});
+}
+
+bool FileShelfManager::addPathsToCollection(const QStringList &paths, const QString &collectionId)
 {
     if (!m_database || !m_database->isReady()) {
         setMessage(QStringLiteral("The file shelf database is unavailable."), true);
@@ -772,7 +866,7 @@ bool FileShelfManager::addPaths(const QStringList &paths)
     }
     int inserted = 0;
     int duplicates = 0;
-    if (!m_database->addFileShelfEntries(records, &inserted, &duplicates)) {
+    if (!m_database->addFileShelfEntries(records, &inserted, &duplicates, collectionId)) {
         setMessage(m_database->lastError(), true);
         return false;
     }
@@ -782,6 +876,191 @@ bool FileShelfManager::addPaths(const QStringList &paths)
         message += QStringLiteral(" %1 path(s) failed: %2").arg(failures.size()).arg(failures.join(QStringLiteral("; ")));
     setMessage(message, !failures.isEmpty());
     return failures.isEmpty();
+}
+
+QString FileShelfManager::createCollection(const QString &name)
+{
+    const QString id = m_database ? m_database->createFileShelfCollection(name) : QString();
+    if (id.isEmpty()) {
+        setMessage(m_database ? m_database->lastError() : QStringLiteral("The file shelf database is unavailable."), true);
+        return {};
+    }
+    refreshCollections();
+    setMessage(QStringLiteral("Created collection “%1”.").arg(name.trimmed()));
+    return id;
+}
+
+bool FileShelfManager::renameCollection(const QString &id, const QString &name)
+{
+    if (!m_database || !m_database->renameFileShelfCollection(id, name)) {
+        setMessage(m_database ? m_database->lastError() : QStringLiteral("The file shelf database is unavailable."), true);
+        return false;
+    }
+    refreshCollections();
+    setMessage(QStringLiteral("Collection renamed."));
+    return true;
+}
+
+bool FileShelfManager::deleteCollection(const QString &id)
+{
+    if (!m_database || !m_database->deleteFileShelfCollection(id)) {
+        setMessage(m_database ? m_database->lastError() : QStringLiteral("The file shelf database is unavailable."), true);
+        return false;
+    }
+    if (m_collectionFilter == id)
+        m_collectionFilter.clear();
+    refreshCollections();
+    rebuildView();
+    setMessage(QStringLiteral("Collection deleted. Shelf items and source files were left in place."));
+    return true;
+}
+
+bool FileShelfManager::setCollectionFavorite(const QString &id, bool favorite)
+{
+    if (!m_database || !m_database->setFileShelfCollectionFavorite(id, favorite)) {
+        setMessage(m_database ? m_database->lastError() : QStringLiteral("The file shelf database is unavailable."), true);
+        return false;
+    }
+    refreshCollections();
+    return true;
+}
+
+bool FileShelfManager::setEntryFavorite(const QString &id, bool favorite)
+{
+    if (!m_database || !m_database->setFileShelfFavorite(id, favorite)) {
+        setMessage(m_database ? m_database->lastError() : QStringLiteral("The file shelf database is unavailable."), true);
+        return false;
+    }
+    refresh();
+    return true;
+}
+
+bool FileShelfManager::setSelectedCollectionMembership(const QString &collectionId, bool assigned)
+{
+    if (collectionId.isEmpty()) {
+        setMessage(QStringLiteral("Choose a collection first."), true);
+        return false;
+    }
+    if (!m_database || !m_database->setFileShelfCollectionMembership(selectedIds(), collectionId, assigned)) {
+        setMessage(m_database ? m_database->lastError() : QStringLiteral("The file shelf database is unavailable."), true);
+        return false;
+    }
+    m_database->touchFileShelfCollection(collectionId);
+    refresh();
+    refreshCollections();
+    setMessage(assigned ? QStringLiteral("Added selected references to the collection.")
+                        : QStringLiteral("Removed selected references from the collection."));
+    return true;
+}
+
+void FileShelfManager::locateEntryReplacement(const QString &id)
+{
+    const int row = rowForId(id);
+    if (row < 0)
+        return;
+    const FileShelfRecord &record = m_records.at(row);
+    const QString path = record.itemType == QStringLiteral("folder")
+        ? QFileDialog::getExistingDirectory(nullptr, QStringLiteral("Locate moved folder"), record.sourceFolder,
+                                            QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks)
+        : QFileDialog::getOpenFileName(nullptr, QStringLiteral("Locate moved file"), record.sourceFolder);
+    if (!path.isEmpty())
+        repairEntry(id, path);
+}
+
+bool FileShelfManager::repairEntry(const QString &id, const QString &replacementPath)
+{
+    const int row = rowForId(id);
+    if (row < 0) {
+        setMessage(QStringLiteral("The shelf item no longer exists."), true);
+        return false;
+    }
+    const QFileInfo replacement(replacementPath);
+    const FileShelfRecord &record = m_records.at(row);
+    if (!replacement.exists() || (!replacement.isFile() && !replacement.isDir()) ||
+        (record.itemType == QStringLiteral("folder")) != replacement.isDir()) {
+        setMessage(QStringLiteral("Choose an available %1 as the replacement.")
+                       .arg(record.itemType == QStringLiteral("folder") ? QStringLiteral("folder") : QStringLiteral("file")), true);
+        return false;
+    }
+    if (!m_database || !m_database->updateFileShelfPath(id, replacementPath)) {
+        setMessage(m_database ? m_database->lastError() : QStringLiteral("The file shelf database is unavailable."), true);
+        return false;
+    }
+    refresh();
+    setMessage(QStringLiteral("Shelf reference repaired. Its ID, favorites, and collection memberships were preserved."));
+    return true;
+}
+
+bool FileShelfManager::beginQuickAdd()
+{
+    const ClipboardSnapshot snapshot = m_clipboard ? m_clipboard->currentSnapshot() : ClipboardSnapshot();
+    if (snapshot.type != QStringLiteral("files") || snapshot.urls.isEmpty()) {
+        setMessage(QStringLiteral("The current clipboard contains no file or folder references."), true);
+        return false;
+    }
+    m_pendingQuickUrls = snapshot.urls;
+    bool localReference = false;
+    QStringList unsupported;
+    for (const QUrl &url : m_pendingQuickUrls) {
+        QString path, error;
+        if (LocalFileUrl::toPath(QVariant::fromValue(url), &path, &error))
+            localReference = true;
+        else
+            unsupported.append(url.toString());
+    }
+    emit quickAddChanged();
+    if (!localReference) {
+        m_pendingQuickUrls.clear();
+        emit quickAddChanged();
+        setMessage(QStringLiteral("Clipboard items are not local file or folder URLs: %1")
+                       .arg(unsupported.join(QStringLiteral("; "))), true);
+        return false;
+    }
+    if (!unsupported.isEmpty())
+        setMessage(QStringLiteral("Some clipboard items are unsupported and will be reported when added: %1")
+                       .arg(unsupported.join(QStringLiteral("; "))), true);
+    else
+        setMessage(QStringLiteral("Choose a collection for %1 clipboard reference(s).")
+                       .arg(m_pendingQuickUrls.size()));
+    return true;
+}
+
+bool FileShelfManager::quickAddToCollection(const QString &collectionId)
+{
+    if (m_pendingQuickUrls.isEmpty()) {
+        setMessage(QStringLiteral("There are no clipboard file references waiting to add."), true);
+        return false;
+    }
+    QStringList paths;
+    QStringList unsupported;
+    for (const QUrl &url : m_pendingQuickUrls) {
+        QString path, error;
+        if (LocalFileUrl::toPath(QVariant::fromValue(url), &path, &error))
+            paths.append(path);
+        else
+            unsupported.append(QStringLiteral("%1: %2").arg(url.toString(), error));
+    }
+    const bool pathsAdded = addPathsToCollection(paths, collectionId);
+    if (!unsupported.isEmpty()) {
+        QString message = m_message;
+        if (!message.isEmpty()) message += QLatin1Char('\n');
+        message += QStringLiteral("Unsupported clipboard item(s): %1").arg(unsupported.join(QStringLiteral("; ")));
+        setMessage(message, true);
+        return false;
+    }
+    if (pathsAdded) {
+        m_pendingQuickUrls.clear();
+        emit quickAddChanged();
+    }
+    return pathsAdded;
+}
+
+void FileShelfManager::cancelQuickAdd()
+{
+    if (m_pendingQuickUrls.isEmpty())
+        return;
+    m_pendingQuickUrls.clear();
+    emit quickAddChanged();
 }
 
 bool FileShelfManager::addFileUrls(const QVariantList &urls)
@@ -837,15 +1116,15 @@ void FileShelfManager::toggleSelection(const QString &id)
 
 void FileShelfManager::clickItem(const QString &id, bool control, bool shift)
 {
-    const int row = rowForId(id);
+    const int row = viewRowForId(id);
     if (row < 0)
         return;
-    if (shift && !m_anchorId.isEmpty() && rowForId(m_anchorId) >= 0) {
-        const int anchor = rowForId(m_anchorId);
+    if (shift && !m_anchorId.isEmpty() && viewRowForId(m_anchorId) >= 0) {
+        const int anchor = viewRowForId(m_anchorId);
         if (!control)
             m_selected.clear();
         for (int current = qMin(anchor, row); current <= qMax(anchor, row); ++current)
-            m_selected.insert(m_records.at(current).id);
+            m_selected.insert(m_records.at(m_visibleRows.at(current)).id);
     } else if (control) {
         if (m_selected.contains(id)) m_selected.remove(id); else m_selected.insert(id);
         m_anchorId = id;
@@ -859,10 +1138,10 @@ void FileShelfManager::clickItem(const QString &id, bool control, bool shift)
 void FileShelfManager::selectAll()
 {
     m_selected.clear();
-    for (const FileShelfRecord &record : m_records)
-        m_selected.insert(record.id);
-    if (!m_records.isEmpty())
-        m_anchorId = m_records.first().id;
+    for (int row : m_visibleRows)
+        m_selected.insert(m_records.at(row).id);
+    if (!m_visibleRows.isEmpty())
+        m_anchorId = m_records.at(m_visibleRows.first()).id;
     emit selectionChanged();
 }
 

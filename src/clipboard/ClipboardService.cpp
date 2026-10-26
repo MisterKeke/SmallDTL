@@ -92,6 +92,27 @@ QImage ClipboardService::currentImage() const
     return m_clipboard ? m_clipboard->image() : QImage();
 }
 
+ClipboardSnapshot ClipboardService::currentSnapshot() const
+{
+    ClipboardSnapshot snapshot;
+    if (!m_clipboard || !m_clipboard->mimeData())
+        return snapshot;
+    const QMimeData *mime = m_clipboard->mimeData();
+    snapshot.sensitive = isSensitiveMimeData(mime);
+    if (snapshot.sensitive)
+        return snapshot;
+    if (mime->hasUrls()) {
+        snapshot.type = QStringLiteral("files");
+        snapshot.urls = mime->urls();
+    } else if (mime->hasImage()) {
+        snapshot.type = QStringLiteral("image");
+    } else if (mime->hasText()) {
+        snapshot.type = QStringLiteral("text");
+        snapshot.text = mime->text();
+    }
+    return snapshot;
+}
+
 void ClipboardService::readClipboardChange()
 {
     if (!m_clipboard || !m_clipboard->mimeData()) {

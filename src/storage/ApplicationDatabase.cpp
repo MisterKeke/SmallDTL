@@ -104,10 +104,10 @@ bool ApplicationDatabase::migrateSchema()
     if (!versionQuery.exec(QStringLiteral("PRAGMA user_version")) || !versionQuery.next())
         return transactionError(QStringLiteral("Could not read screenshot database schema version"), versionQuery.lastError().text());
     int version = versionQuery.value(0).toInt();
-    if (version > 7)
+    if (version > 8)
         return transactionError(QStringLiteral("Screenshot database was created by a newer SmallDTL version"));
 
-    while (version < 7) {
+    while (version < 8) {
         if (!m_database->transaction())
             return transactionError(QStringLiteral("Could not start screenshot database migration"), m_database->lastError().text());
         QSqlQuery query(*m_database);
@@ -219,6 +219,23 @@ bool ApplicationDatabase::migrateSchema()
             if (ok) ok = query.exec(QStringLiteral("CREATE UNIQUE INDEX screenshots_path_key_idx ON screenshots(path_key)")) &&
                          query.exec(QStringLiteral("PRAGMA user_version = 7"));
             if (ok) version = 7;
+        } else if (version == 7) {
+            ok = query.exec(QStringLiteral("ALTER TABLE file_shelf ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0 CHECK(favorite IN (0,1))")) &&
+                 query.exec(QStringLiteral("CREATE TABLE file_shelf_collections ("
+                                           "id TEXT PRIMARY KEY NOT NULL,"
+                                           "name TEXT NOT NULL COLLATE NOCASE UNIQUE,"
+                                           "favorite INTEGER NOT NULL DEFAULT 0 CHECK(favorite IN (0,1)),"
+                                           "last_used_at TEXT NOT NULL DEFAULT ''"
+                                           ")")) &&
+                 query.exec(QStringLiteral("CREATE TABLE file_shelf_collection_items ("
+                                           "entry_id TEXT NOT NULL REFERENCES file_shelf(id) ON DELETE CASCADE,"
+                                           "collection_id TEXT NOT NULL REFERENCES file_shelf_collections(id) ON DELETE CASCADE,"
+                                           "PRIMARY KEY(entry_id, collection_id)"
+                                           ")")) &&
+                 query.exec(QStringLiteral("CREATE INDEX file_shelf_collection_items_collection_idx ON file_shelf_collection_items(collection_id, entry_id)")) &&
+                 query.exec(QStringLiteral("PRAGMA user_version = 8"));
+            if (ok)
+                version = 8;
         }
         if (!ok) {
             const QString detail = query.lastError().text();

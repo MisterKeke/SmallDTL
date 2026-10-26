@@ -93,6 +93,7 @@ ApplicationController::ApplicationController(QObject *parent)
     connect(&m_settings,&SettingsManager::errorOccurred,this,[this](const QString &message){setStatus(message,true,true);});
     connect(&m_hotkeys,&HotkeyManager::registrationFailed,this,[this](const QString &message){setStatus(message,true,true);});
     connect(&m_hotkeys, &HotkeyManager::fileShelfTriggered, this, &ApplicationController::toggleFileShelfPopup);
+    connect(&m_hotkeys, &HotkeyManager::fileShelfQuickAddTriggered, this, &ApplicationController::startFileShelfQuickAdd);
     connect(QCoreApplication::instance(),&QCoreApplication::aboutToQuit,this,[this]{m_actionRunner.cancel();m_hotkeys.setRecording(true);m_fileShelf.finishTransfer();m_clipboardHistory.shutdown();m_screenshots.finishPendingSaves();});
     const QStringList startup=m_settings.startupMessages()+m_profiles.startupMessages()+m_actions.startupMessages();
     if(!startup.isEmpty())QTimer::singleShot(0,this,[this,startup]{setStatus(startup.join(QLatin1Char('\n')),true,true);});
@@ -316,6 +317,11 @@ bool ApplicationController::setClipboardHistoryShortcut(int key, int modifiers)
         setStatus(QStringLiteral("That shortcut is already assigned to the file shelf."), true);
         return false;
     }
+    if (key != 0 && key == m_settings.fileShelfQuickAddShortcutKey() &&
+        modifiers == m_settings.fileShelfQuickAddShortcutModifiers()) {
+        setStatus(QStringLiteral("That shortcut is already assigned to File Shelf quick-add."), true);
+        return false;
+    }
     if (key != 0) {
         auto conflicts = [key, modifiers](const QVector<HotkeyAssignment> &assignments) {
             for (const HotkeyAssignment &assignment : assignments)
@@ -354,6 +360,25 @@ void ApplicationController::setFileShelfPopupVisible(bool visible)
     emit fileShelfPopupVisibleChanged();
 }
 
+void ApplicationController::startFileShelfQuickAdd()
+{
+    if (!m_fileShelf.beginQuickAdd()) {
+        setStatus(m_fileShelf.message(), m_fileShelf.messageIsError(), true);
+        return;
+    }
+    setFileShelfQuickAddPopupVisible(true);
+}
+
+void ApplicationController::setFileShelfQuickAddPopupVisible(bool visible)
+{
+    if (m_fileShelfQuickAddPopupVisible == visible)
+        return;
+    m_fileShelfQuickAddPopupVisible = visible;
+    if (!visible)
+        m_fileShelf.cancelQuickAdd();
+    emit fileShelfQuickAddPopupVisibleChanged();
+}
+
 bool ApplicationController::setFileShelfShortcut(int key, int modifiers)
 {
     if (key != 0 && isReservedPasteShortcut(key, modifiers)) {
@@ -362,6 +387,11 @@ bool ApplicationController::setFileShelfShortcut(int key, int modifiers)
     }
     if (key != 0 && !HotkeyManager::isSupportedKey(key, modifiers)) {
         setStatus(QStringLiteral("Choose a supported shortcut with at least one modifier."), true);
+        return false;
+    }
+    if (key != 0 && key == m_settings.fileShelfQuickAddShortcutKey() &&
+        modifiers == m_settings.fileShelfQuickAddShortcutModifiers()) {
+        setStatus(QStringLiteral("That shortcut is already assigned to File Shelf quick-add."), true);
         return false;
     }
     if (key != 0) {
@@ -386,6 +416,28 @@ bool ApplicationController::setFileShelfShortcut(int key, int modifiers)
     if (!m_settings.setFileShelfShortcut(key, modifiers))
         return false;
     return true;
+}
+
+bool ApplicationController::setFileShelfQuickAddShortcut(int key, int modifiers)
+{
+    if (key != 0 && isReservedPasteShortcut(key, modifiers)) {
+        setStatus(QStringLiteral("Ctrl+V is reserved for screenshot paste while the Screenshots page is open."), true);
+        return false;
+    }
+    if (key != 0 && !HotkeyManager::isSupportedKey(key, modifiers)) {
+        setStatus(QStringLiteral("Choose a supported shortcut with at least one modifier."), true);
+        return false;
+    }
+    if (key != 0 && ((m_settings.fileShelfShortcutKey() == key && m_settings.fileShelfShortcutModifiers() == modifiers) ||
+                     (m_settings.clipboardHistoryShortcutKey() == key && m_settings.clipboardHistoryShortcutModifiers() == modifiers) ||
+                     HotkeyUtils::profileActivationConflict(m_profiles.profiles(), key, modifiers) ||
+                     HotkeyUtils::profileActivationConflict({m_profiles.globalProfile()}, key, modifiers) ||
+                     HotkeyUtils::anyProfileAssignmentConflict(m_profiles.profiles(), key, modifiers) ||
+                     HotkeyUtils::assignmentConflict(m_profiles.globalProfile().hotkeys, key, modifiers))) {
+        setStatus(QStringLiteral("That shortcut is already assigned. Choose a different combination."), true);
+        return false;
+    }
+    return m_settings.setFileShelfQuickAddShortcut(key, modifiers);
 }
 
 void ApplicationController::chooseScreenshotDestination()
@@ -706,6 +758,9 @@ bool ApplicationController::hasBindingConflict(int key, int modifiers, const QSt
         return true;
     if (exceptId != QStringLiteral("file-shelf") && m_settings.fileShelfShortcutKey() == key &&
         m_settings.fileShelfShortcutModifiers() == modifiers)
+        return true;
+    if (exceptId != QStringLiteral("file-shelf-quick-add") && m_settings.fileShelfQuickAddShortcutKey() == key &&
+        m_settings.fileShelfQuickAddShortcutModifiers() == modifiers)
         return true;
     QString exceptProfileId;
     if (exceptId.startsWith(QStringLiteral("activation:")))

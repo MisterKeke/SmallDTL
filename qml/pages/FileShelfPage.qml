@@ -11,6 +11,8 @@ Item {
     property string transferDestination: ""
     property bool transferMove: false
     property string operationDetails: ""
+    property string selectedCollectionForMembership: ""
+    property string editingCollectionId: ""
 
     function handleDroppedUrls(urls) {
         return fileShelf.addFileUrls(urls)
@@ -99,6 +101,74 @@ Item {
 
         RowLayout {
             Layout.fillWidth: true
+            TextField {
+                objectName: "fileShelfSearch"
+                Layout.fillWidth: true
+                placeholderText: "Search file name or path"
+                text: fileShelf.searchText
+                onTextEdited: fileShelf.setSearchText(text)
+            }
+            Button { text: "All items"; checkable: true; checked: !fileShelf.favoritesOnly && !fileShelf.collectionFilter; onClicked: fileShelf.setCollectionFilter("") }
+            Button { text: "Favorites"; checkable: true; checked: fileShelf.favoritesOnly; onClicked: fileShelf.setFavoritesOnly(!fileShelf.favoritesOnly) }
+            Button { text: "New collection"; onClicked: { root.editingCollectionId = ""; collectionNameField.text = ""; collectionNameDialog.open() } }
+        }
+
+        Flow {
+            Layout.fillWidth: true
+            spacing: 5
+            Repeater {
+                model: fileShelf.collections
+                delegate: RowLayout {
+                    required property var modelData
+                    spacing: 0
+                    Button {
+                        text: modelData.name
+                        checkable: true
+                        checked: fileShelf.collectionFilter === modelData.id
+                        onClicked: { fileShelf.setCollectionFilter(modelData.id); root.selectedCollectionForMembership = modelData.id }
+                    }
+                    ToolButton {
+                        text: modelData.favorite ? "★" : "☆"
+                        Accessible.name: modelData.favorite ? "Unfavorite collection" : "Favorite collection"
+                        onClicked: fileShelf.setCollectionFavorite(modelData.id, !modelData.favorite)
+                    }
+                    ToolButton {
+                        text: "✎"
+                        Accessible.name: "Rename " + modelData.name
+                        onClicked: { root.editingCollectionId = modelData.id; collectionNameField.text = modelData.name; collectionNameDialog.open() }
+                    }
+                    ToolButton {
+                        text: "×"
+                        Accessible.name: "Delete " + modelData.name
+                        onClicked: { root.editingCollectionId = modelData.id; deleteCollectionDialog.open() }
+                    }
+                }
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            ComboBox {
+                id: membershipPicker
+                objectName: "fileShelfMembershipPicker"
+                Layout.preferredWidth: 220
+                model: fileShelf.collections
+                textRole: "name"
+                valueRole: "id"
+                currentIndex: {
+                    for (var i = 0; i < fileShelf.collections.length; ++i)
+                        if (fileShelf.collections[i].id === root.selectedCollectionForMembership) return i
+                    return fileShelf.collections.length > 0 ? 0 : -1
+                }
+                onActivated: root.selectedCollectionForMembership = currentValue
+            }
+            Button { text: "Add selected to collection"; enabled: fileShelf.selectedCount > 0 && membershipPicker.currentValue; onClicked: fileShelf.setSelectedCollectionMembership(membershipPicker.currentValue, true) }
+            Button { text: "Remove selected"; visible: fileShelf.collectionFilter !== ""; enabled: fileShelf.selectedCount > 0 && fileShelf.collectionFilter !== ""; onClicked: fileShelf.setSelectedCollectionMembership(fileShelf.collectionFilter, false) }
+            Item { Layout.fillWidth: true }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
             spacing: 7
             Button { text: "Copy to folder…"; visible: !root.compact; enabled: fileShelf.selectedCount > 0 && !fileShelf.busy; onClicked: root.startOperation(false) }
             Button { text: "Move to folder…"; visible: !root.compact; enabled: fileShelf.selectedCount > 0 && !fileShelf.busy; onClicked: root.startOperation(true) }
@@ -161,8 +231,10 @@ Item {
                     required property string fileType
                     required property double sizeBytes
                     required property bool available
+                    required property bool favorite
+                    required property string collectionNames
                     width: ListView.view.width
-                    height: root.compact ? 70 : 82
+                    height: root.compact ? 82 : 92
                     radius: 10
                     color: fileShelf.selectedIds.indexOf(entryId) >= 0 ? settings.palette["#39222b"] : settings.palette["#202127"]
                     border.color: fileShelf.selectedIds.indexOf(entryId) >= 0 ? settings.palette["#8e4359"] : settings.palette["#30313a"]
@@ -230,9 +302,18 @@ Item {
                                 font.pixelSize: 9
                                 elide: Text.ElideMiddle
                             }
+                            Label {
+                                Layout.fillWidth: true
+                                text: shelfRow.collectionNames.length > 0 ? shelfRow.collectionNames : "No collection"
+                                color: settings.palette["#e7a0b1"]
+                                font.pixelSize: 9
+                                elide: Text.ElideRight
+                            }
                         }
+                        ToolButton { text: shelfRow.favorite ? "★" : "☆"; Accessible.name: shelfRow.favorite ? "Remove from favorites" : "Add to favorites"; onClicked: fileShelf.setEntryFavorite(shelfRow.entryId, !shelfRow.favorite) }
                         ToolButton { text: "Open"; enabled: shelfRow.available; onClicked: fileShelf.openEntry(shelfRow.entryId) }
                         ToolButton { text: "Folder"; onClicked: fileShelf.openLocation(shelfRow.entryId) }
+                        ToolButton { text: "Locate"; visible: !shelfRow.available; Accessible.name: "Locate moved file or folder"; onClicked: fileShelf.locateEntryReplacement(shelfRow.entryId) }
                         ToolButton { text: "Path"; onClicked: fileShelf.copyPath(shelfRow.entryId) }
                         ToolButton { text: "×"; Accessible.name: "Remove reference"; onClicked: fileShelf.removeEntry(shelfRow.entryId) }
                     }
@@ -240,7 +321,9 @@ Item {
                 Label {
                     anchors.centerIn: parent
                     visible: fileShelf.count === 0
-                    text: "Drop files or folders here, or add references above"
+                    text: fileShelf.searchText.length > 0 || fileShelf.collectionFilter.length > 0 || fileShelf.favoritesOnly
+                          ? "No items match this search or filter"
+                          : "Drop files or folders here, or add references above"
                     color: settings.palette["#9697a3"]
                     font.pixelSize: 12
                 }
@@ -258,6 +341,38 @@ Item {
             Label { text: root.formatSize(fileShelf.bytesCopied) + " / " + root.formatSize(fileShelf.totalBytes) + " · " + fileShelf.completedItems + "/" + fileShelf.totalItems }
             Button { text: fileShelf.cancellationRequested ? "Cancelling…" : "Cancel"; enabled: !fileShelf.cancellationRequested; onClicked: fileShelf.cancelTransfer() }
         }
+    }
+
+    Dialog {
+        id: collectionNameDialog
+        title: root.editingCollectionId.length ? "Rename collection" : "Create collection"
+        modal: true
+        anchors.centerIn: parent
+        standardButtons: Dialog.Cancel | Dialog.Ok
+        contentItem: TextField {
+            id: collectionNameField
+            objectName: "fileShelfCollectionName"
+            placeholderText: "Collection name"
+            onAccepted: collectionNameDialog.accept()
+        }
+        onAccepted: {
+            if (root.editingCollectionId.length)
+                fileShelf.renameCollection(root.editingCollectionId, collectionNameField.text)
+            else {
+                var id = fileShelf.createCollection(collectionNameField.text)
+                if (id) { root.selectedCollectionForMembership = id; fileShelf.setCollectionFilter(id) }
+            }
+        }
+    }
+
+    Dialog {
+        id: deleteCollectionDialog
+        title: "Delete collection?"
+        modal: true
+        anchors.centerIn: parent
+        standardButtons: Dialog.Cancel | Dialog.Ok
+        Label { text: "Delete this collection? Shelf references, favorites, and source files remain."; wrapMode: Text.WordWrap }
+        onAccepted: fileShelf.deleteCollection(root.editingCollectionId)
     }
 
     Dialog {

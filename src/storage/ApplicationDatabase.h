@@ -56,6 +56,16 @@ struct FileShelfRecord
     QString sourceFolder;
     QString itemType;
     qint64 sizeBytes = 0;
+    bool favorite = false;
+    QStringList collectionIds;
+};
+
+struct FileShelfCollection
+{
+    QString id;
+    QString name;
+    bool favorite = false;
+    QString lastUsedAt;
 };
 
 class ApplicationDatabase final : public QObject
@@ -102,8 +112,17 @@ public:
     bool deleteClipboardHistory(const QStringList &ids, QVector<ClipboardHistoryRecord> *removed = nullptr);
 
     QVector<FileShelfRecord> fileShelfEntries() const;
+    QVector<FileShelfCollection> fileShelfCollections() const;
     bool addFileShelfEntries(const QVector<FileShelfRecord> &records, int *inserted = nullptr,
-                             int *duplicates = nullptr);
+                             int *duplicates = nullptr, const QString &collectionId = {});
+    QString createFileShelfCollection(const QString &name);
+    bool renameFileShelfCollection(const QString &id, const QString &name);
+    bool deleteFileShelfCollection(const QString &id);
+    bool setFileShelfCollectionFavorite(const QString &id, bool favorite);
+    bool setFileShelfFavorite(const QString &id, bool favorite);
+    bool setFileShelfCollectionMembership(const QStringList &entryIds, const QString &collectionId,
+                                          bool assigned);
+    bool touchFileShelfCollection(const QString &id);
     bool removeFileShelfEntries(const QStringList &ids, int *removed = nullptr);
     bool clearFileShelf(int *removed = nullptr);
     bool updateFileShelfPath(const QString &id, const QString &path);

@@ -94,6 +94,18 @@ Item {
                     }
                     RowLayout {
                         Layout.fillWidth: true
+                        Label { text: "Quick-add shortcut"; Layout.preferredWidth: 120 }
+                        HotkeyRecorder {
+                            objectName: "fileShelfQuickAddShortcutRecorder"
+                            key: settings.fileShelfQuickAddShortcutKey
+                            modifiers: settings.fileShelfQuickAddShortcutModifiers
+                            onRecorded: function(keyValue, modifierValue) { app.setFileShelfQuickAddShortcut(keyValue, modifierValue) }
+                            onCleared: app.setFileShelfQuickAddShortcut(0, 0)
+                        }
+                        Label { text: hotkeys.fileShelfQuickAddStatus; color: hotkeys.fileShelfQuickAddStatus === "Registered globally" ? settings.palette["#74d3aa"] : settings.palette["#e7b879"]; font.pixelSize: 10 }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
                         Label { text: "Keep unpinned entries"; Layout.preferredWidth: 170 }
                         SpinBox { objectName: "historyRetentionDays"; from: 1; to: 3650; value: settings.clipboardHistoryRetentionDays; onValueModified: settings.setClipboardHistoryRetentionDays(value) }
                         Label { text: "days" }

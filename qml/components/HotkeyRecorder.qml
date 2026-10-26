@@ -75,7 +75,7 @@ Rectangle {
             return
         }
         const selectedKey = event.key
-        const selectedModifiers = event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.ShiftModifier | Qt.MetaModifier)
+        const selectedModifiers = event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.ShiftModifier | Qt.MetaModifier | Qt.KeypadModifier)
         root.recording = false
         root.recorded(selectedKey, selectedModifiers)
         event.accepted = true

@@ -38,6 +38,7 @@ public:
     void writeUrls(const QList<QUrl> &urls);
     void writeSnapshot(const ClipboardSnapshot &snapshot);
     QImage currentImage() const;
+    ClipboardSnapshot currentSnapshot() const;
 
     // Kept as a small input boundary so event processing can be tested without
     // relying on platform-specific clipboard ownership semantics.

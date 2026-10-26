@@ -13,6 +13,8 @@ void UnitTests::clipboardHistoryDatabaseUpgradesVersionFour()
         QVERIFY(fixture.open());
         QSqlQuery query(fixture);
         QVERIFY(query.exec(QStringLiteral("DROP TABLE clipboard_history")));
+        QVERIFY(query.exec(QStringLiteral("DROP TABLE file_shelf_collection_items")));
+        QVERIFY(query.exec(QStringLiteral("DROP TABLE file_shelf_collections")));
         QVERIFY(query.exec(QStringLiteral("DROP TABLE file_shelf")));
         QVERIFY(query.exec(QStringLiteral("DROP INDEX screenshots_path_key_idx")));
         QVERIFY(query.exec(QStringLiteral("ALTER TABLE screenshots DROP COLUMN path_key")));

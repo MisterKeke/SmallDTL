@@ -2,6 +2,7 @@
 
 #include <QKeySequence>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 
 #include "../profiles/ProfileManager.h"
@@ -11,6 +12,23 @@ inline QString formatShortcut(int key, int modifiers)
 {
     if (key == 0)
         return QStringLiteral("Not assigned");
+    if (modifiers & Qt::KeypadModifier) {
+        QStringList parts;
+        if (modifiers & Qt::ControlModifier) parts << QStringLiteral("Ctrl");
+        if (modifiers & Qt::AltModifier) parts << QStringLiteral("Alt");
+        if (modifiers & Qt::ShiftModifier) parts << QStringLiteral("Shift");
+        if (modifiers & Qt::MetaModifier) parts << QStringLiteral("Win");
+        QString keypadKey;
+        if (key >= Qt::Key_0 && key <= Qt::Key_9)
+            keypadKey = QStringLiteral("Numpad%1").arg(key - Qt::Key_0);
+        else if (key == Qt::Key_Period) keypadKey = QStringLiteral("NumpadDecimal");
+        else if (key == Qt::Key_Plus) keypadKey = QStringLiteral("Numpad+");
+        else if (key == Qt::Key_Minus) keypadKey = QStringLiteral("Numpad-");
+        else if (key == Qt::Key_Asterisk) keypadKey = QStringLiteral("Numpad*");
+        else if (key == Qt::Key_Slash) keypadKey = QStringLiteral("Numpad/");
+        if (!keypadKey.isEmpty()) parts << keypadKey;
+        if (!parts.isEmpty()) return parts.join(QLatin1Char('+'));
+    }
     return QKeySequence(key | modifiers).toString(QKeySequence::NativeText);
 }
 

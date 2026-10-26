@@ -39,6 +39,9 @@ void UnitTests::unicodeScreenshotMigrationMergesTagsAndSourceLinks()
         QSqlDatabase database = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connection);
         database.setDatabaseName(databasePath); QVERIFY(database.open());
         QSqlQuery query(database);
+        QVERIFY(query.exec(QStringLiteral("DROP TABLE file_shelf_collection_items")));
+        QVERIFY(query.exec(QStringLiteral("DROP TABLE file_shelf_collections")));
+        QVERIFY(query.exec(QStringLiteral("ALTER TABLE file_shelf DROP COLUMN favorite")));
         QVERIFY(query.exec(QStringLiteral("DROP INDEX screenshots_path_key_idx")));
         QVERIFY(query.exec(QStringLiteral("ALTER TABLE screenshots DROP COLUMN path_key")));
         QVERIFY(query.exec(QStringLiteral("PRAGMA user_version=6")));
