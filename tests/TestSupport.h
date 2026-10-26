@@ -4,6 +4,7 @@
 #include "../src/app/AppDataPaths.h"
 #include "../src/app/LocalFileUrl.h"
 #include "../src/app/ApplicationController.h"
+#include "../src/app/CommandPaletteManager.h"
 #include "../src/clipboard/ClipboardService.h"
 #include "../src/fileshelf/FileShelfManager.h"
 #include "../src/hotkeys/HotkeyUtils.h"

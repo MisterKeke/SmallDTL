@@ -105,4 +105,8 @@ private slots:
     void fullShellPagesAndPreferences();
     void galleryAndIdleMeasurements();
     void hotkeyEditorRestoresRejectedEdits();
+    void commandPaletteSearchRanksCaseInsensitivelyAndFindsUnicodePaths();
+    void commandPaletteScopesRecentsAndRejectsStaleSearches();
+    void commandPaletteKeyboardWorksWithMainWindowHidden();
+    void commandPaletteReportsMissingItemsFailuresAndShortcutConflicts();
 };

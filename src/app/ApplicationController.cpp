@@ -7,6 +7,7 @@
 #include <QApplication>
 #include <QDir>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QIcon>
 #include <QMenu>
 #include <QSystemTrayIcon>
@@ -87,13 +88,17 @@ ApplicationController::ApplicationController(QObject *parent)
       m_qrCode(&m_screenshots, this),
       m_clipboardHistory(m_screenshots.database(), m_screenshots.clipboardService(), &m_settings, &m_screenshots, this), m_fileShelf(m_screenshots.database(), m_screenshots.clipboardService(), this), m_actions(&m_profiles, this),
       m_windowArrangements(&m_profiles,this),
-      m_actionRunner(&m_actions, &m_profiles, &m_screenshots, &m_qrCode, &m_windowArrangements, this), m_hotkeys(&m_profiles, &m_settings, this)
+      m_actionRunner(&m_actions, &m_profiles, &m_screenshots, &m_qrCode, &m_windowArrangements, this),
+      m_hotkeys(&m_profiles, &m_settings, this),
+      m_commandPalette(&m_profiles, &m_actions, &m_windowArrangements,
+                       m_screenshots.database(), &m_settings, this)
 {
     createTrayIcon();
     connect(&m_settings,&SettingsManager::errorOccurred,this,[this](const QString &message){setStatus(message,true,true);});
     connect(&m_hotkeys,&HotkeyManager::registrationFailed,this,[this](const QString &message){setStatus(message,true,true);});
     connect(&m_hotkeys, &HotkeyManager::fileShelfTriggered, this, &ApplicationController::toggleFileShelfPopup);
     connect(&m_hotkeys, &HotkeyManager::fileShelfQuickAddTriggered, this, &ApplicationController::startFileShelfQuickAdd);
+    connect(&m_hotkeys, &HotkeyManager::commandPaletteTriggered, this, &ApplicationController::toggleCommandPalettePopup);
     connect(QCoreApplication::instance(),&QCoreApplication::aboutToQuit,this,[this]{m_actionRunner.cancel();m_hotkeys.setRecording(true);m_fileShelf.finishTransfer();m_clipboardHistory.shutdown();m_screenshots.finishPendingSaves();});
     const QStringList startup=m_settings.startupMessages()+m_profiles.startupMessages()+m_actions.startupMessages();
     if(!startup.isEmpty())QTimer::singleShot(0,this,[this,startup]{setStatus(startup.join(QLatin1Char('\n')),true,true);});
@@ -110,7 +115,36 @@ ApplicationController::ApplicationController(QObject *parent)
     connect(&m_profiles, &ProfileManager::errorOccurred, this, [this](const QString &message) {
         setStatus(message, true, true);
     });
-    connect(&m_windowArrangements,&WindowArrangementManager::errorOccurred,this,[this](const QString &message){setStatus(message,true,true);});
+    connect(&m_windowArrangements,&WindowArrangementManager::errorOccurred,this,[this](const QString &message){
+        if (m_commandPaletteLayoutRequestId || m_commandPaletteSequencePending)
+            showCommandPaletteExecutionError(message);
+        else {
+            setStatus(message,true,true);
+            if (m_commandPalettePopupVisible)
+                m_commandPalette.setMessage(message,true);
+        }
+    });
+    connect(&m_windowArrangements, &WindowArrangementManager::layoutApplyFinished, this,
+            [this](quint64 requestId, bool success, const QString &message) {
+        if (requestId != m_commandPaletteLayoutRequestId)
+            return;
+        m_commandPaletteLayoutRequestId = 0;
+        if (!m_commandPaletteSequencePending)
+            setCommandPaletteExecutionPending(false);
+        if (!success)
+            showCommandPaletteExecutionError(message);
+    });
+    connect(&m_fileShelf, &QAbstractItemModel::modelReset, &m_commandPalette, &CommandPaletteManager::refresh);
+    connect(&m_fileShelf, &QAbstractItemModel::dataChanged, &m_commandPalette, &CommandPaletteManager::refresh);
+    connect(&m_fileShelf, &QAbstractItemModel::rowsInserted, &m_commandPalette, &CommandPaletteManager::refresh);
+    connect(&m_fileShelf, &QAbstractItemModel::rowsRemoved, &m_commandPalette, &CommandPaletteManager::refresh);
+    connect(&m_fileShelf, &FileShelfManager::collectionsChanged, &m_commandPalette, &CommandPaletteManager::refresh);
+    connect(m_screenshots.gallery(), &ScreenshotGalleryModel::countChanged,
+            &m_commandPalette, &CommandPaletteManager::refresh);
+    connect(&m_screenshots, &ScreenshotManager::tagsChanged,
+            &m_commandPalette, &CommandPaletteManager::refresh);
+    connect(&m_screenshots, &ScreenshotManager::tagAssignmentsChanged,
+            &m_commandPalette, &CommandPaletteManager::refresh);
     connect(&m_profiles, &ProfileManager::profilesChanged, this, &ApplicationController::rebuildTrayMenu);
     connect(&m_profiles, &ProfileManager::activeProfileChanged, this, [this] {
         const int failures=m_hotkeys.failureCount();
@@ -148,11 +182,25 @@ ApplicationController::ApplicationController(QObject *parent)
         setStatus(message, true, true);
     });
     connect(&m_actionRunner, &ActionSequenceRunner::failed, this, [this](const QString &message) {
-        setStatus(message, true, true);
+        if (m_commandPaletteSequencePending) {
+            m_commandPaletteSequencePending = false;
+            if (!m_commandPaletteLayoutRequestId)
+                setCommandPaletteExecutionPending(false);
+            showCommandPaletteExecutionError(message);
+        } else {
+            setStatus(message, true, true);
+            if (m_commandPalettePopupVisible)
+                m_commandPalette.setMessage(message, true);
+        }
     });
     connect(&m_actionRunner, &ActionSequenceRunner::completed, this, [this](const QString &name) {
         Q_UNUSED(name);
         setStatus(m_actionRunner.status());
+        if (m_commandPaletteSequencePending) {
+            m_commandPaletteSequencePending = false;
+            if (!m_commandPaletteLayoutRequestId)
+                setCommandPaletteExecutionPending(false);
+        }
     });
     connect(&m_actionRunner, &ActionSequenceRunner::runningChanged,
             this, &ApplicationController::actionSequenceRunningChanged);
@@ -183,6 +231,7 @@ HotkeyManager *ApplicationController::hotkeys() { return &m_hotkeys; }
 ActionManager *ApplicationController::actions() { return &m_actions; }
 ActionSequenceRunner *ApplicationController::actionRunner() { return &m_actionRunner; }
 WindowArrangementManager *ApplicationController::windowArrangements(){return &m_windowArrangements;}
+CommandPaletteManager *ApplicationController::commandPalette(){return &m_commandPalette;}
 
 QString ApplicationController::currentPage() const { return m_currentPage; }
 QString ApplicationController::statusMessage() const { return m_statusMessage; }
@@ -322,6 +371,11 @@ bool ApplicationController::setClipboardHistoryShortcut(int key, int modifiers)
         setStatus(QStringLiteral("That shortcut is already assigned to File Shelf quick-add."), true);
         return false;
     }
+    if (key != 0 && key == m_settings.commandPaletteShortcutKey() &&
+        modifiers == m_settings.commandPaletteShortcutModifiers()) {
+        setStatus(QStringLiteral("That shortcut is already assigned to the command palette."), true);
+        return false;
+    }
     if (key != 0) {
         auto conflicts = [key, modifiers](const QVector<HotkeyAssignment> &assignments) {
             for (const HotkeyAssignment &assignment : assignments)
@@ -379,6 +433,131 @@ void ApplicationController::setFileShelfQuickAddPopupVisible(bool visible)
     emit fileShelfQuickAddPopupVisibleChanged();
 }
 
+void ApplicationController::toggleCommandPalettePopup()
+{
+    setCommandPalettePopupVisible(!m_commandPalettePopupVisible);
+}
+
+void ApplicationController::setCommandPalettePopupVisible(bool visible)
+{
+    if (m_commandPalettePopupVisible == visible)
+        return;
+    m_commandPalettePopupVisible = visible;
+    if (visible)
+        m_commandPalette.refresh();
+    else
+        m_commandPalette.setMessage({}, false);
+    emit commandPalettePopupVisibleChanged();
+}
+
+bool ApplicationController::setCommandPaletteShortcut(int key, int modifiers)
+{
+    if (key != 0 && isReservedPasteShortcut(key, modifiers)) {
+        setStatus(QStringLiteral("Ctrl+V is reserved for screenshot paste while the Screenshots page is open."), true);
+        return false;
+    }
+    if (key != 0 && !HotkeyManager::isSupportedKey(key, modifiers)) {
+        setStatus(QStringLiteral("Choose a supported shortcut with at least one modifier."), true);
+        return false;
+    }
+    if (key != 0 && (hasBindingConflict(key, modifiers, QStringLiteral("command-palette")) ||
+                     HotkeyUtils::anyProfileAssignmentConflict(m_profiles.profiles(), key, modifiers) ||
+                     HotkeyUtils::assignmentConflict(m_profiles.globalProfile().hotkeys, key, modifiers))) {
+        setStatus(QStringLiteral("That shortcut is already assigned. Choose a different combination."), true);
+        return false;
+    }
+    return m_settings.setCommandPaletteShortcut(key, modifiers);
+}
+
+bool ApplicationController::executeCommandPaletteResult(const QString &type, const QString &id)
+{
+    auto fail = [this](const QString &message) {
+        const QString detail = message.isEmpty() ? QStringLiteral("This command is no longer available.") : message;
+        setStatus(detail, true, true);
+        m_commandPalette.setMessage(detail, true);
+        return false;
+    };
+    if (type == QStringLiteral("profile")) {
+        const Profile *profile = m_profiles.profileById(id);
+        if (!profile)
+            return fail(QStringLiteral("That profile is no longer available."));
+        if (profile->id == m_profiles.activeProfileId())
+            return fail(QStringLiteral("That profile is already active."));
+        if (!m_profiles.setActiveProfile(id))
+            return fail(QStringLiteral("Could not activate that profile."));
+        m_commandPalette.remember(type, id);
+        setStatus(QStringLiteral("Activated profile: %1").arg(m_profiles.activeProfileName()));
+        return true;
+    }
+    if (type == QStringLiteral("sequence")) {
+        const ActionSequence *sequence = m_actions.sequenceById(id);
+        if (!sequence)
+            return fail(QStringLiteral("That action sequence is no longer available."));
+        const QString owner = m_actions.sequenceOwner(id);
+        if (owner != QStringLiteral("global") && owner != m_profiles.activeProfileId())
+            return fail(QStringLiteral("That sequence belongs to an inactive profile."));
+        QString validationError;
+        if (!sequence->enabled || m_actions.validateSequence(id, &validationError).isEmpty())
+            return fail(validationError.isEmpty() ? QStringLiteral("That action sequence is disabled.") : validationError);
+        m_commandPaletteSequencePending = true;
+        setCommandPaletteExecutionPending(true);
+        if (!m_actionRunner.start(id)) {
+            if (m_commandPaletteSequencePending) {
+                m_commandPaletteSequencePending = false;
+                if (!m_commandPaletteLayoutRequestId)
+                    setCommandPaletteExecutionPending(false);
+            }
+            return fail(m_actionRunner.status());
+        }
+        m_commandPalette.remember(type, id);
+        return true;
+    }
+    if (type == QStringLiteral("layout")) {
+        const QVariantMap info = m_windowArrangements.layoutInfo(id);
+        if (info.isEmpty())
+            return fail(QStringLiteral("That window layout is no longer available."));
+        const QString owner = info.value(QStringLiteral("profileId")).toString();
+        if (owner != QStringLiteral("global") && owner != m_profiles.activeProfileId())
+            return fail(QStringLiteral("That layout belongs to an inactive profile."));
+        const quint64 requestId = m_windowArrangements.requestApplyLayout(id);
+        if (requestId == 0)
+            return fail(m_windowArrangements.status());
+        m_commandPaletteLayoutRequestId = requestId;
+        setCommandPaletteExecutionPending(true);
+        m_commandPalette.remember(type, id);
+        setStatus(QStringLiteral("Applying window layout: %1").arg(info.value(QStringLiteral("name")).toString()));
+        return true;
+    }
+    if (type == QStringLiteral("screenshot")) {
+        const ScreenshotRecord record = m_screenshots.database()->screenshotById(id);
+        const QFileInfo file(record.path);
+        if (record.id.isEmpty() || !file.exists() || !file.isFile())
+            return fail(QStringLiteral("That screenshot file is missing or no longer available."));
+        setCurrentPage(QStringLiteral("Screenshots"));
+        showWindow();
+        emit commandPaletteScreenshotRequested(file.absoluteFilePath(), QUrl::fromLocalFile(file.absoluteFilePath()), record.id,
+                                               record.width, record.height);
+        m_commandPalette.remember(type, id);
+        return true;
+    }
+    if (type == QStringLiteral("shelf")) {
+        const FileShelfRecord *record = nullptr;
+        const QVector<FileShelfRecord> entries = m_screenshots.database()->fileShelfEntries();
+        for (const FileShelfRecord &entry : entries)
+            if (entry.id == id) { record = &entry; break; }
+        if (!record)
+            return fail(QStringLiteral("That File Shelf reference is no longer available."));
+        const QFileInfo path(record->path);
+        if (!path.exists() || (record->itemType == QStringLiteral("folder") ? !path.isDir() : !path.isFile()))
+            return fail(QStringLiteral("That File Shelf reference is missing."));
+        if (!m_fileShelf.openEntry(id))
+            return fail(m_fileShelf.message());
+        m_commandPalette.remember(type, id);
+        return true;
+    }
+    return fail(QStringLiteral("That command type is not supported."));
+}
+
 bool ApplicationController::setFileShelfShortcut(int key, int modifiers)
 {
     if (key != 0 && isReservedPasteShortcut(key, modifiers)) {
@@ -392,6 +571,11 @@ bool ApplicationController::setFileShelfShortcut(int key, int modifiers)
     if (key != 0 && key == m_settings.fileShelfQuickAddShortcutKey() &&
         modifiers == m_settings.fileShelfQuickAddShortcutModifiers()) {
         setStatus(QStringLiteral("That shortcut is already assigned to File Shelf quick-add."), true);
+        return false;
+    }
+    if (key != 0 && key == m_settings.commandPaletteShortcutKey() &&
+        modifiers == m_settings.commandPaletteShortcutModifiers()) {
+        setStatus(QStringLiteral("That shortcut is already assigned to the command palette."), true);
         return false;
     }
     if (key != 0) {
@@ -430,6 +614,7 @@ bool ApplicationController::setFileShelfQuickAddShortcut(int key, int modifiers)
     }
     if (key != 0 && ((m_settings.fileShelfShortcutKey() == key && m_settings.fileShelfShortcutModifiers() == modifiers) ||
                      (m_settings.clipboardHistoryShortcutKey() == key && m_settings.clipboardHistoryShortcutModifiers() == modifiers) ||
+                     (m_settings.commandPaletteShortcutKey() == key && m_settings.commandPaletteShortcutModifiers() == modifiers) ||
                      HotkeyUtils::profileActivationConflict(m_profiles.profiles(), key, modifiers) ||
                      HotkeyUtils::profileActivationConflict({m_profiles.globalProfile()}, key, modifiers) ||
                      HotkeyUtils::anyProfileAssignmentConflict(m_profiles.profiles(), key, modifiers) ||
@@ -687,6 +872,9 @@ bool ApplicationController::runActionSequence(const QString &sequenceId)
 
 void ApplicationController::cancelActionSequence()
 {
+    m_commandPaletteSequencePending = false;
+    if (!m_commandPaletteLayoutRequestId)
+        setCommandPaletteExecutionPending(false);
     m_actionRunner.cancel();
 }
 
@@ -751,6 +939,25 @@ void ApplicationController::setStatus(const QString &message, bool isError, bool
     }
 }
 
+void ApplicationController::showCommandPaletteExecutionError(const QString &message)
+{
+    const QString detail = message.isEmpty() ? QStringLiteral("The command could not be completed.") : message;
+    setStatus(detail, true, true);
+    if (!m_commandPalettePopupVisible)
+        setCommandPalettePopupVisible(true);
+    QTimer::singleShot(0, this, [this, detail] {
+        m_commandPalette.setMessage(detail, true);
+    });
+}
+
+void ApplicationController::setCommandPaletteExecutionPending(bool pending)
+{
+    if (m_commandPaletteExecutionPending == pending)
+        return;
+    m_commandPaletteExecutionPending = pending;
+    emit commandPaletteExecutionPendingChanged();
+}
+
 bool ApplicationController::hasBindingConflict(int key, int modifiers, const QString &exceptId) const
 {
     if (exceptId != QStringLiteral("clipboard-history") && m_settings.clipboardHistoryShortcutKey() == key &&
@@ -762,10 +969,14 @@ bool ApplicationController::hasBindingConflict(int key, int modifiers, const QSt
     if (exceptId != QStringLiteral("file-shelf-quick-add") && m_settings.fileShelfQuickAddShortcutKey() == key &&
         m_settings.fileShelfQuickAddShortcutModifiers() == modifiers)
         return true;
+    if (exceptId != QStringLiteral("command-palette") && m_settings.commandPaletteShortcutKey() == key &&
+        m_settings.commandPaletteShortcutModifiers() == modifiers)
+        return true;
     QString exceptProfileId;
     if (exceptId.startsWith(QStringLiteral("activation:")))
         exceptProfileId = exceptId.mid(QStringLiteral("activation:").size());
-    return HotkeyUtils::profileActivationConflict(m_profiles.profiles(), key, modifiers, exceptProfileId);
+    return HotkeyUtils::profileActivationConflict(m_profiles.profiles(), key, modifiers, exceptProfileId) ||
+           HotkeyUtils::profileActivationConflict({m_profiles.globalProfile()}, key, modifiers);
 }
 
 bool ApplicationController::validAssignment(const QString &actionType, const QString &targetProfileId,

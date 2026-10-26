@@ -92,6 +92,7 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("actions"), controller.actions());
     engine.rootContext()->setContextProperty(QStringLiteral("actionRunner"), controller.actionRunner());
     engine.rootContext()->setContextProperty(QStringLiteral("windowArrangements"), controller.windowArrangements());
+    engine.rootContext()->setContextProperty(QStringLiteral("commandPalette"), controller.commandPalette());
 
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed,
                      &application, [] { QCoreApplication::exit(EXIT_FAILURE); }, Qt::QueuedConnection);

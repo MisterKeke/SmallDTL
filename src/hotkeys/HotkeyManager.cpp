@@ -121,6 +121,12 @@ QString HotkeyManager::fileShelfQuickAddStatus() const
                               {false, QStringLiteral("Not assigned")}).text;
 }
 
+QString HotkeyManager::commandPaletteStatus() const
+{
+    return m_statusById.value(QStringLiteral("command-palette"),
+                              {false, QStringLiteral("Not assigned")}).text;
+}
+
 bool HotkeyManager::isRegistered(const QString &id) const
 {
     return nativeIdFor(id)>0;
@@ -171,6 +177,9 @@ bool HotkeyManager::nativeEventFilter(const QByteArray &eventType, void *message
     } else if (binding.actionType == QStringLiteral("fileShelfQuickAdd")) {
         emit hotkeyTriggered(binding.description);
         emit fileShelfQuickAddTriggered();
+    } else if (binding.actionType == QStringLiteral("commandPalette")) {
+        emit hotkeyTriggered(binding.description);
+        emit commandPaletteTriggered();
     } else if (binding.isActivation) {
         emit hotkeyTriggered(QStringLiteral("Activate %1").arg(binding.description));
         emit profileActivationRequested(binding.profileId);
@@ -230,6 +239,15 @@ void HotkeyManager::refreshRegistrations()
             desired.append(Binding{quickId, QStringLiteral("global"),
                                    QStringLiteral("Quick-add to file shelf (%1)").arg(HotkeyUtils::formatShortcut(quickKey, quickModifiers)),
                                    quickKey, quickModifiers, false, QStringLiteral("fileShelfQuickAdd"), {}, {}});
+        const int paletteKey = m_settings->commandPaletteShortcutKey();
+        const int paletteModifiers = m_settings->commandPaletteShortcutModifiers();
+        const QString paletteId = QStringLiteral("command-palette");
+        if (paletteKey == 0)
+            statuses.insert(paletteId, {false, QStringLiteral("Not assigned")});
+        else
+            desired.append(Binding{paletteId, QStringLiteral("global"),
+                                   QStringLiteral("Open command palette (%1)").arg(HotkeyUtils::formatShortcut(paletteKey, paletteModifiers)),
+                                   paletteKey, paletteModifiers, false, QStringLiteral("commandPalette"), {}, {}});
     }
     const bool canRegister=m_hasWindow && !m_window.isNull() && !m_recording;
     // Retain unchanged native registrations, especially application-wide bindings.
@@ -246,10 +264,10 @@ void HotkeyManager::refreshRegistrations()
     for(const auto &binding:desired) {
         if(!canRegister){statuses.insert(binding.id,{false,m_recording?QStringLiteral("Paused while recording"):QStringLiteral("Waiting for application window")});continue;}
         int existing=0;for(auto it=m_bindingByNativeId.begin();it!=m_bindingByNativeId.end();++it)if(it->id==binding.id){existing=it.key();break;}
-        if(existing){statuses.insert(binding.id,{true,(binding.isActivation || binding.actionType==QStringLiteral("clipboardHistory") || binding.actionType==QStringLiteral("fileShelf") || binding.actionType==QStringLiteral("fileShelfQuickAdd"))?QStringLiteral("Registered globally"):QStringLiteral("Registered")});continue;}
+        if(existing){statuses.insert(binding.id,{true,(binding.isActivation || binding.actionType==QStringLiteral("clipboardHistory") || binding.actionType==QStringLiteral("fileShelf") || binding.actionType==QStringLiteral("fileShelfQuickAdd") || binding.actionType==QStringLiteral("commandPalette"))?QStringLiteral("Registered globally"):QStringLiteral("Registered")});continue;}
         while(m_bindingByNativeId.contains(m_nextNativeId))m_nextNativeId=m_nextNativeId%0xbfff+1;
         const int nativeId=m_nextNativeId;m_nextNativeId=m_nextNativeId%0xbfff+1;
-        if(registerBinding(binding,nativeId)){m_bindingByNativeId.insert(nativeId,binding);statuses.insert(binding.id,{true,(binding.isActivation || binding.actionType==QStringLiteral("clipboardHistory") || binding.actionType==QStringLiteral("fileShelf") || binding.actionType==QStringLiteral("fileShelfQuickAdd"))?QStringLiteral("Registered globally"):QStringLiteral("Registered")});}
+        if(registerBinding(binding,nativeId)){m_bindingByNativeId.insert(nativeId,binding);statuses.insert(binding.id,{true,(binding.isActivation || binding.actionType==QStringLiteral("clipboardHistory") || binding.actionType==QStringLiteral("fileShelf") || binding.actionType==QStringLiteral("fileShelfQuickAdd") || binding.actionType==QStringLiteral("commandPalette"))?QStringLiteral("Registered globally"):QStringLiteral("Registered")});}
         else {statuses.insert(binding.id,{false,QStringLiteral("Unavailable or conflicts with another hotkey")});if(m_statusById.value(binding.id).text!=statuses.value(binding.id).text)failures.append(binding.description);}
     }
     beginResetModel();

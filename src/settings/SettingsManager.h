@@ -27,6 +27,8 @@ class SettingsManager final : public QObject {
     Q_PROPERTY(int fileShelfShortcutModifiers READ fileShelfShortcutModifiers NOTIFY preferencesChanged)
     Q_PROPERTY(int fileShelfQuickAddShortcutKey READ fileShelfQuickAddShortcutKey NOTIFY preferencesChanged)
     Q_PROPERTY(int fileShelfQuickAddShortcutModifiers READ fileShelfQuickAddShortcutModifiers NOTIFY preferencesChanged)
+    Q_PROPERTY(int commandPaletteShortcutKey READ commandPaletteShortcutKey NOTIFY preferencesChanged)
+    Q_PROPERTY(int commandPaletteShortcutModifiers READ commandPaletteShortcutModifiers NOTIFY preferencesChanged)
     Q_PROPERTY(int clipboardHistoryRetentionDays READ clipboardHistoryRetentionDays WRITE setClipboardHistoryRetentionDays NOTIFY preferencesChanged)
     Q_PROPERTY(int clipboardHistoryRetentionCount READ clipboardHistoryRetentionCount WRITE setClipboardHistoryRetentionCount NOTIFY preferencesChanged)
     Q_PROPERTY(int clipboardHistoryStorageLimitMB READ clipboardHistoryStorageLimitMB WRITE setClipboardHistoryStorageLimitMB NOTIFY preferencesChanged)
@@ -76,6 +78,9 @@ public slots:
     int fileShelfQuickAddShortcutKey() const;
     int fileShelfQuickAddShortcutModifiers() const;
     bool setFileShelfQuickAddShortcut(int key, int modifiers);
+    int commandPaletteShortcutKey() const;
+    int commandPaletteShortcutModifiers() const;
+    bool setCommandPaletteShortcut(int key, int modifiers);
     int clipboardHistoryRetentionDays() const;
     bool setClipboardHistoryRetentionDays(int days);
     int clipboardHistoryRetentionCount() const;

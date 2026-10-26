@@ -68,6 +68,18 @@ Item {
                     Label { text: "History keeps text, image copies, and file references locally. Its shortcut opens a compact popup even when the main window is hidden."; color: settings.palette["#9697a3"]; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true }
                     RowLayout {
                         Layout.fillWidth: true
+                        Label { text: "Command palette"; Layout.preferredWidth: 120 }
+                        HotkeyRecorder {
+                            objectName: "commandPaletteShortcutRecorder"
+                            key: settings.commandPaletteShortcutKey
+                            modifiers: settings.commandPaletteShortcutModifiers
+                            onRecorded: function(keyValue, modifierValue) { app.setCommandPaletteShortcut(keyValue, modifierValue) }
+                            onCleared: app.setCommandPaletteShortcut(0, 0)
+                        }
+                        Label { text: hotkeys.commandPaletteStatus; color: hotkeys.commandPaletteStatus === "Registered globally" ? settings.palette["#74d3aa"] : settings.palette["#e7b879"]; font.pixelSize: 10 }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
                         Label { text: "Popup shortcut"; Layout.preferredWidth: 120 }
                         HotkeyRecorder {
                             objectName: "clipboardHistoryShortcutRecorder"

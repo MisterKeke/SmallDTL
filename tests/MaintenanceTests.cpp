@@ -21,7 +21,8 @@ void UnitTests::historyClearDialogsRequireConfirmation()
         {QStringLiteral("clipboardHistory"), controller.clipboardHistory()}, {QStringLiteral("fileShelf"), controller.fileShelf()},
         {QStringLiteral("qrCode"), controller.qrCode()}, {QStringLiteral("hotkeys"), controller.hotkeys()},
         {QStringLiteral("actions"), controller.actions()}, {QStringLiteral("actionRunner"), controller.actionRunner()},
-        {QStringLiteral("windowArrangements"), controller.windowArrangements()}})
+        {QStringLiteral("windowArrangements"), controller.windowArrangements()},
+        {QStringLiteral("commandPalette"), controller.commandPalette()}})
         engine.rootContext()->setContextProperty(entry.first, entry.second);
     QSignalSpy warnings(&engine, &QQmlEngine::warnings);
     engine.loadFromModule(QStringLiteral("ScreenshotHotkeyManagerTest"), QStringLiteral("Main"));

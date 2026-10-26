@@ -55,6 +55,8 @@ void SettingsManager::load() {
     m_data.insert(QStringLiteral("fileShelfShortcutModifiers"), int(Qt::ControlModifier | Qt::ShiftModifier));
     m_data.insert(QStringLiteral("fileShelfQuickAddShortcutKey"), int(Qt::Key_5));
     m_data.insert(QStringLiteral("fileShelfQuickAddShortcutModifiers"), int(Qt::AltModifier | Qt::KeypadModifier));
+    m_data.insert(QStringLiteral("commandPaletteShortcutKey"), int(Qt::Key_P));
+    m_data.insert(QStringLiteral("commandPaletteShortcutModifiers"), int(Qt::ControlModifier | Qt::ShiftModifier));
     m_data.insert(QStringLiteral("clipboardHistoryRetentionDays"), 30);
     m_data.insert(QStringLiteral("clipboardHistoryRetentionCount"), 500);
     m_data.insert(QStringLiteral("clipboardHistoryStorageLimitMB"), 512);
@@ -99,6 +101,8 @@ void SettingsManager::load() {
     if (stored.contains(QStringLiteral("fileShelfShortcutModifiers")) && stored.value(QStringLiteral("fileShelfShortcutModifiers")).toInt() < 0) valid = false;
     if (stored.contains(QStringLiteral("fileShelfQuickAddShortcutKey")) && stored.value(QStringLiteral("fileShelfQuickAddShortcutKey")).toInt() < 0) valid = false;
     if (stored.contains(QStringLiteral("fileShelfQuickAddShortcutModifiers")) && stored.value(QStringLiteral("fileShelfQuickAddShortcutModifiers")).toInt() < 0) valid = false;
+    if (stored.contains(QStringLiteral("commandPaletteShortcutKey")) && stored.value(QStringLiteral("commandPaletteShortcutKey")).toInt() < 0) valid = false;
+    if (stored.contains(QStringLiteral("commandPaletteShortcutModifiers")) && stored.value(QStringLiteral("commandPaletteShortcutModifiers")).toInt() < 0) valid = false;
     if (stored.contains(QStringLiteral("thumbnailCacheLimitMB")) &&
         (stored.value(QStringLiteral("thumbnailCacheLimitMB")).toInt() < 16 || stored.value(QStringLiteral("thumbnailCacheLimitMB")).toInt() > 4096)) valid = false;
     if (stored.value(QStringLiteral("clipboardHistoryExcludedApplications")).toArray().size() > 256) valid = false;
@@ -231,6 +235,14 @@ bool SettingsManager::setFileShelfQuickAddShortcut(int key, int modifiers) {
     QJsonObject candidate = m_data;
     candidate.insert(QStringLiteral("fileShelfQuickAddShortcutKey"), key);
     candidate.insert(QStringLiteral("fileShelfQuickAddShortcutModifiers"), modifiers);
+    return commit(candidate);
+}
+int SettingsManager::commandPaletteShortcutKey() const { return m_data.value(QStringLiteral("commandPaletteShortcutKey")).toInt(Qt::Key_P); }
+int SettingsManager::commandPaletteShortcutModifiers() const { return m_data.value(QStringLiteral("commandPaletteShortcutModifiers")).toInt(int(Qt::ControlModifier | Qt::ShiftModifier)); }
+bool SettingsManager::setCommandPaletteShortcut(int key, int modifiers) {
+    QJsonObject candidate = m_data;
+    candidate.insert(QStringLiteral("commandPaletteShortcutKey"), key);
+    candidate.insert(QStringLiteral("commandPaletteShortcutModifiers"), modifiers);
     return commit(candidate);
 }
 int SettingsManager::clipboardHistoryRetentionDays() const { return m_data.value(QStringLiteral("clipboardHistoryRetentionDays")).toInt(30); }

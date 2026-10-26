@@ -97,6 +97,16 @@ ApplicationWindow {
                         }
                     }
 
+                    ToolButton {
+                        objectName: "commandPaletteButton"
+                        text: "⌕"
+                        Accessible.name: "Open command palette"
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Command palette · " + app.formatShortcut(settings.commandPaletteShortcutKey, settings.commandPaletteShortcutModifiers)
+                        onClicked: app.toggleCommandPalettePopup()
+                        font.pixelSize: 21
+                    }
+
                     Rectangle {
                         Layout.preferredWidth: 245
                         Layout.preferredHeight: 48
@@ -189,6 +199,8 @@ ApplicationWindow {
     }
 
     CustomCursor { parent: Overlay.overlay.parent }
+
+    CommandPalettePopup { }
 
     Window {
         id: clipboardHistoryPopup

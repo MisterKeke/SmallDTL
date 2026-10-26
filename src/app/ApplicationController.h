@@ -2,10 +2,12 @@
 
 #include <QObject>
 #include <QPointer>
+#include <QUrl>
 
 #include "../actions/ActionManager.h"
 #include "../actions/ActionSequenceRunner.h"
 #include "../clipboard/ClipboardHistoryManager.h"
+#include "CommandPaletteManager.h"
 #include "../fileshelf/FileShelfManager.h"
 #include "../hotkeys/HotkeyManager.h"
 #include "../profiles/ProfileManager.h"
@@ -33,6 +35,8 @@ class ApplicationController final : public QObject
     Q_PROPERTY(bool clipboardHistoryPopupVisible READ clipboardHistoryPopupVisible WRITE setClipboardHistoryPopupVisible NOTIFY clipboardHistoryPopupVisibleChanged)
     Q_PROPERTY(bool fileShelfPopupVisible READ fileShelfPopupVisible WRITE setFileShelfPopupVisible NOTIFY fileShelfPopupVisibleChanged)
     Q_PROPERTY(bool fileShelfQuickAddPopupVisible READ fileShelfQuickAddPopupVisible WRITE setFileShelfQuickAddPopupVisible NOTIFY fileShelfQuickAddPopupVisibleChanged)
+    Q_PROPERTY(bool commandPalettePopupVisible READ commandPalettePopupVisible WRITE setCommandPalettePopupVisible NOTIFY commandPalettePopupVisibleChanged)
+    Q_PROPERTY(bool commandPaletteExecutionPending READ commandPaletteExecutionPending NOTIFY commandPaletteExecutionPendingChanged)
 
 public:
     explicit ApplicationController(QObject *parent = nullptr);
@@ -48,6 +52,7 @@ public:
     ActionManager *actions();
     ActionSequenceRunner *actionRunner();
     WindowArrangementManager *windowArrangements();
+    CommandPaletteManager *commandPalette();
 
     QString currentPage() const;
     QString statusMessage() const;
@@ -61,6 +66,8 @@ public:
     bool clipboardHistoryPopupVisible() const { return m_clipboardHistoryPopupVisible; }
     bool fileShelfPopupVisible() const { return m_fileShelfPopupVisible; }
     bool fileShelfQuickAddPopupVisible() const { return m_fileShelfQuickAddPopupVisible; }
+    bool commandPalettePopupVisible() const { return m_commandPalettePopupVisible; }
+    bool commandPaletteExecutionPending() const { return m_commandPaletteExecutionPending; }
 
     void initializeWindow(QWindow *window);
     void showAtStartup();
@@ -81,6 +88,10 @@ public:
     Q_INVOKABLE bool setFileShelfQuickAddShortcut(int key, int modifiers);
     Q_INVOKABLE void startFileShelfQuickAdd();
     Q_INVOKABLE void setFileShelfQuickAddPopupVisible(bool visible);
+    Q_INVOKABLE void toggleCommandPalettePopup();
+    Q_INVOKABLE void setCommandPalettePopupVisible(bool visible);
+    Q_INVOKABLE bool setCommandPaletteShortcut(int key, int modifiers);
+    Q_INVOKABLE bool executeCommandPaletteResult(const QString &type, const QString &id);
     Q_INVOKABLE void chooseScreenshotDestination();
     Q_INVOKABLE void useProfileScreenshotDestination();
     Q_INVOKABLE void chooseGeneralScreenshotDirectory();
@@ -119,6 +130,10 @@ signals:
     void clipboardHistoryPopupVisibleChanged();
     void fileShelfPopupVisibleChanged();
     void fileShelfQuickAddPopupVisibleChanged();
+    void commandPalettePopupVisibleChanged();
+    void commandPaletteExecutionPendingChanged();
+    void commandPaletteScreenshotRequested(const QString &path, const QUrl &imageUrl, const QString &id,
+                                           int width, int height);
 
 private slots:
     void rebuildTrayMenu();
@@ -126,6 +141,8 @@ private slots:
 
 private:
     void setStatus(const QString &message, bool isError = false, bool notifyTray = false);
+    void showCommandPaletteExecutionError(const QString &message);
+    void setCommandPaletteExecutionPending(bool pending);
     bool hasBindingConflict(int key, int modifiers, const QString &exceptId = {}) const;
     bool validAssignment(const QString &actionType, const QString &targetProfileId,
                          const QString &sequenceId, const QString &layoutId = QString()) const;
@@ -141,6 +158,7 @@ private:
     WindowArrangementManager m_windowArrangements;
     ActionSequenceRunner m_actionRunner;
     HotkeyManager m_hotkeys;
+    CommandPaletteManager m_commandPalette;
     QPointer<QWindow> m_window;
     bool m_initialWindowPositioned = false;
     QSystemTrayIcon *m_tray = nullptr;
@@ -151,4 +169,8 @@ private:
     bool m_clipboardHistoryPopupVisible = false;
     bool m_fileShelfPopupVisible = false;
     bool m_fileShelfQuickAddPopupVisible = false;
+    bool m_commandPalettePopupVisible = false;
+    bool m_commandPaletteExecutionPending = false;
+    bool m_commandPaletteSequencePending = false;
+    quint64 m_commandPaletteLayoutRequestId = 0;
 };

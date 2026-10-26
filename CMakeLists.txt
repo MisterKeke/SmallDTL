@@ -60,6 +60,8 @@ qt_add_executable(ScreenshotHotkeyManager WIN32
     src/actions/ActionSequenceRunner.cpp
     src/app/ApplicationController.h
     src/app/ApplicationController.cpp
+    src/app/CommandPaletteManager.h
+    src/app/CommandPaletteManager.cpp
     src/clipboard/ClipboardService.h
     src/clipboard/ClipboardService.cpp
     src/clipboard/ClipboardHistoryManager.h
@@ -107,6 +109,7 @@ qt_add_qml_module(ScreenshotHotkeyManager
     QML_FILES
         qml/Main.qml
         qml/components/CustomCursor.qml
+        qml/components/CommandPalettePopup.qml
         qml/components/Sidebar.qml
         qml/components/HotkeyRecorder.qml
         qml/components/ValueComboBox.qml
@@ -159,6 +162,7 @@ if(BUILD_TESTING)
         tests/UnitTests.cpp
         tests/MaintenanceTests.cpp
         tests/ReviewRegressionTests.cpp
+        tests/CommandPaletteTests.cpp
         tests/UnitTests.h
         tests/TestSupport.h
         tests/TestLifecycle.cpp
@@ -170,6 +174,8 @@ if(BUILD_TESTING)
         tests/ClipboardTests.cpp
         src/app/ApplicationController.h
         src/app/ApplicationController.cpp
+        src/app/CommandPaletteManager.h
+        src/app/CommandPaletteManager.cpp
         src/clipboard/ClipboardService.h
         src/clipboard/ClipboardService.cpp
         src/clipboard/ClipboardHistoryManager.h
@@ -215,6 +221,7 @@ if(BUILD_TESTING)
         QML_FILES
             qml/Main.qml
             qml/components/CustomCursor.qml
+            qml/components/CommandPalettePopup.qml
             qml/components/Sidebar.qml
             qml/components/HotkeyRecorder.qml
             qml/components/ValueComboBox.qml

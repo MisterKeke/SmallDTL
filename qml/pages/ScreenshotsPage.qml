@@ -77,6 +77,13 @@ Item {
             editorLoader.item.openScreenshot(path, image, screenshotId, pixelWidth, pixelHeight)
     }
 
+    Connections {
+        target: app
+        function onCommandPaletteScreenshotRequested(path, imageUrl, screenshotId, pixelWidth, pixelHeight) {
+            root.edit(path, imageUrl, screenshotId, pixelWidth, pixelHeight)
+        }
+    }
+
     Shortcut {
         sequence: "Ctrl+V"
         context: Qt.WindowShortcut
