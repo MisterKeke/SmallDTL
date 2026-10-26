@@ -90,6 +90,8 @@ For Release, configure another directory with `-DCMAKE_BUILD_TYPE=Release`. Mult
 
 This builds/tests Release, deploys Qt/MinGW and `sqldrivers/qsqlite.dll`, smoke-tests database initialization without development search paths, and creates a directory/ZIP under `out/`. Existing output directories are preserved; choose a fresh `-OutputDirectory` when rerunning. Manifest and smoke-result JSON record outcomes. `--smoke-test` uses temporary data and exits automatically; ordinary runs use persistent user data.
 
+`out/` contains generated portable builds and ZIP archives; old versions can be deleted. Keep the complete build folder you currently use, including its DLLs and Qt folders. Settings, profiles, clipboard history, and the screenshot database live separately under `%APPDATA%/SmallDTL/ScreenshotHotkeyManager`; screenshots remain in the folders configured in Settings and Profiles. Preserve any files you manually saved inside `out/`, and update shortcuts or Windows startup registration if you move the build you use.
+
 Exit an older running instance through **tray → Exit** before launching an updated build. Closing its window may only hide it; a second instance normally activates the existing window.
 
 The executable is now `SmallDTL.exe`. The existing data directory and internal storage identity are retained so profiles, sequences, and settings continue to load. If Windows startup was enabled for an older executable path, switch it off and on after launching the new build to update that path.

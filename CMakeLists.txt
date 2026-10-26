@@ -235,6 +235,7 @@ if(BUILD_TESTING)
             qml/assets/SmallDTL.png
     )
     target_compile_definitions(ScreenshotHotkeyManagerTests PRIVATE
+        SMALLDTL_TESTING
         QT_NO_CAST_FROM_ASCII
         QT_NO_CAST_TO_ASCII
         TEST_QML_DIR="${CMAKE_CURRENT_SOURCE_DIR}/qml"

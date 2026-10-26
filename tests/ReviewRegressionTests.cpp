@@ -1,6 +1,5 @@
 #include "UnitTests.h"
 #include <atomic>
-#include <thread>
 
 void UnitTests::oversizedProfileEditPreservesSavedState()
 {
@@ -108,31 +107,39 @@ void UnitTests::fileShelfMovePreservesNewFolderEntries()
     QFile original(QDir(source).filePath(QStringLiteral("large.bin")));
     QVERIFY(original.open(QIODevice::WriteOnly));
     const QByteArray block(1024 * 1024, 'A');
-    for (int i = 0; i < 128; ++i) QCOMPARE(original.write(block), qint64(block.size()));
+    for (int i = 0; i < 2; ++i) QCOMPARE(original.write(block), qint64(block.size()));
     original.close();
     ApplicationDatabase database; QVERIFY(database.initialize());
+    std::atomic_bool added = false;
+    QString injectionError;
     FileShelfManager shelf(&database, nullptr); QVERIFY(shelf.addPaths({source})); shelf.selectAll();
     QSignalSpy finished(&shelf, &FileShelfManager::operationFinished);
-    QVERIFY(shelf.startTransfer(shelf.previewTransfer(destination, true), destination, true));
-    std::atomic_bool stop = false, added = false;
-    std::thread writer([&] {
-        while (!stop.load()) {
-            if (shelf.bytesCopied() >= 1024 * 1024) {
+    // busyChanged runs before the worker starts. Inject after its first chunk,
+    // with another chunk still to copy, rather than racing a polling thread.
+    connect(&shelf, &FileShelfManager::busyChanged, &shelf, [&] {
+        if (shelf.busy()) {
+            shelf.m_transfer->afterFirstCopyChunkForTesting = [&] {
                 QFile late(QDir(source).filePath(QStringLiteral("new-during-move.txt")));
-                if (late.open(QIODevice::WriteOnly)) { added = late.write("new user data") == 13; late.close(); }
-                return;
-            }
-            std::this_thread::yield();
+                if (late.open(QIODevice::WriteOnly)) {
+                    added = late.write("new user data") == 13;
+                    late.close();
+                }
+                if (!added.load()) injectionError = late.errorString();
+            };
         }
     });
-    const auto join = qScopeGuard([&] { stop = true; writer.join(); });
+    QVERIFY(shelf.startTransfer(shelf.previewTransfer(destination, true), destination, true));
     QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 1, 10000);
-    QVERIFY(added.load());
+    QVERIFY2(added.load(), qPrintable(injectionError));
+    QCOMPARE(shelf.bytesCopied(), double(2 * block.size()));
     QFile preserved(QDir(source).filePath(QStringLiteral("new-during-move.txt")));
     QVERIFY(preserved.open(QIODevice::ReadOnly)); QCOMPARE(preserved.readAll(), QByteArrayLiteral("new user data"));
-    QVERIFY(QFileInfo::exists(original.fileName()));
+    QVERIFY(original.open(QIODevice::ReadOnly)); QCOMPARE(original.readAll(), block.repeated(2));
     QCOMPARE(finished.first().at(0).toInt(), 0);
     QCOMPARE(finished.first().at(2).toInt(), 1);
+    QVERIFY(finished.first().at(3).toStringList().join(QLatin1Char('\n')).contains(QStringLiteral("source folder changed")));
+    QCOMPARE(shelf.data(shelf.index(0, 0), FileShelfManager::PathRole).toString(), source);
+    QVERIFY(QDir(destination).entryList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System).isEmpty());
 }
 
 void UnitTests::screenshotAnnotationsRenderShapesTextAndOpaqueRedaction()

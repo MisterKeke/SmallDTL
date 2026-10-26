@@ -9,6 +9,9 @@
 #include <QTimer>
 #include <atomic>
 #include <memory>
+#ifdef SMALLDTL_TESTING
+#include <functional>
+#endif
 
 #include "../storage/ApplicationDatabase.h"
 
@@ -51,6 +54,9 @@ public:
         std::atomic<qint64> total = 0;
         std::atomic_int completed = 0;
         int itemCount = 0;
+#ifdef SMALLDTL_TESTING
+        std::function<void()> afterFirstCopyChunkForTesting;
+#endif
     };
 
     enum Role {
@@ -115,6 +121,9 @@ signals:
     void progressChanged();
 
 private:
+#ifdef SMALLDTL_TESTING
+    friend class UnitTests;
+#endif
     int rowForId(const QString &id) const;
     void setMessage(const QString &message, bool isError = false);
     void setBusy(bool busy);

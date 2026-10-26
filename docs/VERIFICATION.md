@@ -1,5 +1,15 @@
 # Verification record
 
+## Deterministic file-move regression and output cleanup — 2026-10-26
+
+The pasted Windows CI run built the application and test executable successfully, then reported **95 passed, 1 failed, 0 skipped**. The only failure was `fileShelfMovePreservesNewFolderEntries()` at its `added.load()` assertion. Its polling thread started after the transfer worker, so creating a new source file depended on scheduling and copy speed. The tray icon change in `ApplicationController.cpp` did not require matching test expectations.
+
+The regression now uses a one-shot callback after the worker copies its first chunk, with another chunk remaining. This hook and its access are compiled only into the test target with `SMALLDTL_TESTING`. A 2 MiB fixture replaces the timing-dependent 128 MiB fixture. The test verifies both files' exact contents survive, the move reports the source-folder change, the shelf path stays unchanged, and no staged destination remains.
+
+The current application and tests rebuilt with the workflow's **Qt 6.8.3 / MinGW 13.1** kit. The fixed regression passed **30 consecutive runs**; the full Release suite passed **94 tests, 0 failures, 2 skips** for sandbox-restricted native APIs. The application smoke test loaded all pages with **0 QML warnings** and `applicationIconAvailable=true`. Evidence: `build-ci-qt683/deterministic-move-build.log`, `clean-build/race-after-*.txt`, `clean-build/qt-test-results.txt`, and `clean-build/smoke-result.json`. Hosted CI was not rerun.
+
+Output inspection found **36 portable folders and 36 ZIPs, about 5.38 GiB**. Persistent settings/history and the configured screenshot folders are outside `out/`; the screenshot and File Shelf tables contained no paths inside it. The README now explains removing old packages while retaining the complete runtime folder in use and any manually saved files. This task did not delete build outputs or user data.
+
 ## Qt 6.8 CI compatibility and test diagnostics — 2026-10-25
 
 Reproducing the test run with the workflow's Qt 6.8.3/MinGW 13.1 kit produced **85 passed, 8 failed, 2 skipped**. The QML failures reported that `ComboBox.currentValue` was read-only; those assignments prevented the Hotkeys/Actions pages and main shell from loading. `ValueComboBox` now keeps the persisted selection in a separate property, maps it to `currentIndex` through `indexOfValue()`, and restores rejected selections after activation. It handles profile-model and list-model changes without assigning to `currentValue`.

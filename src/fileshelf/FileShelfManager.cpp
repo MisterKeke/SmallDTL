@@ -20,6 +20,9 @@
 #include <QWindow>
 #include <QThread>
 #include <QtConcurrent/QtConcurrentRun>
+#ifdef SMALLDTL_TESTING
+#include <utility>
+#endif
 #ifdef Q_OS_WIN
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -284,6 +287,11 @@ bool copyStream(QIODevice *input, QIODevice *output, QString *error, FileShelfMa
             return false;
         }
         control->bytes.fetch_add(count);
+#ifdef SMALLDTL_TESTING
+        // Run once on the worker so regressions can inject a change mid-copy.
+        if (auto afterChunk = std::exchange(control->afterFirstCopyChunkForTesting, nullptr))
+            afterChunk();
+#endif
     }
 }
 
