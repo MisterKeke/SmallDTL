@@ -23,7 +23,7 @@ Rectangle {
 
     implicitWidth: 220
     implicitHeight: 42
-    radius: 9
+    radius: settings.retroArcade ? settings.palette["panelRadius"] : 9
     color: recording ? settings.palette["#39222b"] : recorderMouse.containsMouse ? settings.palette["#292a32"] : settings.palette["#202127"]
     border.color: recording || activeFocus ? settings.palette["#e96782"] : settings.palette["#383942"]
     border.width: recording ? 1.5 : 1

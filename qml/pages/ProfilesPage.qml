@@ -32,7 +32,7 @@ Item {
         Rectangle {
             Layout.preferredWidth: 330
             Layout.fillHeight: true
-            radius: 15
+            radius: settings.retroArcade ? settings.palette["panelRadius"] : 15
             color: settings.palette["#191a20"]
             border.color: settings.palette["#2d2e37"]
             ColumnLayout {
@@ -45,7 +45,7 @@ Item {
                     Button {
                         text: "+ New"
                         onClicked: { newName.text = ""; createDialog.open() }
-                        background: Rectangle { radius: 8; color: settings.palette["#39222b"]; border.color: settings.palette["#56303d"] }
+                        background: Rectangle { radius: settings.retroArcade ? settings.palette["panelRadius"] : 8; color: settings.palette["#39222b"]; border.color: settings.palette["#56303d"] }
                         contentItem: Text { text: parent.text; color: settings.palette["#f3c6d0"]; font.pixelSize: 10; font.weight: Font.DemiBold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; leftPadding: 8; rightPadding: 8 }
                     }
                 }
@@ -71,7 +71,7 @@ Item {
                         Accessible.name: name
                         width: profileList.width
                         height: 76
-                        radius: 11
+                        radius: settings.retroArcade ? settings.palette["panelRadius"] : 11
                         color: root.selectedProfileId === profileId ? settings.palette["#2a2229"] : selectMouse.containsMouse ? settings.palette["#22232a"] : settings.palette["#1e1f25"]
                         border.color: activeFocus ? settings.palette["#e96782"] : root.selectedProfileId === profileId ? settings.palette["#75404e"] : settings.palette["#2c2d34"]
                         RowLayout {
@@ -79,7 +79,7 @@ Item {
                             anchors.margins: 11
                             spacing: 10
                             Rectangle {
-                                width: 34; height: 34; radius: 11
+                                width: 34; height: 34; radius: settings.retroArcade ? settings.palette["panelRadius"] : 11
                                 color: isActive ? settings.palette["#39222b"] : settings.palette["#2b2c34"]
                                 Label { anchors.centerIn: parent; text: icon || "◉"; color: isActive ? settings.palette["#e96782"] : settings.palette["#9b9ca7"]; font.pixelSize: 13 }
                             }
@@ -113,7 +113,7 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            radius: 15
+            radius: settings.retroArcade ? settings.palette["panelRadius"] : 15
             color: settings.palette["#191a20"]
             border.color: settings.palette["#2d2e37"]
             visible: root.selectedProfileInfo.id !== undefined
@@ -133,7 +133,7 @@ Item {
                         text: root.selectedProfileInfo.isActive ? "Active" : "Activate profile"
                         enabled: !root.selectedProfileInfo.isActive
                         onClicked: profiles.setActiveProfile(root.selectedProfileId)
-                        background: Rectangle { radius: 9; color: parent.enabled ? settings.palette["#e96782"] : settings.palette["#2d2e37"] }
+                        background: Rectangle { radius: settings.retroArcade ? settings.palette["panelRadius"] : 9; color: parent.enabled ? settings.palette["#e96782"] : settings.palette["#2d2e37"] }
                         contentItem: Text { text: parent.text; color: parent.enabled ? "white" : settings.palette["#a1a2ac"]; font.pixelSize: 11; font.weight: Font.DemiBold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; leftPadding: 12; rightPadding: 12 }
                     }
                 }
@@ -159,7 +159,7 @@ Item {
                         Rectangle {
                             Layout.fillWidth: true
                             Layout.preferredHeight: 42
-                            radius: 9
+                            radius: settings.retroArcade ? settings.palette["panelRadius"] : 9
                             color: settings.palette["#202127"]
                             border.color: settings.palette["#30313a"]
                             Label { anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 10; verticalAlignment: Text.AlignVCenter; text: root.selectedProfileInfo.screenshotDirectory || ""; color: settings.palette["#c3c2ca"]; font.pixelSize: 11; elide: Text.ElideMiddle }
@@ -199,7 +199,7 @@ Item {
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    radius: 12
+                    radius: settings.retroArcade ? settings.palette["panelRadius"] : 12
                     color: settings.palette["#202127"]
                     ColumnLayout {
                         anchors.fill: parent

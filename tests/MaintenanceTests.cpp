@@ -4,6 +4,8 @@
 void UnitTests::historyClearDialogsRequireConfirmation()
 {
     ApplicationController controller;
+    QVERIFY(controller.settings()->setVisualStyle(QStringLiteral("retro-arcade")));
+    applyRetroTestFont();
     ClipboardSnapshot text;
     text.type = QStringLiteral("text"); text.text = QStringLiteral("pinned");
     controller.screenshots()->clipboardService()->processContentChange(text, false);

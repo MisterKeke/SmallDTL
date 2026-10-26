@@ -110,6 +110,7 @@ qt_add_qml_module(ScreenshotHotkeyManager
         qml/Main.qml
         qml/components/CustomCursor.qml
         qml/components/CommandPalettePopup.qml
+        qml/components/RetroFontScope.qml
         qml/components/Sidebar.qml
         qml/components/HotkeyRecorder.qml
         qml/components/ValueComboBox.qml
@@ -129,6 +130,11 @@ qt_add_qml_module(ScreenshotHotkeyManager
     RESOURCES
         qml/assets/SmallDTL.ico
         qml/assets/SmallDTL.png
+        qml/assets/retro-header.svg
+        qml/assets/retro-sidebar.svg
+        qml/assets/retro-crt.svg
+        qml/assets/fonts/CascadiaCode.ttf
+        qml/assets/fonts/LICENSE-CASCADIA-CODE.txt
 )
 
 target_link_libraries(ScreenshotHotkeyManager PRIVATE
@@ -222,6 +228,7 @@ if(BUILD_TESTING)
             qml/Main.qml
             qml/components/CustomCursor.qml
             qml/components/CommandPalettePopup.qml
+            qml/components/RetroFontScope.qml
             qml/components/Sidebar.qml
             qml/components/HotkeyRecorder.qml
             qml/components/ValueComboBox.qml
@@ -240,6 +247,11 @@ if(BUILD_TESTING)
             qml/pages/WindowArrangementsPage.qml
         RESOURCES
             qml/assets/SmallDTL.png
+            qml/assets/retro-header.svg
+            qml/assets/retro-sidebar.svg
+            qml/assets/retro-crt.svg
+            qml/assets/fonts/CascadiaCode.ttf
+            qml/assets/fonts/LICENSE-CASCADIA-CODE.txt
     )
     target_compile_definitions(ScreenshotHotkeyManagerTests PRIVATE
         SMALLDTL_TESTING

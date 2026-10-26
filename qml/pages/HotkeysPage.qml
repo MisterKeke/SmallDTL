@@ -46,14 +46,14 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 78
-            radius: 14
+            radius: settings.retroArcade ? settings.palette["panelRadius"] : 14
             color: settings.palette["#191a20"]
             border.color: settings.palette["#2d2e37"]
             RowLayout {
                 anchors.fill: parent
                 anchors.margins: 16
                 spacing: 12
-                Rectangle { width: 39; height: 39; radius: 12; color: settings.palette["#29232d"]; Label { anchors.centerIn: parent; text: "⌘"; color: settings.palette["#e7a0b1"]; font.pixelSize: 19 } }
+                Rectangle { width: 39; height: 39; radius: settings.retroArcade ? settings.palette["panelRadius"] : 12; color: settings.palette["#29232d"]; Label { anchors.centerIn: parent; text: "⌘"; color: settings.palette["#e7a0b1"]; font.pixelSize: 19 } }
                 ColumnLayout {
                     Layout.fillWidth: true
                     spacing: 3
@@ -108,7 +108,7 @@ Item {
 
                         Layout.fillWidth: true
                         implicitHeight: editingShortcut || actionType === "switchProfile" || actionType === "sequence" || actionType === "applyWindowLayout" ? 144 : 100
-                        radius: 12
+                        radius: settings.retroArcade ? settings.palette["panelRadius"] : 12
                         color: settings.palette["#191a20"]
                         border.color: registered ? settings.palette["#315542"] : settings.palette["#2d2e37"]
 
@@ -207,7 +207,7 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             implicitHeight: newShortcutContent.implicitHeight + 28
-            radius: 13
+            radius: settings.retroArcade ? settings.palette["panelRadius"] : 13
             color: settings.palette["#1b1c22"]
             border.color: settings.palette["#37313a"]
             ColumnLayout {

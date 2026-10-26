@@ -11,6 +11,8 @@ class SettingsManager final : public QObject {
     Q_PROPERTY(QString activeProfileId READ activeProfileId WRITE setActiveProfileId NOTIFY activeProfileIdChanged)
     Q_PROPERTY(bool darkTheme READ darkTheme NOTIFY preferencesChanged)
     Q_PROPERTY(QVariantMap palette READ palette NOTIFY preferencesChanged)
+    Q_PROPERTY(QString visualStyle READ visualStyle WRITE setVisualStyle NOTIFY preferencesChanged)
+    Q_PROPERTY(bool retroArcade READ retroArcade NOTIFY preferencesChanged)
     Q_PROPERTY(bool closeToTray READ closeToTray WRITE setCloseToTray NOTIFY preferencesChanged)
     Q_PROPERTY(bool startMinimized READ startMinimized WRITE setStartMinimized NOTIFY preferencesChanged)
     Q_PROPERTY(bool minimizeToTray READ minimizeToTray WRITE setMinimizeToTray NOTIFY preferencesChanged)
@@ -43,6 +45,8 @@ public:
     QString activeProfileId() const;
     bool darkTheme() const;
     QVariantMap palette() const;
+    QString visualStyle() const;
+    bool retroArcade() const;
     QStringList startupMessages() const { return m_startupMessages; }
     bool addKnownScreenshotDirectory(const QString &directory);
     Q_INVOKABLE bool removeKnownScreenshotDirectory(const QString &directory);
@@ -63,6 +67,7 @@ public slots:
     bool setFilenamePattern(const QString &value);
     QString appearance() const;
     bool setAppearance(const QString &value);
+    bool setVisualStyle(const QString &value);
     QString accentColor() const;
     bool setAccentColor(const QString &value);
     bool automaticClipboardSavingEnabled() const;

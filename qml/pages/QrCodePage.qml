@@ -24,7 +24,7 @@ Item {
         width: qrScroll.availableWidth
         // Keep the scroll extent independent of the fill-height layouts below.
         height: Math.max(root.height, root.width < 900 ? 1240 : 760)
-        radius: 16
+        radius: settings.retroArcade ? settings.palette["panelRadius"] : 16
         color: settings.palette["#191a20"]
         border.color: settings.palette["#2d2e37"]
 
@@ -68,7 +68,7 @@ Item {
                     Layout.minimumWidth: 280
                     Layout.minimumHeight: 660
                     Layout.preferredWidth: 0.95
-                    radius: 13
+                    radius: settings.retroArcade ? settings.palette["panelRadius"] : 13
                     color: settings.palette["#202127"]
                     border.color: settings.palette["#30313a"]
 
@@ -125,7 +125,7 @@ Item {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                             Layout.minimumHeight: 175
-                            radius: 10
+                            radius: settings.retroArcade ? settings.palette["panelRadius"] : 10
                             color: "white"
                             border.color: settings.palette["#34353e"]
                             clip: true
@@ -180,7 +180,7 @@ Item {
                     Layout.minimumWidth: 280
                     Layout.minimumHeight: 480
                     Layout.preferredWidth: 1.05
-                    radius: 13
+                    radius: settings.retroArcade ? settings.palette["panelRadius"] : 13
                     color: settings.palette["#202127"]
                     border.color: settings.palette["#30313a"]
                     clip: true
@@ -200,7 +200,7 @@ Item {
                         Rectangle {
                             Layout.fillWidth: true
                             Layout.preferredHeight: 68
-                            radius: 9
+                            radius: settings.retroArcade ? settings.palette["panelRadius"] : 9
                             color: dropArea.containsDrag ? settings.palette["#39222b"] : settings.palette["#17181d"]
                             border.color: dropArea.containsDrag ? settings.palette["#e96782"] : settings.palette["#34353e"]
                             Label {
@@ -239,7 +239,7 @@ Item {
                                 required property string resultPreview
                                 width: qrResultsList.width
                                 height: 44
-                                radius: 8
+                                radius: settings.retroArcade ? settings.palette["panelRadius"] : 8
                                 color: qrCode.selectedResultIndex === index ? settings.palette["#39222b"] : settings.palette["#282930"]
                                 border.color: qrCode.selectedResultIndex === index ? settings.palette["#75404e"] : "transparent"
                                 RowLayout {

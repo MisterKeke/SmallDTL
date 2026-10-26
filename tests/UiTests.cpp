@@ -541,6 +541,8 @@ void UnitTests::initialWindowIsCenteredAndReopeningPreservesPosition()
 void UnitTests::fullShellPagesAndPreferences()
 {
     ApplicationController controller;QQmlApplicationEngine engine;engine.addImageProvider(QStringLiteral("thumbnail"),new ThumbnailProvider);engine.addImageProvider(QStringLiteral("qrpreview"),new QrImageProvider(controller.qrCode()));
+    QVERIFY(controller.settings()->setVisualStyle(QStringLiteral("retro-arcade")));
+    applyRetroTestFont();
     QTemporaryDir droppedAssets(g_testData->filePath(QStringLiteral("qml-drop-assets-XXXXXX")));
     QVERIFY(droppedAssets.isValid());
     const QString shelfDropPath = QDir(droppedAssets.path()).filePath(QStringLiteral("café space % dropped.txt"));
@@ -556,9 +558,17 @@ void UnitTests::fullShellPagesAndPreferences()
     for(const auto &entry:QList<QPair<QString,QObject *>>{{QStringLiteral("app"),&controller},{QStringLiteral("settings"),controller.settings()},{QStringLiteral("profiles"),controller.profiles()},{QStringLiteral("screenshots"),controller.screenshots()},{QStringLiteral("clipboardHistory"),controller.clipboardHistory()},{QStringLiteral("fileShelf"),controller.fileShelf()},{QStringLiteral("qrCode"),controller.qrCode()},{QStringLiteral("hotkeys"),controller.hotkeys()},{QStringLiteral("actions"),controller.actions()},{QStringLiteral("actionRunner"),controller.actionRunner()},{QStringLiteral("windowArrangements"),controller.windowArrangements()},{QStringLiteral("commandPalette"),controller.commandPalette()}})engine.rootContext()->setContextProperty(entry.first,entry.second);
     QSignalSpy warnings(&engine,&QQmlEngine::warnings);engine.loadFromModule(QStringLiteral("ScreenshotHotkeyManagerTest"),QStringLiteral("Main"));QVERIFY(!engine.rootObjects().isEmpty());
     auto *window=qobject_cast<QQuickWindow *>(engine.rootObjects().first());QVERIFY(window);window->show();QVERIFY(QTest::qWaitForWindowExposed(window));
+    QQuickItem *profileNameText = findItem(window->contentItem(), QStringLiteral("activeProfileNameText"));
+    QQuickItem *saveButtonLabel = findItem(window->contentItem(), QStringLiteral("saveClipboardButtonLabel"));
+    QVERIFY(profileNameText);
+    QVERIFY(saveButtonLabel);
+    QCOMPARE(profileNameText->property("font").value<QFont>().family(), QStringLiteral("Cascadia Code"));
+    QCOMPARE(saveButtonLabel->property("font").value<QFont>().family(), QStringLiteral("Cascadia Code"));
     for(const QString &page:{QStringLiteral("Dashboard"),QStringLiteral("Screenshots"),QStringLiteral("Clipboard History"),QStringLiteral("File Shelf"),QStringLiteral("QR Codes"),QStringLiteral("Window Arrangements"),QStringLiteral("Hotkeys"),QStringLiteral("Profiles"),QStringLiteral("Actions"),QStringLiteral("Settings")}){
         controller.setCurrentPage(page);
         QTest::qWait(80);
+        const QString pageImage = QStringLiteral("retro-") + page.toLower().replace(QLatin1Char(' '), QLatin1Char('-')) + QStringLiteral(".png");
+        QVERIFY(window->grabWindow().save(QDir(QCoreApplication::applicationDirPath()).filePath(pageImage)));
         if (page == QStringLiteral("QR Codes")) {
             QVERIFY(findItem(window->contentItem(), QStringLiteral("generateQrButton")));
             QVERIFY(findItem(window->contentItem(), QStringLiteral("qrResultsList")));
@@ -596,6 +606,15 @@ void UnitTests::fullShellPagesAndPreferences()
             QVERIFY(window->grabWindow().save(QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("window-arrangements-page.png"))));
         }
     }
+    QQuickItem *visualStylePicker = findItem(window->contentItem(), QStringLiteral("visualStylePicker"));
+    QQuickItem *appearancePicker = findItem(window->contentItem(), QStringLiteral("appearancePicker"));
+    QQuickItem *accentEditor = findItem(window->contentItem(), QStringLiteral("accentEditor"));
+    QVERIFY(visualStylePicker);
+    QVERIFY(appearancePicker);
+    QVERIFY(accentEditor);
+    QCOMPARE(visualStylePicker->property("currentIndex").toInt(), 1);
+    QVERIFY(!appearancePicker->isEnabled());
+    QVERIFY(!accentEditor->isEnabled());
     window->hide();
     controller.setClipboardHistoryPopupVisible(true);
     QObject *historyPopup = window->findChild<QObject *>(QStringLiteral("clipboardHistoryPopup"));
@@ -626,6 +645,10 @@ void UnitTests::fullShellPagesAndPreferences()
     QTRY_VERIFY(!shelfPopup->property("visible").toBool());
     window->show();
     QVERIFY(QTest::qWaitForWindowExposed(window));
+    const QString pageBeforeStyleSwitch = controller.currentPage();
+    QVERIFY(controller.settings()->setVisualStyle(QStringLiteral("standard")));
+    QCOMPARE(controller.currentPage(), pageBeforeStyleSwitch);
+    QTest::qWait(80);
     QVERIFY(controller.settings()->setAppearance(QStringLiteral("light")));QTest::qWait(80);window->grabWindow().save(QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("settings-light.png")));
     QVERIFY(controller.settings()->setAppearance(QStringLiteral("dark")));QTest::qWait(80);window->grabWindow().save(QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("settings-dark.png")));
     const QString settingsFile=QDir(AppDataPaths::root()).filePath(QStringLiteral("settings.json"));
@@ -640,6 +663,8 @@ void UnitTests::fullShellPagesAndPreferences()
 void UnitTests::fileShelfQuickAddPopupKeyboardInteraction()
 {
     ApplicationController controller;
+    QVERIFY(controller.settings()->setVisualStyle(QStringLiteral("retro-arcade")));
+    applyRetroTestFont();
     QQmlApplicationEngine engine;
     engine.addImageProvider(QStringLiteral("thumbnail"), new ThumbnailProvider);
     engine.addImageProvider(QStringLiteral("qrpreview"), new QrImageProvider(controller.qrCode()));
@@ -680,6 +705,7 @@ void UnitTests::fileShelfQuickAddPopupKeyboardInteraction()
     QTRY_VERIFY(popupObject->property("visible").toBool());
     auto *popup = qobject_cast<QQuickWindow *>(popupObject);
     QVERIFY(popup);
+    QVERIFY(popup->grabWindow().save(QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("retro-file-shelf-quick-add.png"))));
     QVERIFY(!mainWindow->isVisible());
     QQuickItem *search = findItem(popup->contentItem(), QStringLiteral("fileShelfQuickAddSearch"));
     QVERIFY(search);

@@ -10,6 +10,7 @@
 #include <QSettings>
 #include <QStandardPaths>
 #include <QColor>
+#include <QHash>
 #include <QDebug>
 
 SettingsManager::SettingsManager(QObject *parent) : QObject(parent) {
@@ -26,8 +27,11 @@ QStringList SettingsManager::knownScreenshotDirectories() const {
     return result;
 }
 bool SettingsManager::darkTheme() const {
+    if (retroArcade()) return true;
     return appearance() == QStringLiteral("dark") || (appearance() == QStringLiteral("system") && QGuiApplication::styleHints()->colorScheme() != Qt::ColorScheme::Light);
 }
+QString SettingsManager::visualStyle() const { return m_data.value(QStringLiteral("visualStyle")).toString(QStringLiteral("standard")); }
+bool SettingsManager::retroArcade() const { return visualStyle() == QStringLiteral("retro-arcade"); }
 void SettingsManager::report(const QString &message) {
     if (m_loading) m_startupMessages.append(message);
     emit errorOccurred(message);
@@ -47,6 +51,7 @@ void SettingsManager::load() {
     m_data.insert(QStringLiteral("filenamePattern"), QStringLiteral("Screenshot_{timestamp}"));
     m_data.insert(QStringLiteral("appearance"), QStringLiteral("dark"));
     m_data.insert(QStringLiteral("accentColor"), QStringLiteral("#e96782"));
+    m_data.insert(QStringLiteral("visualStyle"), QStringLiteral("standard"));
     m_data.insert(QStringLiteral("automaticClipboardSavingEnabled"), false);
     m_data.insert(QStringLiteral("automaticClipboardSaveTagId"), QString());
     m_data.insert(QStringLiteral("clipboardHistoryShortcutKey"), int(Qt::Key_V));
@@ -88,6 +93,7 @@ void SettingsManager::load() {
     if (stored.contains(QStringLiteral("generalScreenshotDirectory")) && !QDir::isAbsolutePath(stored.value(QStringLiteral("generalScreenshotDirectory")).toString())) valid = false;
     if (stored.contains(QStringLiteral("filenamePattern")) && !ScreenshotNaming::validPattern(stored.value(QStringLiteral("filenamePattern")).toString())) valid = false;
     if (stored.contains(QStringLiteral("appearance")) && !QStringList{QStringLiteral("dark"), QStringLiteral("light"), QStringLiteral("system")}.contains(stored.value(QStringLiteral("appearance")).toString())) valid = false;
+    if (stored.contains(QStringLiteral("visualStyle")) && !QStringList{QStringLiteral("standard"), QStringLiteral("retro-arcade")}.contains(stored.value(QStringLiteral("visualStyle")).toString())) valid = false;
     if (stored.contains(QStringLiteral("accentColor")) && !QColor::isValidColorName(stored.value(QStringLiteral("accentColor")).toString())) valid = false;
     if (stored.contains(QStringLiteral("clipboardHistoryRetentionDays")) &&
         (stored.value(QStringLiteral("clipboardHistoryRetentionDays")).toInt() < 1 || stored.value(QStringLiteral("clipboardHistoryRetentionDays")).toInt() > 3650)) valid = false;
@@ -200,6 +206,10 @@ bool SettingsManager::setAppearance(const QString &value) {
     if (!QStringList{QStringLiteral("dark"),QStringLiteral("light"),QStringLiteral("system")}.contains(value)) return false;
     return update(QStringLiteral("appearance"), value);
 }
+bool SettingsManager::setVisualStyle(const QString &value) {
+    if (!QStringList{QStringLiteral("standard"), QStringLiteral("retro-arcade")}.contains(value)) return false;
+    return update(QStringLiteral("visualStyle"), value);
+}
 QString SettingsManager::accentColor() const { return m_data.value(QStringLiteral("accentColor")).toString(); }
 bool SettingsManager::setAccentColor(const QString &value) {
     if (!QColor::isValidColorName(value) || QColor(value).alpha()!=255) { report(QStringLiteral("Enter a valid opaque accent color.")); emit preferencesChanged(); return false; }
@@ -254,7 +264,7 @@ bool SettingsManager::setClipboardHistoryStorageLimitMB(int megabytes) { return 
 
 QVariantMap SettingsManager::palette() const {
     if(!m_cachedPalette.isEmpty())return m_cachedPalette;
-    const QStringList keys={QStringLiteral("#111216"),QStringLiteral("#17181d"),QStringLiteral("#191a20"),QStringLiteral("#1b1c22"),QStringLiteral("#1e1f25"),QStringLiteral("#1e332b"),QStringLiteral("#1f352c"),QStringLiteral("#201a20"),QStringLiteral("#202127"),QStringLiteral("#22232a"),QStringLiteral("#23242a"),QStringLiteral("#24252c"),QStringLiteral("#282930"),QStringLiteral("#282932"),QStringLiteral("#29232d"),QStringLiteral("#292a31"),QStringLiteral("#292a32"),QStringLiteral("#2a2229"),QStringLiteral("#2a2630"),QStringLiteral("#2b2c34"),QStringLiteral("#2c2d34"),QStringLiteral("#2d2e37"),QStringLiteral("#2e252d"),QStringLiteral("#30222a"),QStringLiteral("#30313a"),QStringLiteral("#315542"),QStringLiteral("#34353e"),QStringLiteral("#37313a"),QStringLiteral("#382830"),QStringLiteral("#383942"),QStringLiteral("#39222b"),QStringLiteral("#3b2229"),QStringLiteral("#4a2c37"),QStringLiteral("#50303a"),QStringLiteral("#555660"),QStringLiteral("#56303d"),QStringLiteral("#60616c"),QStringLiteral("#6a3645"),QStringLiteral("#6b3642"),QStringLiteral("#71727d"),QStringLiteral("#747580"),QStringLiteral("#74d3aa"),QStringLiteral("#75404e"),QStringLiteral("#777984"),QStringLiteral("#7b7c87"),QStringLiteral("#858692"),QStringLiteral("#888994"),QStringLiteral("#898a95"),QStringLiteral("#8b8c97"),QStringLiteral("#8f909b"),QStringLiteral("#90919c"),QStringLiteral("#9697a3"),QStringLiteral("#999aa4"),QStringLiteral("#9b9ca7"),QStringLiteral("#a0a1ac"),QStringLiteral("#a1a2ac"),QStringLiteral("#a5a5ae"),QStringLiteral("#a5a6b0"),QStringLiteral("#aa111216"),QStringLiteral("#aa9da3"),QStringLiteral("#aaa0a7"),QStringLiteral("#aaaab4"),QStringLiteral("#aeb0ba"),QStringLiteral("#b0b1bb"),QStringLiteral("#b5b6c0"),QStringLiteral("#bd8b99"),QStringLiteral("#c3c2ca"),QStringLiteral("#c8c7cf"),QStringLiteral("#d45270"),QStringLiteral("#d7d6dc"),QStringLiteral("#de8197"),QStringLiteral("#dedde3"),QStringLiteral("#e7a0b1"),QStringLiteral("#e7b879"),QStringLiteral("#e88ba0"),QStringLiteral("#e96782"),QStringLiteral("#eaa0b2"),QStringLiteral("#eeedf0"),QStringLiteral("#efedf1"),QStringLiteral("#f0eef2"),QStringLiteral("#f1be79"),QStringLiteral("#f1c1c8"),QStringLiteral("#f1eff2"),QStringLiteral("#f2f1f4"),QStringLiteral("#f3c6d0"),QStringLiteral("#f3f1f4"),QStringLiteral("#f6f1f3"),QStringLiteral("#ff8d9c"),QStringLiteral("#ffb8c7"),QStringLiteral("#fff0f3"),QStringLiteral("#fff3f6")};
+    const QStringList keys={QStringLiteral("#111216"),QStringLiteral("#17181d"),QStringLiteral("#191a20"),QStringLiteral("#1b1c22"),QStringLiteral("#1e1f25"),QStringLiteral("#1e332b"),QStringLiteral("#1f352c"),QStringLiteral("#201a20"),QStringLiteral("#202127"),QStringLiteral("#22232a"),QStringLiteral("#23242a"),QStringLiteral("#24252c"),QStringLiteral("#282930"),QStringLiteral("#282932"),QStringLiteral("#29232d"),QStringLiteral("#292a31"),QStringLiteral("#292a32"),QStringLiteral("#2a2229"),QStringLiteral("#2a2630"),QStringLiteral("#2b2c34"),QStringLiteral("#2c2d34"),QStringLiteral("#2d2e37"),QStringLiteral("#2e252d"),QStringLiteral("#30212a"),QStringLiteral("#30222a"),QStringLiteral("#30313a"),QStringLiteral("#315542"),QStringLiteral("#34353e"),QStringLiteral("#37313a"),QStringLiteral("#382830"),QStringLiteral("#383942"),QStringLiteral("#39222b"),QStringLiteral("#3b2229"),QStringLiteral("#4a2c37"),QStringLiteral("#50303a"),QStringLiteral("#555660"),QStringLiteral("#56303d"),QStringLiteral("#60616c"),QStringLiteral("#6a3645"),QStringLiteral("#6b3642"),QStringLiteral("#71727d"),QStringLiteral("#747580"),QStringLiteral("#74d3aa"),QStringLiteral("#75404e"),QStringLiteral("#777984"),QStringLiteral("#7b7c87"),QStringLiteral("#858692"),QStringLiteral("#888994"),QStringLiteral("#898a95"),QStringLiteral("#8b8c97"),QStringLiteral("#8e4359"),QStringLiteral("#8f909b"),QStringLiteral("#90919c"),QStringLiteral("#9697a3"),QStringLiteral("#999aa4"),QStringLiteral("#9b9ca7"),QStringLiteral("#a0a1ac"),QStringLiteral("#a1a2ac"),QStringLiteral("#a5a5ae"),QStringLiteral("#a5a6b0"),QStringLiteral("#aa111216"),QStringLiteral("#aa191a20"),QStringLiteral("#aa9da3"),QStringLiteral("#aaa0a7"),QStringLiteral("#aaaab4"),QStringLiteral("#aeb0ba"),QStringLiteral("#b0b1bb"),QStringLiteral("#b5b6c0"),QStringLiteral("#bd8b99"),QStringLiteral("#c3c2ca"),QStringLiteral("#c8c7cf"),QStringLiteral("#d45270"),QStringLiteral("#d7d6dc"),QStringLiteral("#de8197"),QStringLiteral("#dedde3"),QStringLiteral("#e5e4e8"),QStringLiteral("#e7a0b1"),QStringLiteral("#e7b879"),QStringLiteral("#e88ba0"),QStringLiteral("#e96782"),QStringLiteral("#eaa0b2"),QStringLiteral("#eeedf0"),QStringLiteral("#efedf1"),QStringLiteral("#f08a9b"),QStringLiteral("#f0eef2"),QStringLiteral("#f1be79"),QStringLiteral("#f1c1c8"),QStringLiteral("#f1eff2"),QStringLiteral("#f2f1f4"),QStringLiteral("#f3c6d0"),QStringLiteral("#f3f1f4"),QStringLiteral("#f6f1f3"),QStringLiteral("#ff4f68"),QStringLiteral("#ff8d9c"),QStringLiteral("#ffb8c7"),QStringLiteral("#ffd166"),QStringLiteral("#fff0f3"),QStringLiteral("#fff2f4"),QStringLiteral("#fff3f6")};
     QVariantMap result;const bool dark=darkTheme();const QColor accent(accentColor());
     const auto blend=[](QColor a,QColor b,double ratio){return QColor::fromRgbF(a.redF()*ratio+b.redF()*(1-ratio),a.greenF()*ratio+b.greenF()*(1-ratio),a.blueF()*ratio+b.blueF()*(1-ratio));};
     for(const auto &key:keys) {
@@ -273,6 +283,127 @@ QVariantMap SettingsManager::palette() const {
             else color=color.darker(175);
         }
         result.insert(key,color);
+    }
+
+    if (retroArcade()) {
+        const QColor window(QStringLiteral("#030A19"));
+        const QColor panel(QStringLiteral("#071329"));
+        const QColor raised(QStringLiteral("#0B1C36"));
+        const QColor inset(QStringLiteral("#020916"));
+        const QColor hover(QStringLiteral("#10244F"));
+        const QColor border(QStringLiteral("#294A78"));
+        const QColor borderStrong(QStringLiteral("#5278B2"));
+        const QColor muted(QStringLiteral("#9EBCEB"));
+        const QColor disabled(QStringLiteral("#6F86A9"));
+        const QColor primary(QStringLiteral("#EAF2FF"));
+        const QColor cyan(QStringLiteral("#00D9FF"));
+        const QColor cyanLight(QStringLiteral("#70E9FF"));
+        const QColor blue(QStringLiteral("#0752E6"));
+        const QColor green(QStringLiteral("#28EAA0"));
+        const QColor warning(QStringLiteral("#FFD44A"));
+        const QColor error(QStringLiteral("#FF537D"));
+        const QColor errorSurface(QStringLiteral("#301725"));
+        const QColor successSurface(QStringLiteral("#082C29"));
+        QHash<QString, QColor> overrides;
+        const auto assign = [&overrides](const QStringList &names, const QColor &color) {
+            for (const QString &name : names) overrides.insert(name, color);
+        };
+        assign({QStringLiteral("#111216")}, window);
+        assign({QStringLiteral("#17181d"),QStringLiteral("#191a20"),QStringLiteral("#1b1c22"),QStringLiteral("#1e1f25"),QStringLiteral("#23242a"),QStringLiteral("#24252c"),QStringLiteral("#282930"),QStringLiteral("#282932")}, panel);
+        assign({QStringLiteral("#202127"),QStringLiteral("#2a2630"),QStringLiteral("#2b2c34"),QStringLiteral("#2c2d34")}, raised);
+        assign({QStringLiteral("#22232a"),QStringLiteral("#292a31"),QStringLiteral("#292a32")}, hover);
+        assign({QStringLiteral("#2d2e37"),QStringLiteral("#34353e"),QStringLiteral("#383942")}, border);
+        assign({QStringLiteral("#30313a"),QStringLiteral("#37313a"),QStringLiteral("#29232d")}, borderStrong);
+        assign({QStringLiteral("#39222b"),QStringLiteral("#30222a"),QStringLiteral("#30212a"),QStringLiteral("#2a2229"),QStringLiteral("#382830")}, blue);
+        assign({QStringLiteral("#1e332b"),QStringLiteral("#1f352c"),QStringLiteral("#315542")}, successSurface);
+        assign({QStringLiteral("#201a20"),QStringLiteral("#3b2229"),QStringLiteral("#4a2c37"),QStringLiteral("#50303a"),QStringLiteral("#56303d")}, errorSurface);
+        assign({QStringLiteral("#6a3645"),QStringLiteral("#6b3642"),QStringLiteral("#75404e")}, QColor(QStringLiteral("#77334B")));
+        assign({QStringLiteral("#e96782"),QStringLiteral("#e7a0b1"),QStringLiteral("#eaa0b2"),QStringLiteral("#e88ba0"),QStringLiteral("#de8197"),QStringLiteral("#d45270"),QStringLiteral("#bd8b99"),QStringLiteral("#8e4359")}, cyan);
+        assign({QStringLiteral("#f1c1c8"),QStringLiteral("#f3c6d0"),QStringLiteral("#f6f1f3"),QStringLiteral("#ffb8c7")}, cyanLight);
+        assign({QStringLiteral("#74d3aa")}, green);
+        assign({QStringLiteral("#e7b879"),QStringLiteral("#f1be79"),QStringLiteral("#ffd166")}, warning);
+        assign({QStringLiteral("#ff8d9c"),QStringLiteral("#f08a9b"),QStringLiteral("#ff4f68")}, error);
+        assign({QStringLiteral("#60616c")}, disabled);
+        assign({QStringLiteral("#71727d"),QStringLiteral("#747580"),QStringLiteral("#777984"),QStringLiteral("#7b7c87"),QStringLiteral("#858692"),QStringLiteral("#888994"),QStringLiteral("#898a95"),QStringLiteral("#8b8c97"),QStringLiteral("#8f909b"),QStringLiteral("#90919c"),QStringLiteral("#9697a3"),QStringLiteral("#999aa4"),QStringLiteral("#9b9ca7"),QStringLiteral("#a0a1ac"),QStringLiteral("#a1a2ac"),QStringLiteral("#a5a5ae"),QStringLiteral("#a5a6b0"),QStringLiteral("#aa9da3"),QStringLiteral("#aaa0a7"),QStringLiteral("#aaaab4"),QStringLiteral("#aeb0ba"),QStringLiteral("#b0b1bb"),QStringLiteral("#b5b6c0")}, muted);
+        assign({QStringLiteral("#555660")}, disabled);
+        assign({QStringLiteral("#c3c2ca"),QStringLiteral("#c8c7cf"),QStringLiteral("#d7d6dc"),QStringLiteral("#dedde3"),QStringLiteral("#e5e4e8"),QStringLiteral("#eeedf0"),QStringLiteral("#efedf1"),QStringLiteral("#f0eef2"),QStringLiteral("#f1eff2"),QStringLiteral("#f2f1f4"),QStringLiteral("#f3f1f4"),QStringLiteral("#fff0f3"),QStringLiteral("#fff2f4"),QStringLiteral("#fff3f6")}, primary);
+        for (auto it = result.begin(); it != result.end(); ++it) {
+            const QString key = it.key().toLower();
+            QColor color = overrides.value(key, it.value().value<QColor>());
+            if (!overrides.contains(key)) {
+                const QColor source(key);
+                const qreal luminance = 0.2126 * source.redF() + 0.7152 * source.greenF() + 0.0722 * source.blueF();
+                if (luminance < 0.055) color = inset;
+                else if (luminance < 0.12) color = panel;
+                else if (luminance < 0.22) color = raised;
+                else if (luminance < 0.38) color = border;
+                else if (luminance < 0.58) color = disabled;
+                else if (luminance < 0.78) color = muted;
+                else color = primary;
+            }
+            const QColor source(key);
+            if (source.alpha() < 255) color.setAlpha(source.alpha());
+            it.value() = color;
+        }
+        result.insert(QStringLiteral("window"), window);
+        result.insert(QStringLiteral("sidebar"), panel);
+        result.insert(QStringLiteral("surface"), panel);
+        result.insert(QStringLiteral("raisedSurface"), raised);
+        result.insert(QStringLiteral("insetSurface"), inset);
+        result.insert(QStringLiteral("hover"), hover);
+        result.insert(QStringLiteral("selection"), blue);
+        result.insert(QStringLiteral("text"), primary);
+        result.insert(QStringLiteral("secondaryText"), muted);
+        result.insert(QStringLiteral("disabledText"), disabled);
+        result.insert(QStringLiteral("border"), border);
+        result.insert(QStringLiteral("borderStrong"), borderStrong);
+        result.insert(QStringLiteral("sidebarBorder"), border);
+        result.insert(QStringLiteral("separator"), border);
+        result.insert(QStringLiteral("highlightBorder"), QColor(QStringLiteral("#7DADFF")));
+        result.insert(QStringLiteral("shadowBorder"), QColor(QStringLiteral("#10244F")));
+        result.insert(QStringLiteral("focus"), cyan);
+        result.insert(QStringLiteral("accent"), cyan);
+        result.insert(QStringLiteral("accentSoft"), blue);
+        result.insert(QStringLiteral("success"), green);
+        result.insert(QStringLiteral("warning"), warning);
+        result.insert(QStringLiteral("error"), error);
+        result.insert(QStringLiteral("destructive"), error);
+        result.insert(QStringLiteral("controlHeight"), 36);
+        result.insert(QStringLiteral("panelRadius"), 2);
+        result.insert(QStringLiteral("borderWidth"), 1.0);
+        result.insert(QStringLiteral("frameWidth"), 2.0);
+        result.insert(QStringLiteral("spacingUnit"), 4);
+        result.insert(QStringLiteral("fontFamily"), QStringLiteral("Cascadia Code"));
+    } else {
+        result.insert(QStringLiteral("window"), result.value(QStringLiteral("#111216")));
+        result.insert(QStringLiteral("sidebar"), result.value(QStringLiteral("#17181d")));
+        result.insert(QStringLiteral("surface"), result.value(QStringLiteral("#191a20")));
+        result.insert(QStringLiteral("raisedSurface"), result.value(QStringLiteral("#202127")));
+        result.insert(QStringLiteral("insetSurface"), result.value(QStringLiteral("#17181d")));
+        result.insert(QStringLiteral("hover"), result.value(QStringLiteral("#292a32")));
+        result.insert(QStringLiteral("selection"), result.value(QStringLiteral("#39222b")));
+        result.insert(QStringLiteral("text"), result.value(QStringLiteral("#f2f1f4")));
+        result.insert(QStringLiteral("secondaryText"), result.value(QStringLiteral("#9697a3")));
+        result.insert(QStringLiteral("disabledText"), result.value(QStringLiteral("#71727d")));
+        result.insert(QStringLiteral("border"), result.value(QStringLiteral("#2d2e37")));
+        result.insert(QStringLiteral("borderStrong"), result.value(QStringLiteral("#383942")));
+        result.insert(QStringLiteral("sidebarBorder"), result.value(QStringLiteral("#24252c")));
+        result.insert(QStringLiteral("separator"), result.value(QStringLiteral("#292a31")));
+        result.insert(QStringLiteral("highlightBorder"), result.value(QStringLiteral("#555660")));
+        result.insert(QStringLiteral("shadowBorder"), result.value(QStringLiteral("#111216")));
+        result.insert(QStringLiteral("focus"), result.value(QStringLiteral("#e96782")));
+        result.insert(QStringLiteral("accent"), result.value(QStringLiteral("#e96782")));
+        result.insert(QStringLiteral("accentSoft"), result.value(QStringLiteral("#39222b")));
+        result.insert(QStringLiteral("success"), result.value(QStringLiteral("#74d3aa")));
+        result.insert(QStringLiteral("warning"), result.value(QStringLiteral("#e7b879")));
+        result.insert(QStringLiteral("error"), result.value(QStringLiteral("#ff8d9c")));
+        result.insert(QStringLiteral("destructive"), result.value(QStringLiteral("#ff8d9c")));
+        result.insert(QStringLiteral("controlHeight"), 40);
+        result.insert(QStringLiteral("panelRadius"), 12);
+        result.insert(QStringLiteral("borderWidth"), 1.0);
+        result.insert(QStringLiteral("frameWidth"), 0.0);
+        result.insert(QStringLiteral("spacingUnit"), 4);
+        result.insert(QStringLiteral("fontFamily"), QString());
     }
     m_cachedPalette=result;return result;
 }

@@ -184,6 +184,8 @@ void UnitTests::screenshotAnnotationsRenderShapesTextAndOpaqueRedaction()
 void UnitTests::screenshotBulkTagPopupAppliesAndRemovesMixedAssignments()
 {
     ApplicationController controller; controller.setCurrentPage(QStringLiteral("Screenshots"));
+    QVERIFY(controller.settings()->setVisualStyle(QStringLiteral("retro-arcade")));
+    applyRetroTestFont();
     auto *screenshots = controller.screenshots(); screenshots->setDestinationOverride(AppDataPaths::root());
     QStringList ids;
     for (const QString &name : {QStringLiteral("one.png"), QStringLiteral("two.png")}) {
@@ -201,6 +203,7 @@ void UnitTests::screenshotBulkTagPopupAppliesAndRemovesMixedAssignments()
     engine.rootContext()->setContextProperty(QStringLiteral("screenshots"), screenshots);
     QSignalSpy warnings(&engine, &QQmlEngine::warnings);
     QQuickWindow window; window.resize(1200, 850);
+    window.setColor(controller.settings()->palette().value(QStringLiteral("window")).value<QColor>());
     QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(TEST_QML_DIR "/pages/ScreenshotsPage.qml")));
     QTRY_VERIFY(component.status() != QQmlComponent::Loading);
     std::unique_ptr<QObject> page(component.create()); QVERIFY2(page, qPrintable(component.errorString()));

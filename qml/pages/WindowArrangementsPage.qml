@@ -29,7 +29,7 @@ Item {
         spacing: 10
         Rectangle {
             Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 220
-            radius: 13; color: settings.palette["#191a20"]; border.color: settings.palette["#2d2e37"]
+            radius: settings.retroArcade ? settings.palette["panelRadius"] : 13; color: settings.palette["#191a20"]; border.color: settings.palette["#2d2e37"]
             ColumnLayout {
                 anchors.fill: parent; anchors.margins: 12; spacing: 8
                 RowLayout {
@@ -100,7 +100,7 @@ Item {
                         required property string monitor
                         required property string monitorLabel
                         required property bool selected
-                        Layout.fillWidth: true; height: 48; radius: 8
+                        Layout.fillWidth: true; height: 48; radius: settings.retroArcade ? settings.palette["panelRadius"] : 8
                         color: selected ? settings.palette["#30212a"] : settings.palette["#202127"]
                         RowLayout {
                             anchors.fill: parent; anchors.leftMargin: 7; anchors.rightMargin: 10; spacing: 9
@@ -123,7 +123,7 @@ Item {
             }
         }
         Rectangle {
-            Layout.fillWidth: true; Layout.preferredHeight: 205; radius: 13
+            Layout.fillWidth: true; Layout.preferredHeight: 205; radius: settings.retroArcade ? settings.palette["panelRadius"] : 13
             color: settings.palette["#191a20"]; border.color: settings.palette["#2d2e37"]
             RowLayout {
                 anchors.fill: parent; anchors.margins: 12; spacing: 12
@@ -144,7 +144,7 @@ Item {
                             width: savedLayoutsList.width
                             objectName: "windowArrangementLayoutDelegate"
                             required property string layoutId; required property string name; required property int count
-                            Layout.fillWidth: true; height: 38; radius: 7
+                            Layout.fillWidth: true; height: 38; radius: settings.retroArcade ? settings.palette["panelRadius"] : 7
                             color: windowArrangements.selectedLayoutId === layoutId ? settings.palette["#39222b"] : settings.palette["#202127"]
                             RowLayout {
                                 anchors.fill: parent; anchors.leftMargin: 9; anchors.rightMargin: 4
@@ -182,7 +182,7 @@ Item {
                             required property string monitor; required property string monitorLabel; required property bool monitorMissing; required property string status; required property string resolvedId
                             property int slotIndex: index
                             required property var candidates
-                            Layout.fillWidth: true; height: status === "Ambiguous" || status === "Resolved" ? 70 : 53; radius: 7; color: settings.palette["#202127"]
+                            Layout.fillWidth: true; height: status === "Ambiguous" || status === "Resolved" ? 70 : 53; radius: settings.retroArcade ? settings.palette["panelRadius"] : 7; color: settings.palette["#202127"]
                             ColumnLayout {
                                 anchors.fill: parent; anchors.margins: 7; spacing: 4
                                 RowLayout {

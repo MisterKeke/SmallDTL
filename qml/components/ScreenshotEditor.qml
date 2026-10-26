@@ -53,7 +53,7 @@ Popup {
     background: Rectangle {
         color: settings.palette["#17181d"]
         border.color: settings.palette["#383942"]
-        radius: 14
+        radius: settings.retroArcade ? settings.palette["panelRadius"] : 14
     }
 
     function openScreenshot(path, imageUrl, screenshotId, width, height) {
@@ -370,7 +370,7 @@ Popup {
             Layout.fillWidth: true
             Layout.fillHeight: true
             color: settings.palette["#191a20"]
-            radius: 9
+            radius: settings.retroArcade ? settings.palette["panelRadius"] : 9
             clip: true
 
             Flickable {

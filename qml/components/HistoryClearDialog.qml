@@ -5,6 +5,9 @@ import QtQuick.Layouts
 Dialog {
     id: root
     objectName: "historyClearDialog"
+    Overlay.modal: Rectangle {
+        color: settings.retroArcade ? "#bd020916" : "#52ffffff"
+    }
     title: "Clear clipboard history?"
     modal: true
     anchors.centerIn: parent
@@ -12,7 +15,7 @@ Dialog {
     background: Rectangle {
         color: settings.palette["#191a20"]
         border.color: settings.palette["#2d2e37"]
-        radius: 14
+        radius: settings.retroArcade ? settings.palette["panelRadius"] : 14
     }
     standardButtons: Dialog.Cancel | Dialog.Ok
     onOpened: includePins.checked = false

@@ -15,24 +15,33 @@ ApplicationWindow {
     title: "SmallDTL"
     color: appTheme.window
     Material.theme: settings.darkTheme ? Material.Dark : Material.Light
-    Material.accent: settings.palette["#e96782"]
-    Material.primary: settings.palette["#39222b"]
-    Material.background: settings.palette["#191a20"]
-    Material.foreground: settings.palette["#f2f1f4"]
+    Material.accent: settings.palette["accent"]
+    Material.primary: settings.palette["selection"]
+    Material.background: settings.palette["surface"]
+    Material.foreground: settings.palette["text"]
+    Binding {
+        target: window
+        property: "font.family"
+        value: settings.palette["fontFamily"]
+        when: settings.retroArcade
+    }
+    Overlay.modal: Rectangle {
+        color: settings.retroArcade ? "#bd020916" : "#52ffffff"
+    }
 
     QtObject {
         id: themeObject
-        readonly property color window: settings.palette["#111216"]
-        readonly property color panel: settings.palette["#191a20"]
-        readonly property color panelRaised: settings.palette["#202127"]
-        readonly property color panelHover: settings.palette["#292a32"]
-        readonly property color border: settings.palette["#2d2e37"]
-        readonly property color text: settings.palette["#f2f1f4"]
-        readonly property color muted: settings.palette["#9697a3"]
-        readonly property color accent: settings.palette["#e96782"]
-        readonly property color accentSoft: settings.palette["#39222b"]
-        readonly property color green: settings.palette["#74d3aa"]
-        readonly property color red: settings.palette["#ff8d9c"]
+        readonly property color window: settings.palette["window"]
+        readonly property color panel: settings.palette["surface"]
+        readonly property color panelRaised: settings.palette["raisedSurface"]
+        readonly property color panelHover: settings.palette["hover"]
+        readonly property color border: settings.palette["border"]
+        readonly property color text: settings.palette["text"]
+        readonly property color muted: settings.palette["secondaryText"]
+        readonly property color accent: settings.palette["accent"]
+        readonly property color accentSoft: settings.palette["accentSoft"]
+        readonly property color green: settings.palette["success"]
+        readonly property color red: settings.palette["error"]
     }
     property QtObject appTheme: themeObject
 
@@ -58,9 +67,22 @@ ApplicationWindow {
         Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
-    color: appTheme.window
+            color: appTheme.window
+
+            Image {
+                source: "assets/retro-header.svg"
+                anchors.top: parent.top
+                anchors.right: parent.right
+                width: 360
+                height: 72
+                visible: settings.retroArcade
+                opacity: 0.72
+                smooth: false
+                z: 0
+            }
 
             ColumnLayout {
+                z: 1
                 anchors.fill: parent
                 anchors.leftMargin: 34
                 anchors.rightMargin: 34
@@ -110,7 +132,7 @@ ApplicationWindow {
                     Rectangle {
                         Layout.preferredWidth: 245
                         Layout.preferredHeight: 48
-                        radius: 12
+                        radius: settings.retroArcade ? settings.palette["panelRadius"] : 12
                         color: appTheme.panel
                         border.color: appTheme.border
                         RowLayout {
@@ -121,7 +143,7 @@ ApplicationWindow {
                             Rectangle {
                                 Layout.preferredWidth: 28
                                 Layout.preferredHeight: 28
-                                radius: 9
+                                radius: settings.retroArcade ? settings.palette["panelRadius"] : 9
                                 color: appTheme.accentSoft
                                 Label { anchors.centerIn: parent; text: "P"; color: appTheme.accent; font.bold: true }
                             }
@@ -136,6 +158,7 @@ ApplicationWindow {
                                 onActivated: profiles.setActiveProfile(currentValue)
                                 background: Item {}
                                 contentItem: Text {
+                                    objectName: "activeProfileNameText"
                                     text: activeProfilePicker.displayText
                                     color: appTheme.text
                                     font.pixelSize: 13
@@ -152,7 +175,7 @@ ApplicationWindow {
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 42
-                    radius: 10
+                    radius: settings.retroArcade ? settings.palette["panelRadius"] : 10
                     color: app.statusMessage.length > 0 ? (app.statusIsError ? settings.palette["#3b2229"] : settings.palette["#1e332b"]) : "transparent"
                     visible: app.statusMessage.length > 0
                     border.color: app.statusIsError ? settings.palette["#6b3642"] : settings.palette["#315542"]
@@ -198,6 +221,22 @@ ApplicationWindow {
         }
     }
 
+    Rectangle {
+        anchors.fill: parent
+        visible: settings.retroArcade
+        z: 2147483646
+        color: "transparent"
+        border.width: settings.palette["frameWidth"]
+        border.color: settings.palette["highlightBorder"]
+        Rectangle {
+            anchors.fill: parent
+            anchors.margins: 3
+            color: "transparent"
+            border.width: 1
+            border.color: settings.palette["accent"]
+        }
+    }
+
     CustomCursor { parent: Overlay.overlay.parent }
 
     CommandPalettePopup { }
@@ -211,13 +250,14 @@ ApplicationWindow {
         minimumWidth: 440
         minimumHeight: 420
         title: "Clipboard History"
-        color: settings.palette["#111216"]
+        color: settings.palette["window"]
         transientParent: null
         Material.theme: settings.darkTheme ? Material.Dark : Material.Light
-        Material.accent: settings.palette["#e96782"]
-        Material.primary: settings.palette["#39222b"]
-        Material.background: settings.palette["#191a20"]
-        Material.foreground: settings.palette["#f2f1f4"]
+        Material.accent: settings.palette["accent"]
+        Material.primary: settings.palette["selection"]
+        Material.background: settings.palette["surface"]
+        Material.foreground: settings.palette["text"]
+        Overlay.modal: Rectangle { color: settings.retroArcade ? "#bd020916" : "#52ffffff" }
         flags: Qt.Tool | Qt.WindowStaysOnTopHint
         CustomCursor { parent: Overlay.overlay.parent }
         onVisibleChanged: if (visible) { x = Math.max(0, (Screen.width - width) / 2); y = Math.max(0, (Screen.height - height) / 3); popupSearch.forceActiveFocus() }
@@ -225,12 +265,14 @@ ApplicationWindow {
 
         Shortcut { sequence: "Escape"; context: Qt.WindowShortcut; onActivated: app.setClipboardHistoryPopupVisible(false) }
 
-        ColumnLayout {
-            x: 14
-            y: 14
-            width: clipboardHistoryPopup.width - 28
-            height: clipboardHistoryPopup.height - 28
-            spacing: 10
+        RetroFontScope {
+            anchors.fill: parent
+            ColumnLayout {
+                x: 14
+                y: 14
+                width: clipboardHistoryPopup.width - 28
+                height: clipboardHistoryPopup.height - 28
+                spacing: 10
             RowLayout {
                 Layout.fillWidth: true
                 Label { text: "Clipboard History"; font.pixelSize: 18; font.weight: Font.DemiBold; Layout.fillWidth: true }
@@ -269,7 +311,7 @@ ApplicationWindow {
                     width: ListView.view.width
                     height: Math.max(contentType === "image" ? 104 : 78,
                                      popupDetails.implicitHeight + 16, popupActions.implicitHeight + 16)
-                    radius: 9
+                    radius: settings.retroArcade ? settings.palette["panelRadius"] : 9
                     color: popupMouse.containsMouse ? settings.palette["#22232a"] : settings.palette["#191a20"]
                     border.color: settings.palette["#2d2e37"]
                     MouseArea { id: popupMouse; anchors.fill: parent; hoverEnabled: true; onClicked: clipboardHistory.restoreEntry(popupEntry.entryId) }
@@ -294,6 +336,7 @@ ApplicationWindow {
                 Label { anchors.centerIn: parent; visible: clipboardHistory.count === 0; text: clipboardHistory.paused ? "History capture is paused" : "No clipboard items"; color: settings.palette["#9697a3"]; font.pixelSize: 11 }
             }
         }
+        }
     }
 
     Window {
@@ -305,20 +348,24 @@ ApplicationWindow {
         minimumWidth: 540
         minimumHeight: 420
         title: "File Shelf"
-        color: settings.palette["#111216"]
+        color: settings.palette["window"]
         transientParent: null
         Material.theme: settings.darkTheme ? Material.Dark : Material.Light
-        Material.accent: settings.palette["#e96782"]
-        Material.primary: settings.palette["#39222b"]
-        Material.background: settings.palette["#191a20"]
-        Material.foreground: settings.palette["#f2f1f4"]
+        Material.accent: settings.palette["accent"]
+        Material.primary: settings.palette["selection"]
+        Material.background: settings.palette["surface"]
+        Material.foreground: settings.palette["text"]
+        Overlay.modal: Rectangle { color: settings.retroArcade ? "#bd020916" : "#52ffffff" }
         flags: Qt.Tool | Qt.WindowStaysOnTopHint
         CustomCursor { parent: Overlay.overlay.parent }
         onVisibleChanged: if (visible) { x = Math.max(0, (Screen.width - width) / 2); y = Math.max(0, (Screen.height - height) / 3); fileShelf.refresh() }
         onClosing: app.setFileShelfPopupVisible(false)
 
         Shortcut { sequence: "Escape"; context: Qt.WindowShortcut; onActivated: app.setFileShelfPopupVisible(false) }
-        FileShelfPage { anchors.fill: parent; anchors.margins: 12; compact: true }
+        RetroFontScope {
+            anchors.fill: parent
+            FileShelfPage { anchors.fill: parent; anchors.margins: 12; compact: true }
+        }
     }
 
     Window {
@@ -330,13 +377,14 @@ ApplicationWindow {
         minimumWidth: 340
         minimumHeight: 390
         title: "Add clipboard files to collection"
-        color: settings.palette["#111216"]
+        color: settings.palette["window"]
         transientParent: null
         Material.theme: settings.darkTheme ? Material.Dark : Material.Light
-        Material.accent: settings.palette["#e96782"]
-        Material.primary: settings.palette["#39222b"]
-        Material.background: settings.palette["#191a20"]
-        Material.foreground: settings.palette["#f2f1f4"]
+        Material.accent: settings.palette["accent"]
+        Material.primary: settings.palette["selection"]
+        Material.background: settings.palette["surface"]
+        Material.foreground: settings.palette["text"]
+        Overlay.modal: Rectangle { color: settings.retroArcade ? "#bd020916" : "#52ffffff" }
         flags: Qt.Tool | Qt.WindowStaysOnTopHint
         property var filteredCollections: []
         property string selectedCollectionId: ""
@@ -376,13 +424,15 @@ ApplicationWindow {
         }
         Shortcut { sequence: "Escape"; context: Qt.WindowShortcut; onActivated: app.setFileShelfQuickAddPopupVisible(false) }
 
-        ColumnLayout {
-            id: quickAddContent
-            x: 14
-            y: 14
-            width: fileShelfQuickAddPopup.width - 28
-            height: fileShelfQuickAddPopup.height - 28
-            spacing: 9
+        RetroFontScope {
+            anchors.fill: parent
+            ColumnLayout {
+                id: quickAddContent
+                x: 14
+                y: 14
+                width: fileShelfQuickAddPopup.width - 28
+                height: fileShelfQuickAddPopup.height - 28
+                spacing: 9
             Label { text: "Add %1 clipboard reference(s)".arg(fileShelf.pendingQuickAddCount); font.pixelSize: 17; font.weight: Font.DemiBold }
             Label { Layout.fillWidth: true; text: "Choose a collection. The current clipboard snapshot stays unchanged."; color: settings.palette["#9697a3"]; font.pixelSize: 10; wrapMode: Text.WordWrap }
             TextField {
@@ -418,7 +468,7 @@ ApplicationWindow {
                     required property int index
                     width: quickCollectionList.width
                     height: 48
-                    radius: 9
+                    radius: settings.retroArcade ? settings.palette["panelRadius"] : 9
                     color: quickCollectionList.currentIndex === index ? settings.palette["#39222b"] : settings.palette["#202127"]
                     border.color: modelData.favorite ? settings.palette["#e7b879"] : settings.palette["#30313a"]
                     RowLayout {
@@ -466,13 +516,14 @@ ApplicationWindow {
                 }
                 Keys.onEscapePressed: app.setFileShelfQuickAddPopupVisible(false)
             }
-            Label {
-                Layout.fillWidth: true
-                visible: fileShelf.message.length > 0
-                text: fileShelf.message
-                color: fileShelf.messageIsError ? settings.palette["#ff8d9c"] : settings.palette["#74d3aa"]
-                font.pixelSize: 10
-                wrapMode: Text.WrapAnywhere
+                Label {
+                    Layout.fillWidth: true
+                    visible: fileShelf.message.length > 0
+                    text: fileShelf.message
+                    color: fileShelf.messageIsError ? settings.palette["#ff8d9c"] : settings.palette["#74d3aa"]
+                    font.pixelSize: 10
+                    wrapMode: Text.WrapAnywhere
+                }
             }
         }
     }

@@ -65,6 +65,24 @@
 
 extern std::unique_ptr<QTemporaryDir> g_testData;
 
+inline int retroTestFontId()
+{
+    static const int id = QFontDatabase::addApplicationFont(
+        QStringLiteral(":/qt/qml/ScreenshotHotkeyManagerTest/qml/assets/fonts/CascadiaCode.ttf"));
+    return id;
+}
+
+inline void applyRetroTestFont()
+{
+    const QStringList families = QFontDatabase::applicationFontFamilies(retroTestFontId());
+    if (families.isEmpty())
+        return;
+    QFont font = QApplication::font();
+    font.setFamily(families.first());
+    font.setStyleHint(QFont::Monospace);
+    QApplication::setFont(font);
+}
+
 inline QQuickItem *findItem(QQuickItem *root, const QString &name)
 {
     if (root->objectName() == name)

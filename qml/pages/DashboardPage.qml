@@ -10,7 +10,7 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 185
-            radius: 18
+            radius: settings.retroArcade ? settings.palette["panelRadius"] : 18
             color: settings.palette["#201a20"]
             border.color: settings.palette["#382830"]
             RowLayout {
@@ -27,7 +27,7 @@ Item {
                 Rectangle {
                     Layout.preferredWidth: 190
                     Layout.preferredHeight: 126
-                    radius: 16
+                    radius: settings.retroArcade ? settings.palette["panelRadius"] : 16
                     color: settings.palette["#30222a"]
                     ColumnLayout {
                         anchors.centerIn: parent
@@ -42,8 +42,8 @@ Item {
                     text: "Save clipboard image"
                     Layout.alignment: Qt.AlignVCenter
                     onClicked: app.saveClipboardScreenshot()
-                    background: Rectangle { radius: 10; color: saveClipboardButton.down ? settings.palette["#d45270"] : settings.palette["#e96782"] }
-                    contentItem: Text { text: saveClipboardButton.text; color: "white"; font.pixelSize: 12; font.weight: Font.DemiBold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; leftPadding: 12; rightPadding: 12 }
+                    background: Rectangle { radius: settings.retroArcade ? settings.palette["panelRadius"] : 10; color: saveClipboardButton.down ? settings.palette["#d45270"] : settings.palette["#e96782"] }
+                    contentItem: Text { objectName: "saveClipboardButtonLabel"; text: saveClipboardButton.text; color: "white"; font.pixelSize: 12; font.weight: Font.DemiBold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; leftPadding: 12; rightPadding: 12 }
                 }
             }
         }
@@ -63,7 +63,7 @@ Item {
                     required property var modelData
                     Layout.fillWidth: true
                     Layout.preferredHeight: 115
-                    radius: 15
+                    radius: settings.retroArcade ? settings.palette["panelRadius"] : 15
                     color: settings.palette["#191a20"]
                     border.color: settings.palette["#2d2e37"]
                     ColumnLayout {
@@ -81,7 +81,7 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            radius: 16
+            radius: settings.retroArcade ? settings.palette["panelRadius"] : 16
             color: settings.palette["#191a20"]
             border.color: settings.palette["#2d2e37"]
             ColumnLayout {
@@ -117,7 +117,7 @@ Item {
                             Accessible.name: "Open " + fileName
                             Layout.preferredWidth: 128
                             Layout.preferredHeight: 100
-                            radius: 9
+                            radius: settings.retroArcade ? settings.palette["panelRadius"] : 9
                             color: settings.palette["#23242a"]
                             clip: true
                             Image { anchors.fill: parent; source: missing ? "" : thumbnailUrl; sourceSize: Qt.size(128, 100); fillMode: Image.PreserveAspectCrop; asynchronous: true }

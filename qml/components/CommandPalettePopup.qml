@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Controls.Material
 import QtQuick.Layouts
 import QtQuick.Window
+import "."
 
 Window {
     id: popup
@@ -13,14 +14,14 @@ Window {
     minimumWidth: 580
     minimumHeight: 360
     title: "Command Palette"
-    color: settings.palette["#111216"]
+    color: settings.palette["window"]
     transientParent: null
     flags: Qt.Tool | Qt.WindowStaysOnTopHint
     Material.theme: settings.darkTheme ? Material.Dark : Material.Light
-    Material.accent: settings.palette["#e96782"]
-    Material.primary: settings.palette["#39222b"]
-    Material.background: settings.palette["#191a20"]
-    Material.foreground: settings.palette["#f2f1f4"]
+    Material.accent: settings.palette["accent"]
+    Material.primary: settings.palette["selection"]
+    Material.background: settings.palette["surface"]
+    Material.foreground: settings.palette["text"]
 
     function executeSelected() {
         if (app.commandPaletteExecutionPending)
@@ -59,12 +60,14 @@ Window {
         onActivated: app.setCommandPalettePopupVisible(false)
     }
 
-    Rectangle {
+    RetroFontScope {
         anchors.fill: parent
         anchors.margins: 1
-        radius: 14
-        color: settings.palette["#17181d"]
-        border.color: settings.palette["#383942"]
+        background: Rectangle {
+            radius: settings.retroArcade ? settings.palette["panelRadius"] : 14
+            color: settings.palette["#17181d"]
+            border.color: settings.palette["#383942"]
+        }
 
         ColumnLayout {
             anchors.fill: parent
@@ -84,7 +87,7 @@ Window {
                 Layout.fillWidth: true
                 selectByMouse: true
                 background: Rectangle {
-                    radius: 8
+                    radius: settings.retroArcade ? settings.palette["panelRadius"] : 8
                     color: settings.palette["#191a20"]
                     border.color: searchField.activeFocus ? settings.palette["#e96782"] : settings.palette["#2d2e37"]
                     Label {
@@ -145,7 +148,7 @@ Window {
                     required property string reason
                     width: ListView.view.width
                     height: 66
-                    radius: 9
+                    radius: settings.retroArcade ? settings.palette["panelRadius"] : 9
                     color: ListView.isCurrentItem ? settings.palette["#29232d"] : mouseArea.containsMouse ? settings.palette["#22232a"] : settings.palette["#191a20"]
                     border.color: ListView.isCurrentItem ? settings.palette["#e96782"] : settings.palette["#2d2e37"]
 
@@ -207,7 +210,7 @@ Window {
                     enabled: !app.commandPaletteExecutionPending && resultList.currentIndex >= 0 && resultList.currentIndex < commandPalette.count && commandPalette.resultAt(resultList.currentIndex).available
                     onClicked: popup.executeSelected()
                     background: Rectangle {
-                        radius: 8
+                        radius: settings.retroArcade ? settings.palette["panelRadius"] : 8
                         color: parent.enabled ? (parent.down ? settings.palette["#d45270"] : settings.palette["#e96782"]) : settings.palette["#383942"]
                     }
                     contentItem: Text {

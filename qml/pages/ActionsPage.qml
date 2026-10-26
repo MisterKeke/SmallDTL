@@ -111,14 +111,14 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 75
-            radius: 14
+            radius: settings.retroArcade ? settings.palette["panelRadius"] : 14
             color: settings.palette["#191a20"]
             border.color: settings.palette["#2d2e37"]
             RowLayout {
                 anchors.fill: parent
                 anchors.margins: 14
                 spacing: 12
-                Rectangle { width: 38; height: 38; radius: 12; color: settings.palette["#29232d"]; Label { anchors.centerIn: parent; text: "ϟ"; color: settings.palette["#e7a0b1"]; font.pixelSize: 19 } }
+                Rectangle { width: 38; height: 38; radius: settings.retroArcade ? settings.palette["panelRadius"] : 12; color: settings.palette["#29232d"]; Label { anchors.centerIn: parent; text: "ϟ"; color: settings.palette["#e7a0b1"]; font.pixelSize: 19 } }
                 ColumnLayout {
                     Layout.fillWidth: true
                     spacing: 3
@@ -145,7 +145,7 @@ Item {
             Rectangle {
                 Layout.preferredWidth: 255
                 Layout.fillHeight: true
-                radius: 13
+                radius: settings.retroArcade ? settings.palette["panelRadius"] : 13
                 color: settings.palette["#191a20"]
                 border.color: settings.palette["#2d2e37"]
                 ColumnLayout {
@@ -208,7 +208,7 @@ Item {
                                     Accessible.name: name
                                     Layout.fillWidth: true
                                     Layout.preferredHeight: 63
-                                    radius: 10
+                                    radius: settings.retroArcade ? settings.palette["panelRadius"] : 10
                                     color: root.selectedSequenceId === sequenceId ? settings.palette["#39222b"] : settings.palette["#202127"]
                                     border.color: activeFocus ? settings.palette["#e96782"] : root.selectedSequenceId === sequenceId ? settings.palette["#6a3645"] : settings.palette["#30313a"]
                                     ColumnLayout {
@@ -238,7 +238,7 @@ Item {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                radius: 13
+                radius: settings.retroArcade ? settings.palette["panelRadius"] : 13
                 color: settings.palette["#191a20"]
                 border.color: settings.palette["#2d2e37"]
 
@@ -276,7 +276,7 @@ Item {
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 34
-                        radius: 8
+                        radius: settings.retroArcade ? settings.palette["panelRadius"] : 8
                         color: actionRunner.running ? settings.palette["#2a2630"] : settings.palette["#202127"]
                         Label {
                             anchors.fill: parent
@@ -351,7 +351,7 @@ Item {
                                     required property int stepDelayMs
                                     Layout.fillWidth: true
                                     implicitHeight: stepContent.implicitHeight + 20
-                                    radius: 10
+                                    radius: settings.retroArcade ? settings.palette["panelRadius"] : 10
                                     color: settings.palette["#202127"]
                                     border.color: stepEnabled ? settings.palette["#34353e"] : settings.palette["#282930"]
 

@@ -17,7 +17,7 @@ T.TextArea {
     background: Rectangle {
         implicitWidth: 120
         implicitHeight: 56
-        radius: 9
+        radius: settings.retroArcade ? settings.palette["panelRadius"] : 9
         color: settings.palette["#17181d"]
         border.color: settings.palette["#34353e"]
     }

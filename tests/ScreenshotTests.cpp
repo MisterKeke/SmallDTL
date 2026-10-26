@@ -389,6 +389,8 @@ void UnitTests::screenshotEditorUndoRedoRestoresCropAndStrokes()
 void UnitTests::screenshotEditorOpensFromGalleryAndRenders()
 {
     ApplicationController controller;
+    QVERIFY(controller.settings()->setVisualStyle(QStringLiteral("retro-arcade")));
+    applyRetroTestFont();
     controller.setCurrentPage(QStringLiteral("Screenshots"));
     const QString path = QDir(AppDataPaths::root()).filePath(QStringLiteral("editor-visual-source.png"));
     QImage image(640, 400, QImage::Format_ARGB32);
@@ -418,6 +420,7 @@ void UnitTests::screenshotEditorOpensFromGalleryAndRenders()
     QSignalSpy warnings(&engine, &QQmlEngine::warnings);
     QQuickWindow window;
     window.resize(1200, 850);
+    window.setColor(controller.settings()->palette().value(QStringLiteral("window")).value<QColor>());
     QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(TEST_QML_DIR "/pages/ScreenshotsPage.qml")));
     QTRY_VERIFY(component.status() != QQmlComponent::Loading);
     std::unique_ptr<QObject> page(component.create());

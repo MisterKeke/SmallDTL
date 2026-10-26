@@ -34,7 +34,7 @@ Item {
             Rectangle {
                 Layout.fillWidth: true
                 implicitHeight: behavior.implicitHeight + 36
-                radius: 14
+                radius: settings.retroArcade ? settings.palette["panelRadius"] : 14
                 color: settings.palette["#191a20"]
                 border.color: settings.palette["#2d2e37"]
                 ColumnLayout {
@@ -137,7 +137,7 @@ Item {
                 Layout.fillWidth: true
                 implicitHeight: storageOptions.implicitHeight + 36
                 objectName: "storageSettingsPanel"
-                radius: 14; color: settings.palette["#191a20"]; border.color: settings.palette["#2d2e37"]
+                radius: settings.retroArcade ? settings.palette["panelRadius"] : 14; color: settings.palette["#191a20"]; border.color: settings.palette["#2d2e37"]
                 ColumnLayout {
                     id: storageOptions
                     anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 18
@@ -165,7 +165,7 @@ Item {
             Rectangle {
                 Layout.fillWidth: true
                 implicitHeight: appearanceOptions.implicitHeight + 36
-                radius: 14
+                radius: settings.retroArcade ? settings.palette["panelRadius"] : 14
                 color: settings.palette["#191a20"]
                 border.color: settings.palette["#2d2e37"]
                 ColumnLayout {
@@ -175,18 +175,35 @@ Item {
                     Label { text: "Appearance"; font.pixelSize: 17; font.weight: Font.DemiBold }
                     RowLayout {
                         Layout.fillWidth: true
+                        Label { text: "Visual style"; Layout.preferredWidth: 95 }
+                        ComboBox {
+                            objectName: "visualStylePicker"
+                            model: ["Standard", "Retro Arcade"]
+                            currentIndex: settings.visualStyle === "retro-arcade" ? 1 : 0
+                            onActivated: settings.setVisualStyle(currentIndex === 1 ? "retro-arcade" : "standard")
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            text: settings.retroArcade ? "Retro Arcade uses its own dark palette." : "Choose the standard appearance or the Retro Arcade theme."
+                            color: settings.palette["secondaryText"]
+                            font.pixelSize: 11
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
                         Label { text: "Theme"; Layout.preferredWidth: 95 }
-                        ComboBox { objectName: "appearancePicker"; model: ["Dark", "Light", "System"]; currentIndex: settings.appearance === "light" ? 1 : settings.appearance === "system" ? 2 : 0; onActivated: settings.setAppearance(["dark", "light", "system"][currentIndex]) }
+                        ComboBox { objectName: "appearancePicker"; model: ["Dark", "Light", "System"]; currentIndex: settings.appearance === "light" ? 1 : settings.appearance === "system" ? 2 : 0; enabled: !settings.retroArcade; onActivated: settings.setAppearance(["dark", "light", "system"][currentIndex]) }
                         Label { text: "Accent" }
-                        TextField { objectName: "accentEditor"; text: settings.accentColor; placeholderText: "#e96782"; maximumLength: 30; Layout.preferredWidth: 140; onEditingFinished: { settings.setAccentColor(text); text = Qt.binding(function() { return settings.accentColor }) } }
-                        Rectangle { width: 28; height: 28; radius: 8; color: settings.accentColor }
+                        TextField { objectName: "accentEditor"; text: settings.accentColor; placeholderText: "#e96782"; maximumLength: 30; Layout.preferredWidth: 140; enabled: !settings.retroArcade; onEditingFinished: { settings.setAccentColor(text); text = Qt.binding(function() { return settings.accentColor }) } }
+                        Rectangle { width: 28; height: 28; radius: settings.retroArcade ? settings.palette["panelRadius"] : 8; color: settings.accentColor; opacity: settings.retroArcade ? 0.5 : 1.0 }
                     }
                 }
             }
             Rectangle {
                 Layout.fillWidth: true
                 implicitHeight: screenshotOptions.implicitHeight + 36
-                radius: 14
+                radius: settings.retroArcade ? settings.palette["panelRadius"] : 14
                 color: settings.palette["#191a20"]
                 border.color: settings.palette["#2d2e37"]
                 ColumnLayout {
@@ -238,7 +255,7 @@ Item {
             Rectangle {
                 Layout.fillWidth: true
                 implicitHeight: profileOptions.implicitHeight + 36
-                radius: 14
+                radius: settings.retroArcade ? settings.palette["panelRadius"] : 14
                 color: settings.palette["#191a20"]
                 border.color: settings.palette["#2d2e37"]
                 ColumnLayout {

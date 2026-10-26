@@ -183,7 +183,7 @@ Item {
             Layout.fillWidth: true
             Layout.preferredHeight: fileShelf.message.length > 0 ? (root.compact ? 44 : 48) : 0
             visible: fileShelf.message.length > 0
-            radius: 9
+            radius: settings.retroArcade ? settings.palette["panelRadius"] : 9
             color: fileShelf.messageIsError ? settings.palette["#3b2229"] : settings.palette["#1e332b"]
             border.color: fileShelf.messageIsError ? settings.palette["#6b3642"] : settings.palette["#315542"]
             Label {
@@ -201,7 +201,7 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            radius: 14
+            radius: settings.retroArcade ? settings.palette["panelRadius"] : 14
             color: settings.palette["#191a20"]
             border.color: settings.palette["#2d2e37"]
             DropArea {
@@ -235,7 +235,7 @@ Item {
                     required property string collectionNames
                     width: ListView.view.width
                     height: root.compact ? 82 : 92
-                    radius: 10
+                    radius: settings.retroArcade ? settings.palette["panelRadius"] : 10
                     color: fileShelf.selectedIds.indexOf(entryId) >= 0 ? settings.palette["#39222b"] : settings.palette["#202127"]
                     border.color: fileShelf.selectedIds.indexOf(entryId) >= 0 ? settings.palette["#8e4359"] : settings.palette["#30313a"]
 
@@ -367,6 +367,7 @@ Item {
 
     Dialog {
         id: deleteCollectionDialog
+        Binding { target: deleteCollectionDialog; property: "width"; value: Math.min(root.width - 24, 460); when: settings.retroArcade }
         title: "Delete collection?"
         modal: true
         anchors.centerIn: parent
@@ -433,6 +434,7 @@ Item {
 
     Dialog {
         id: removeSelectedDialog
+        Binding { target: removeSelectedDialog; property: "width"; value: Math.min(root.width - 24, 500); when: settings.retroArcade }
         title: "Remove selected references?"
         modal: true
         anchors.centerIn: parent
@@ -443,6 +445,7 @@ Item {
 
     Dialog {
         id: clearDialog
+        Binding { target: clearDialog; property: "width"; value: Math.min(root.width - 24, 460); when: settings.retroArcade }
         title: "Clear file shelf?"
         modal: true
         anchors.centerIn: parent

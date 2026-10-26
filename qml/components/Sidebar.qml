@@ -4,8 +4,8 @@ import QtQuick.Layouts
 
 Rectangle {
     id: root
-    color: settings.palette["#17181d"]
-    border.color: settings.palette["#24252c"]
+    color: settings.palette["sidebar"]
+    border.color: settings.palette["sidebarBorder"]
     border.width: 1
     property string selectedPage: "Dashboard"
     signal pageSelected(string page)
@@ -24,13 +24,14 @@ Rectangle {
             Layout.bottomMargin: 34
             spacing: 11
             Rectangle {
-                width: 38; height: 38; radius: 12
-                color: settings.palette["#e96782"]
-                Label { anchors.centerIn: parent; text: "S"; color: "white"; font.pixelSize: 21; font.weight: Font.Bold }
+                width: 38; height: 38; radius: settings.retroArcade ? settings.palette["panelRadius"] : 12
+                color: settings.palette["accent"]
+                Label { anchors.centerIn: parent; text: "S"; color: "white"; font.pixelSize: 21; font.weight: Font.Bold; visible: !settings.retroArcade }
+                Image { anchors.fill: parent; anchors.margins: 1; source: "../assets/retro-crt.svg"; visible: settings.retroArcade; smooth: false }
             }
             ColumnLayout {
                 spacing: 0
-                Label { text: "SmallDTL"; color: settings.palette["#f2f1f4"]; font.pixelSize: 13; font.weight: Font.Bold; font.letterSpacing: 1.3 }
+                Label { text: "SmallDTL"; color: settings.palette["text"]; font.pixelSize: 13; font.weight: Font.Bold; font.letterSpacing: 1.3 }
                 Label { text: "SCREENSHOT MANAGER"; color: settings.palette["#777984"]; font.pixelSize: 8; font.letterSpacing: 0.8 }
             }
         }
@@ -61,7 +62,7 @@ Rectangle {
                 required property var modelData
                 objectName: "sidebarItem:" + modelData.name
                 activeFocusOnTab: true
-                border.color: activeFocus ? settings.palette["#e96782"] : "transparent"
+                border.color: activeFocus ? settings.palette["focus"] : "transparent"
                 Keys.onReturnPressed: root.pageSelected(modelData.name)
                 Keys.onSpacePressed: root.pageSelected(modelData.name)
                 Accessible.role: Accessible.Button
@@ -69,8 +70,8 @@ Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 43
                 Layout.bottomMargin: 4
-                radius: 10
-                color: root.selectedPage === modelData.name ? settings.palette["#39222b"] : navHover.hovered ? settings.palette["#22232a"] : "transparent"
+                radius: settings.retroArcade ? settings.palette["panelRadius"] : 10
+                color: root.selectedPage === modelData.name ? settings.palette["selection"] : navHover.hovered ? settings.palette["#22232a"] : "transparent"
                 RowLayout {
                     anchors.fill: parent
                     anchors.leftMargin: 12
@@ -78,7 +79,7 @@ Rectangle {
                     spacing: 12
                     Label {
                         text: modelData.glyph
-                        color: root.selectedPage === modelData.name ? settings.palette["#e96782"] : settings.palette["#90919c"]
+                        color: root.selectedPage === modelData.name ? settings.palette["accent"] : settings.palette["secondaryText"]
                         font.pixelSize: 17
                         Layout.preferredWidth: 20
                         horizontalAlignment: Text.AlignHCenter
@@ -92,7 +93,7 @@ Rectangle {
                     }
                     Rectangle {
                         visible: root.selectedPage === modelData.name
-                        width: 5; height: 5; radius: 3; color: settings.palette["#e96782"]
+                        width: 5; height: 5; radius: 3; color: settings.palette["accent"]
                     }
                 }
                 HoverHandler {
@@ -107,22 +108,36 @@ Rectangle {
             }
         }
 
-        Item { Layout.fillHeight: true }
+        Item {
+            Layout.fillHeight: true
+            Layout.fillWidth: true
+            clip: true
+            Image {
+                anchors.bottom: parent.bottom
+                anchors.horizontalCenter: parent.horizontalCenter
+                width: parent.width
+                height: Math.min(132, parent.height)
+                source: "../assets/retro-sidebar.svg"
+                visible: settings.retroArcade
+                opacity: 0.72
+                smooth: false
+            }
+        }
 
-        Rectangle { Layout.fillWidth: true; height: 1; color: settings.palette["#292a31"]; Layout.bottomMargin: 15 }
+        Rectangle { Layout.fillWidth: true; height: 1; color: settings.palette["separator"]; Layout.bottomMargin: 15 }
 
         Rectangle {
             objectName: "sidebarItem:Settings"
             Layout.fillWidth: true
             Layout.preferredHeight: 43
             activeFocusOnTab: true
-            border.color: activeFocus ? settings.palette["#e96782"] : "transparent"
+            border.color: activeFocus ? settings.palette["focus"] : "transparent"
             Keys.onReturnPressed: root.pageSelected("Settings")
             Keys.onSpacePressed: root.pageSelected("Settings")
             Accessible.role: Accessible.Button
             Accessible.name: "Settings"
-            radius: 10
-            color: selectedPage === "Settings" ? settings.palette["#39222b"] : settingsHover.hovered ? settings.palette["#22232a"] : "transparent"
+            radius: settings.retroArcade ? settings.palette["panelRadius"] : 10
+            color: selectedPage === "Settings" ? settings.palette["selection"] : settingsHover.hovered ? settings.palette["#22232a"] : "transparent"
             RowLayout {
                 anchors.fill: parent; anchors.leftMargin: 12; spacing: 12
                 Label { text: "⚙"; color: settings.palette["#90919c"]; font.pixelSize: 16; Layout.preferredWidth: 20; horizontalAlignment: Text.AlignHCenter }

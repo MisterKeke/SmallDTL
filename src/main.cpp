@@ -1,5 +1,6 @@
 #include "app/ApplicationController.h"
 #include "app/AppDataPaths.h"
+#include "settings/SettingsManager.h"
 #include "screenshots/ThumbnailProvider.h"
 #include "qrcode/QrImageProvider.h"
 #include <QImageReader>
@@ -21,6 +22,7 @@
 #include <QJsonDocument>
 #include <QFile>
 #include <QDir>
+#include <QFontDatabase>
 #include <memory>
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -62,7 +64,22 @@ int main(int argc, char *argv[])
 
     QQuickStyle::setStyle(QStringLiteral("Material"));
     QImageReader::setAllocationLimit(256);
+    const QFont applicationFont = application.font();
+    const int retroFontId = QFontDatabase::addApplicationFont(
+        QStringLiteral(":/qt/qml/ScreenshotHotkeyManager/qml/assets/fonts/CascadiaCode.ttf"));
+    const QString retroFontFamily = QFontDatabase::applicationFontFamilies(retroFontId).value(0, QStringLiteral("Cascadia Code"));
     ApplicationController controller;
+    const auto applyVisualStyleFont = [&application, settings = controller.settings(), applicationFont, retroFontFamily] {
+        QFont font = applicationFont;
+        if (settings->retroArcade()) {
+            font.setFamily(retroFontFamily);
+            font.setStyleHint(QFont::Monospace);
+        }
+        application.setFont(font);
+    };
+    applyVisualStyleFont();
+    QObject::connect(controller.settings(), &SettingsManager::preferencesChanged,
+                     &application, applyVisualStyleFont);
     if (smokeTest && !controller.screenshots()->databaseReady())
         return 4;
     QObject::connect(&server, &QLocalServer::newConnection, &controller, [&server, &controller] {

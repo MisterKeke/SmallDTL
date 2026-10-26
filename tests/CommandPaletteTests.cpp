@@ -113,6 +113,8 @@ void UnitTests::commandPaletteScopesRecentsAndRejectsStaleSearches()
 void UnitTests::commandPaletteKeyboardWorksWithMainWindowHidden()
 {
     ApplicationController controller;
+    QVERIFY(controller.settings()->setVisualStyle(QStringLiteral("retro-arcade")));
+    applyRetroTestFont();
     const QString initialProfile = controller.profiles()->activeProfileId();
     const QString alpha = controller.profiles()->createProfile(QStringLiteral("Palette Alpha"));
     const QString beta = controller.profiles()->createProfile(QStringLiteral("Palette Beta"));
@@ -148,6 +150,7 @@ void UnitTests::commandPaletteKeyboardWorksWithMainWindowHidden()
     QVERIFY(popup);
     auto *search = findItem(popup->contentItem(), QStringLiteral("commandPaletteSearch"));
     QVERIFY(search);
+    QCOMPARE(search->property("font").value<QFont>().family(), QStringLiteral("Cascadia Code"));
     search->forceActiveFocus();
     QTRY_VERIFY(search->hasActiveFocus());
     for (const QChar character : QStringLiteral("Palette"))
@@ -166,17 +169,21 @@ void UnitTests::commandPaletteKeyboardWorksWithMainWindowHidden()
 
     controller.toggleCommandPalettePopup();
     QTRY_VERIFY(popupObject->property("visible").toBool());
+    QVERIFY(QTest::qWaitForWindowExposed(popup));
+    QTRY_VERIFY(search->hasActiveFocus());
     QTest::keyClick(popup, Qt::Key_Escape);
     QTRY_VERIFY(!popupObject->property("visible").toBool());
     QVERIFY(!mainWindow->isVisible());
     mainWindow->show();
-    QTRY_VERIFY(mainWindow->isVisible());
+    QVERIFY(QTest::qWaitForWindowExposed(mainWindow));
     QQuickItem *paletteButton = findItem(mainWindow->contentItem(), QStringLiteral("commandPaletteButton"));
     QVERIFY(paletteButton);
     QTest::mouseClick(mainWindow, Qt::LeftButton, Qt::NoModifier,
                       paletteButton->mapToScene(QPointF(paletteButton->width() / 2,
                                                         paletteButton->height() / 2)).toPoint());
     QTRY_VERIFY(popupObject->property("visible").toBool());
+    QVERIFY(QTest::qWaitForWindowExposed(popup));
+    QTRY_VERIFY(search->hasActiveFocus());
     QTest::keyClick(popup, Qt::Key_Escape);
     QTRY_VERIFY(!popupObject->property("visible").toBool());
 

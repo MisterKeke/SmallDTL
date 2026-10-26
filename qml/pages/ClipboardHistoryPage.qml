@@ -58,7 +58,7 @@ Item {
                                          historyDetails.implicitHeight + 22,
                                          historySaveActions.visible ? historySaveActions.implicitHeight + 22 : 0,
                                          contentType === "image" ? 130 : 0)
-                radius: 12
+                radius: settings.retroArcade ? settings.palette["panelRadius"] : 12
                 color: rowMouse.containsMouse ? settings.palette["#22232a"] : settings.palette["#191a20"]
                 border.color: settings.palette["#2d2e37"]
 

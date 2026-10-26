@@ -6,6 +6,11 @@ import QtQuick.Window
 
 Item {
     id: root
+    Material.theme: settings.darkTheme ? Material.Dark : Material.Light
+    Material.accent: settings.palette["accent"]
+    Material.primary: settings.palette["selection"]
+    Material.background: settings.palette["surface"]
+    Material.foreground: settings.palette["text"]
     property string selectedPath: ""
     property url selectedImage: ""
     property string selectedScreenshotId: ""
@@ -108,7 +113,7 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 93
-            radius: 15
+            radius: settings.retroArcade ? settings.palette["panelRadius"] : 15
             color: settings.palette["#191a20"]
             border.color: settings.palette["#2d2e37"]
             RowLayout {
@@ -116,7 +121,7 @@ Item {
                 anchors.margins: 16
                 spacing: 13
                 Rectangle {
-                    width: 43; height: 43; radius: 13
+                    width: 43; height: 43; radius: settings.retroArcade ? settings.palette["panelRadius"] : 13
                     color: screenshots.clipboardHasImage ? settings.palette["#1f352c"] : settings.palette["#282932"]
                     Label { anchors.centerIn: parent; text: screenshots.clipboardHasImage ? "✓" : "▧"; color: screenshots.clipboardHasImage ? settings.palette["#74d3aa"] : settings.palette["#b0b1bb"]; font.pixelSize: 18 }
                 }
@@ -131,7 +136,7 @@ Item {
                     text: "Paste Screenshot"
                     enabled: screenshots.clipboardHasImage
                     onClicked: app.saveClipboardScreenshot()
-                    background: Rectangle { radius: 9; color: pasteScreenshotButton.enabled ? (pasteScreenshotButton.down ? settings.palette["#d45270"] : settings.palette["#e96782"]) : settings.palette["#383942"] }
+                    background: Rectangle { radius: settings.retroArcade ? settings.palette["panelRadius"] : 9; color: pasteScreenshotButton.enabled ? (pasteScreenshotButton.down ? settings.palette["#d45270"] : settings.palette["#e96782"]) : settings.palette["#383942"] }
                     contentItem: Text { text: pasteScreenshotButton.text; color: pasteScreenshotButton.enabled ? "white" : settings.palette["#777984"]; font.pixelSize: 11; font.weight: Font.DemiBold; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; leftPadding: 12; rightPadding: 12 }
                 }
                 Button { text: "Choose folder"; onClicked: app.chooseScreenshotDestination() }
@@ -205,7 +210,7 @@ Item {
                     required property var tags
                     width: 264
                     height: 292
-                    radius: 13
+                    radius: settings.retroArcade ? settings.palette["panelRadius"] : 13
                     color: settings.palette["#191a20"]
                     border.color: root.isSelected(screenshotId) ? settings.palette["#e96782"] : GridView.isCurrentItem && galleryGrid.activeFocus ? settings.palette["#e96782"] : imageMouse.containsMouse ? settings.palette["#555660"] : settings.palette["#2d2e37"]
                     clip: true
@@ -216,7 +221,7 @@ Item {
                         Rectangle {
                             Layout.fillWidth: true
                             Layout.preferredHeight: 128
-                            radius: 9
+                            radius: settings.retroArcade ? settings.palette["panelRadius"] : 9
                             color: settings.palette["#24252c"]
                             clip: true
                             Image {
@@ -254,7 +259,7 @@ Item {
                                 enabled: !missing
                                 font.pixelSize: 9
                                 onClicked: root.edit(path, imageUrl, screenshotId, pixelWidth, pixelHeight)
-                                background: Rectangle { radius: 5; color: "#aa191a20" }
+                                background: Rectangle { radius: settings.retroArcade ? settings.palette["panelRadius"] : 5; color: settings.palette["#aa191a20"] }
                             }
                             ToolButton {
                                 objectName: "screenshotCardDecodeQr"
@@ -271,7 +276,7 @@ Item {
                                     app.showPage("QR Codes")
                                     qrCode.decodeFile(path, "Gallery screenshot")
                                 }
-                                background: Rectangle { radius: 5; color: "#aa191a20" }
+                                background: Rectangle { radius: settings.retroArcade ? settings.palette["panelRadius"] : 5; color: settings.palette["#aa191a20"] }
                             }
                             CheckBox {
                                 anchors.left: parent.left
@@ -279,7 +284,7 @@ Item {
                                 checked: root.isSelected(screenshotId)
                                 onClicked: { root.toggleSelected(screenshotId); root.lastClickedIndex = index }
                                 Accessible.name: "Select " + fileName
-                                background: Rectangle { radius: 5; color: "#aa191a20" }
+                                background: Rectangle { radius: settings.retroArcade ? settings.palette["panelRadius"] : 5; color: settings.palette["#aa191a20"] }
                             }
                         }
                         Label { text: fileName; color: settings.palette["#eeedf0"]; font.pixelSize: 10; font.weight: Font.Medium; elide: Text.ElideMiddle; Layout.fillWidth: true }
@@ -341,7 +346,7 @@ Item {
         height: 620
         anchors.centerIn: Overlay.overlay
         standardButtons: Dialog.Close
-        background: Rectangle { color: settings.palette["#17181d"]; border.color: settings.palette["#383942"]; radius: 14 }
+        background: Rectangle { color: settings.palette["#17181d"]; border.color: settings.palette["#383942"]; radius: settings.retroArcade ? settings.palette["panelRadius"] : 14 }
         contentItem: ColumnLayout {
             spacing: 8
             Item {
@@ -378,7 +383,7 @@ Item {
         objectName: "bulkTagPopup"
         parent: Overlay.overlay
         Material.theme: settings.darkTheme ? Material.Dark : Material.Light
-        Material.accent: settings.palette["#e96782"]
+        Material.accent: settings.palette["accent"]
         Material.foreground: settings.palette["#f2f1f4"]
         onAboutToShow: {
             if (!parent) return
@@ -389,7 +394,7 @@ Item {
         width: 260
         height: Math.min(340, tagOptions.implicitHeight + 20)
         padding: 10
-        background: Rectangle { color: settings.palette["#191a20"]; border.color: settings.palette["#383942"]; radius: 10 }
+        background: Rectangle { color: settings.palette["#191a20"]; border.color: settings.palette["#383942"]; radius: settings.retroArcade ? settings.palette["panelRadius"] : 10 }
         contentItem: Flickable {
             contentWidth: width
             contentHeight: tagOptions.implicitHeight

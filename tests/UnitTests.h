@@ -77,6 +77,7 @@ private slots:
     void legacyActionsMigrateWithoutSharing();
     void configurationRejectsUnsafeAndDuplicateRecords();
     void settingsFailureAndFutureSchemaPreserveState();
+    void visualStylePreferenceIsBackwardCompatibleAndPersistent();
     void startupErrorsReachTheInterface();
     void invalidGlobalConfigurationIsPreserved();
     void screenshotShutdownCompletesPendingSaves();

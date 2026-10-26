@@ -422,6 +422,47 @@ void UnitTests::settingsFailureAndFutureSchemaPreserveState()
     QVERIFY(future.open(QIODevice::ReadOnly));QCOMPARE(future.readAll(),bytes);
 }
 
+void UnitTests::visualStylePreferenceIsBackwardCompatibleAndPersistent()
+{
+    const QString filePath = QDir(AppDataPaths::root()).filePath(QStringLiteral("settings.json"));
+    QDir().mkpath(AppDataPaths::root());
+    QFile legacy(filePath);
+    QVERIFY(legacy.open(QIODevice::WriteOnly));
+    const QJsonObject oldSettings{{QStringLiteral("schemaVersion"), 1},
+                                  {QStringLiteral("appearance"), QStringLiteral("system")},
+                                  {QStringLiteral("accentColor"), QStringLiteral("#4287f5")},
+                                  {QStringLiteral("futurePreference"), QJsonObject{{QStringLiteral("kept"), true}}}};
+    legacy.write(QJsonDocument(oldSettings).toJson());
+    legacy.close();
+
+    SettingsManager settings;
+    QCOMPARE(settings.visualStyle(), QStringLiteral("standard"));
+    QCOMPARE(settings.appearance(), QStringLiteral("system"));
+    QCOMPARE(settings.accentColor(), QStringLiteral("#4287f5"));
+    QVERIFY(settings.setVisualStyle(QStringLiteral("retro-arcade")));
+    QVERIFY(settings.retroArcade());
+    QVERIFY(settings.darkTheme());
+    QCOMPARE(settings.palette().value(QStringLiteral("accent")).value<QColor>(), QColor(QStringLiteral("#00d9ff")));
+    QCOMPARE(settings.palette().value(QStringLiteral("selection")).value<QColor>(), QColor(QStringLiteral("#0752e6")));
+    QVERIFY(!settings.setVisualStyle(QStringLiteral("neon")));
+
+    SettingsManager restored;
+    QCOMPARE(restored.visualStyle(), QStringLiteral("retro-arcade"));
+    QCOMPARE(restored.appearance(), QStringLiteral("system"));
+    QCOMPARE(restored.accentColor(), QStringLiteral("#4287f5"));
+    QVERIFY(restored.setAppearance(QStringLiteral("light")));
+    QVERIFY(restored.darkTheme());
+    QVERIFY(restored.setVisualStyle(QStringLiteral("standard")));
+    QVERIFY(!restored.darkTheme());
+    QCOMPARE(restored.palette().value(QStringLiteral("accent")).value<QColor>(), QColor(QStringLiteral("#4287f5")));
+
+    QFile saved(filePath);
+    QVERIFY(saved.open(QIODevice::ReadOnly));
+    const QJsonObject persisted = QJsonDocument::fromJson(saved.readAll()).object();
+    QCOMPARE(persisted.value(QStringLiteral("visualStyle")).toString(), QStringLiteral("standard"));
+    QCOMPARE(persisted.value(QStringLiteral("futurePreference")).toObject().value(QStringLiteral("kept")).toBool(), true);
+}
+
 void UnitTests::startupErrorsReachTheInterface()
 {
     QFile file(QDir(AppDataPaths::root()).filePath(QStringLiteral("actions.json")));QVERIFY(file.open(QIODevice::WriteOnly));file.write("{broken");file.close();
