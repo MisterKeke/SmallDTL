@@ -9,8 +9,6 @@
 #include <QFileDialog>
 #include <QIcon>
 #include <QMenu>
-#include <QPainter>
-#include <QPixmap>
 #include <QSystemTrayIcon>
 #include <QTimer>
 #include <QUuid>
@@ -730,22 +728,7 @@ void ApplicationController::createTrayIcon()
 {
     if (!QSystemTrayIcon::isSystemTrayAvailable())
         return;
-    QPixmap pixmap(64, 64);
-    pixmap.fill(Qt::transparent);
-    QPainter painter(&pixmap);
-    painter.setRenderHint(QPainter::Antialiasing);
-    painter.setBrush(QColor(QStringLiteral("#e96782")));
-    painter.setPen(Qt::NoPen);
-    painter.drawRoundedRect(QRectF(3, 3, 58, 58), 16, 16);
-    painter.setPen(Qt::white);
-    QFont font = painter.font();
-    font.setBold(true);
-    font.setPixelSize(35);
-    painter.setFont(font);
-    painter.drawText(pixmap.rect(), Qt::AlignCenter, QStringLiteral("S"));
-    painter.end();
-
-    m_tray = new QSystemTrayIcon(QIcon(pixmap), this);
+    m_tray = new QSystemTrayIcon(QGuiApplication::windowIcon(), this);
     m_tray->setToolTip(QStringLiteral("SmallDTL"));
     m_trayMenu = new QMenu;
     m_tray->setContextMenu(m_trayMenu);
